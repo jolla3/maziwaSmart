@@ -1,7 +1,7 @@
 // /cron/updateCowStages.js
 
 const cron = require('node-cron');
-const mongoose = require('mongoose');
+// const mongoose = require('mongoose');
 const { Cow } = require('../models/model');
 const moment = require('moment');
 
