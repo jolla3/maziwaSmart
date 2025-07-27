@@ -34,6 +34,13 @@ exports.createFarmer = async (req, res) => {
     });
 
     await newFarmer.save();
+    // Optional: Update farmer to link manager
+    await User.findByIdAndUpdate(
+      adminId,
+      { $push: { farmer: newFarmer._id } },
+      { new: true }
+    );
+
 
     res.status(201).json({
       message: 'Farmer profile created successfully',
