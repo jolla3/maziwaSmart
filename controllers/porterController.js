@@ -43,7 +43,23 @@ exports.createPorter = async (req, res) => {
       is_active: true,
     });
 
+    // Optional: Update farmer to link manager
+    await Farmer.findByIdAndUpdate(
+      adminId,
+      { $push: {porter: newManager._id } },
+      { new: true }
+    );
+
+
     await newPorter.save();
+
+    // Optional: Update farmer to link manager
+    await User.findByIdAndUpdate(
+      adminId,
+      { $push: { managers: newPorter._id } },
+      { new: true }
+    );
+
 
     res.status(201).json({
       message: 'Porter created successfully',
