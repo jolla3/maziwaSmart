@@ -55,7 +55,6 @@ exports.registerAdmin = async (req, res) => {
   }
 };
 
-
 exports.loginUser = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -64,13 +63,14 @@ exports.loginUser = async (req, res) => {
     let role = null;
     let payload = {};
 
-    // 1. Try to find user in User model (admin, teacher, parent, etc.)
+    // Try in User model (admin, teacher, parent, etc.)
     user = await User.findOne({ email });
     if (user) {
       role = user.role;
 
       const isMatch = await bcrypt.compare(password, user.password);
-      if (!isMatch) return res.status(400).json({ message: 'Invalid email or password' });
+      if (!isMatch)
+        return res.status(400).json({ message: 'Invalid email or password' });
 
       payload = {
         userId: user._id,
@@ -93,15 +93,16 @@ exports.loginUser = async (req, res) => {
       });
     }
 
-    // 2. Try Farmers
-    user = await Farmer.findOne({ email });
-    if (user) {
+    // Else try in Farmer model
+    else if ((user = await Farmer.findOne({ email }))) {
       role = 'farmer';
 
-      if (!user.password) return res.status(403).json({ message: 'This farmer has no login credentials' });
+      if (!user.password)
+        return res.status(403).json({ message: 'This farmer has no login credentials' });
 
       const isMatch = await bcrypt.compare(password, user.password);
-      if (!isMatch) return res.status(400).json({ message: 'Invalid password' });
+      if (!isMatch)
+        return res.status(400).json({ message: 'Invalid password' });
 
       payload = {
         id: user._id,
@@ -124,15 +125,16 @@ exports.loginUser = async (req, res) => {
       });
     }
 
-    // 3. Try Porters
-    user = await Porter.findOne({ email });
-    if (user) {
+    // Else try in Porter model
+    else if ((user = await Porter.findOne({ email }))) {
       role = 'porter';
 
-      if (!user.password) return res.status(403).json({ message: 'This porter has no login credentials' });
+      if (!user.password)
+        return res.status(403).json({ message: 'This porter has no login credentials' });
 
       const isMatch = await bcrypt.compare(password, user.password);
-      if (!isMatch) return res.status(400).json({ message: 'Invalid password' });
+      if (!isMatch)
+        return res.status(400).json({ message: 'Invalid password' });
 
       payload = {
         id: user._id,
@@ -155,11 +157,12 @@ exports.loginUser = async (req, res) => {
       });
     }
 
-    // If user not found in any model
-    return res.status(404).json({ message: 'Account not found' });
-
+    // If no match in any model
+    else {
+      return res.status(404).json({ message: 'Account not found' });
+    }
   } catch (error) {
     console.error('Login error:', error);
-      res.status(500).json({ message: 'Login failed', error: error.message });
-    }
-  };
+    res.status(500).json({ message: 'Login failed', error: error.message });
+  }
+};
