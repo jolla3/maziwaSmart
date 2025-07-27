@@ -55,103 +55,111 @@ exports.registerAdmin = async (req, res) => {
   }
 };
 
-exports.loginAdmin = async (req, res) => {
-  try {
-    const { email, password } = req.body;
-
-    const user = await User.findOne({ email });
-    if (!user) return res.status(400).json({ message: 'Invalid email or password' });
-
-    
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(400).json({ message: 'Invalid email or password' });
-
-    const token = jwt.sign(
-      { userId: user._id, role:user.role},
-      process.env.JWT_SECRET,
-      { expiresIn: '1d' }
-    );
-
-    res.status(200).json({
-      message: 'Login successful',
-      token,
-      user: {
-        id: user._id,
-        username: user.username,
-        email: user.email,
-        role: user.role
-      }
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Login failed' });
-  }
-};
-
-
-
-
-// lkjhfgdxzsxcvnmn,jbvhcf vbn
 
 exports.loginUser = async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // Try to find user in Farmers
-    let user = await Farmer.findOne({ email });
-    let role = 'farmer';
+    let user = null;
+    let role = null;
+    let payload = {};
 
-    // If not found, check in Porters
-    if (!user) {
-      user = await Porter.findOne({ email });
-      if (user) role = 'porter';
+    // 1. Try to find user in User model (admin, teacher, parent, etc.)
+    user = await User.findOne({ email });
+    if (user) {
+      role = user.role;
+
+      const isMatch = await bcrypt.compare(password, user.password);
+      if (!isMatch) return res.status(400).json({ message: 'Invalid email or password' });
+
+      payload = {
+        userId: user._id,
+        role: user.role,
+        email: user.email
+      };
+
+      const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1d' });
+
+      return res.status(200).json({
+        message: 'Login successful',
+        token,
+        role,
+        user: {
+          id: user._id,
+          name: user.name || user.username,
+          email: user.email,
+          role: user.role
+        }
+      });
     }
 
-    // If still not found
-    if (!user) {
-      return res.status(404).json({ message: 'Account not found' });
-    }
+    // 2. Try Farmers
+    user = await Farmer.findOne({ email });
+    if (user) {
+      role = 'farmer';
 
-    // Check if password exists
-    if (!user.password) {
-      return res.status(403).json({ message: `This ${role} has no login credentials` });
-    }
+      if (!user.password) return res.status(403).json({ message: 'This farmer has no login credentials' });
 
-    // Validate password
-    const validPass = await bcrypt.compare(password, user.password);
-    if (!validPass) {
-      return res.status(400).json({ message: 'Invalid password' });
-    }
+      const isMatch = await bcrypt.compare(password, user.password);
+      if (!isMatch) return res.status(400).json({ message: 'Invalid password' });
 
-    // Prepare token payload
-    // Prepare token payload
-const payload = {
-  id: user._id,
-  email: user.email,
-  role,
-  farmer_code:user.farmer_code
-}
-
-if (role === 'farmer') {
-  payload.code = user.farmer_code;   // ✅ Standard key: code
-} else if (role === 'porter') {
-  payload.code = user.porter_code || '';  // If exists
-}
-
-
-    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '7d' });
-
-    res.status(200).json({
-      message: 'Login successful',
-      token,
-      role,
-      user: {
+      payload = {
         id: user._id,
         email: user.email,
-        name: user.name || user.fullname || ''
-      }
-    });
+        role,
+        code: user.farmer_code
+      };
+
+      const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '7d' });
+
+      return res.status(200).json({
+        message: 'Login successful',
+        token,
+        role,
+        user: {
+          id: user._id,
+          email: user.email,
+          name: user.name
+        }
+      });
+    }
+
+    // 3. Try Porters
+    user = await Porter.findOne({ email });
+    if (user) {
+      role = 'porter';
+
+      if (!user.password) return res.status(403).json({ message: 'This porter has no login credentials' });
+
+      const isMatch = await bcrypt.compare(password, user.password);
+      if (!isMatch) return res.status(400).json({ message: 'Invalid password' });
+
+      payload = {
+        id: user._id,
+        email: user.email,
+        role,
+        code: user.porter_code || ''
+      };
+
+      const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '7d' });
+
+      return res.status(200).json({
+        message: 'Login successful',
+        token,
+        role,
+        user: {
+          id: user._id,
+          email: user.email,
+          name: user.fullname || user.name
+        }
+      });
+    }
+
+    // If user not found in any model
+    return res.status(404).json({ message: 'Account not found' });
+
   } catch (error) {
-    res.status(500).json({ message: 'Login failed', error: error.message });
-  }
-};
+    console.error('Login error:', error);
+      res.status(500).json({ message: 'Login failed', error: error.message });
+    }
+  };
