@@ -38,7 +38,7 @@ const { verifyToken, authorizeRoles } = require('../middleware/authMiddleware');
 // router./('/register', loginController.registerUser);
 
 router.post('/register', loginController.registerAdmin);
-router.post('/login', loginController.loginUser);
+router.post('/login', loginController.login);
 // router.post('/loginUsers', loginController.loginUser);
 
 
