@@ -54,6 +54,8 @@ exports.registerAdmin = async (req, res) => {
     res.status(500).json({ message: 'Registration failed', error: err });
   }
 };
+
+
 exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -96,7 +98,7 @@ exports.login = async (req, res) => {
     // Password check
     const validPass = await bcrypt.compare(password, user.password);
     if (!validPass) {
-      return res.status(400).json({ message: 'Invalid email or password' });
+      return res.status(400).json({ message: 'Invalid password' });
     }
 
     // Token payload
