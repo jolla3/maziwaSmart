@@ -43,12 +43,12 @@ exports.createPorter = async (req, res) => {
       is_active: true,
     });
 
-    // Optional: Update farmer to link manager
-    await Farmer.findByIdAndUpdate(
-      adminId,
-      { $push: {porter: newManager._id } },
-      { new: true }
-    );
+    // // Optional: Update farmer to link manager
+    // await Porter.findByIdAndUpdate(
+    //   adminId,
+    //   { $push: {: newPorter._id } },
+    //   { new: true }
+    // );
 
 
     await newPorter.save();
@@ -56,7 +56,7 @@ exports.createPorter = async (req, res) => {
     // Optional: Update farmer to link manager
     await User.findByIdAndUpdate(
       adminId,
-      { $push: { managers: newPorter._id } },
+      { $push: { porters: newPorter._id } },
       { new: true }
     );
 
@@ -81,7 +81,8 @@ exports.createPorter = async (req, res) => {
 // Get All Porters
 exports.getAllPorters = async (req, res) => {
   try {
-    const porters = await Porter.find();
+    const adminId = req.user.userId;
+    const porters = await Porter.find({ created_by: adminId });
     res.status(200).json({ porters });
   } catch (error) {
     res.status(500).json({ message: 'Error retrieving porters', error: error.message });
@@ -91,10 +92,13 @@ exports.getAllPorters = async (req, res) => {
 // Get Single Porter by ID
 exports.getPorterById = async (req, res) => {
   try {
-    const porter = await Porter.findById(req.params.id);
+    const adminId = req.user.userId;
+    const porter = await Porter.findOne({ _id: req.params.id, created_by: adminId });
+
     if (!porter) {
-      return res.status(404).json({ message: 'Porter not found' });
+      return res.status(404).json({ message: 'Porter not found or you are not authorized' });
     }
+
     res.status(200).json({ porter });
   } catch (error) {
     res.status(500).json({ message: 'Error retrieving porter', error: error.message });
@@ -113,23 +117,26 @@ exports.updatePorter = async (req, res) => {
     let porterId;
 
     // Admin updates any porter using params
-    if (requesterRole === 'admin') {
-      porterId = req.params.id;
+if (requesterRole === 'admin') {
+  porterId = req.params.id;
 
-      // Prevent admin from changing password
-      if (updatedData.password) {
-        return res.status(403).json({ message: 'Admins cannot update porter passwords' });
-      }
+  const porter = await Porter.findOne({ _id: porterId, created_by: requesterId });
+  if (!porter) {
+    return res.status(403).json({ message: 'Not authorized to update this porter' });
+  }
 
-    } else if (requesterRole === 'porter') {
-      // Porter updates their own profile (no params)
-      porterId = requesterId;
+  if (updatedData.password) {
+    return res.status(403).json({ message: 'Admins cannot update porter passwords' });
+  }
 
-      // If porter is updating password, hash it
-      if (updatedData.password) {
-        const hashed = await bcrypt.hash(updatedData.password, 10);
-        updatedData.password = hashed;
-      }
+  const updatedPorter = await Porter.findByIdAndUpdate(porterId, updatedData, { new: true });
+
+  return res.status(200).json({
+    message: 'Admin updated porter successfully',
+    porter: updatedPorter
+  });
+
+
 
     } else {
       return res.status(403).json({ message: 'Access denied: Invalid role' });
@@ -155,24 +162,28 @@ exports.updatePorter = async (req, res) => {
 // Delete Porter
 exports.deletePorter = async (req, res) => {
   try {
-    const deletedPorter = await Porter.findByIdAndDelete(req.params.id);
-    if (!deletedPorter) {
-      return res.status(404).json({ message: "Porter not found" });
+    const adminId = req.user.userId;
+    const porterId = req.params.id;
+
+    const porter = await Porter.findOne({ _id: porterId, created_by: adminId });
+    if (!porter) {
+      return res.status(403).json({ message: "Not authorized to delete this porter" });
     }
 
-    // ⚠️ Update milk records or porter logs where this porter is referenced
+    await Porter.findByIdAndDelete(porterId);
+
     await MilkRecord.updateMany(
-      { porter_code: deletedPorter._id },
+      { porter_code: porter._id },
       { $set: { porter_code: null } }
     );
 
     await PorterLog.updateMany(
-      { porter_id: deletedPorter._id },
+      { porter_id: porter._id },
       { $set: { porter_id: null } }
     );
 
-    res.json({ message: `Porter ${deletedPorter.name} deleted successfully` });
+    res.json({ message: `Porter ${porter.name} deleted successfully` });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
-}
+};
