@@ -59,28 +59,41 @@ exports.createFarmer = async (req, res) => {
   }
 };
               
+
+// ==============================
+// GET all farmers created by this admin
+// ==============================
 exports.getAllFarmers = async (req, res) => {
-   try {
-     const farmers = await Farmer.find();
-     res.json(farmers);
-   } catch (err) {
-     res.json({ message: 'Failed to fetch farmers' });
-   }
- };
+  try {
+    const adminId = req.user.userId;
+    const farmers = await Farmer.find({ created_by: adminId });
+    res.json(farmers);
+  } catch (err) {
+    res.json({ message: 'Failed to fetch farmers' });
+  }
+};
 
+// ==============================
+// GET single farmer by code (admin must have created them)
+// ==============================
 exports.getFarmerByCode = async (req, res) => {
-   try {
-     const farmer = await Farmer.findOne({ farmer_code: req.params.code });
-     if (!farmer) return res.json({ message: 'Farmer not found' });
-     res.json(farmer);
-   } catch (err) {
-     res.json({ message: 'Failed to fetch farmer' });
-   }
- }
+  try {
+    const adminId = req.user.userId;
+    const farmer = await Farmer.findOne({
+      farmer_code: req.params.code,
+      created_by: adminId
+    });
 
+    if (!farmer) return res.json({ message: 'Farmer not found or not yours' });
+    res.json(farmer);
+  } catch (err) {
+    res.json({ message: 'Failed to fetch farmer' });
+  }
+};
 
-
-//  update farmer
+// ==============================
+// UPDATE farmer (only the admin who created the farmer OR the farmer themself)
+// ==============================
 exports.updateFarmer = async (req, res) => {
   try {
     const userIdFromToken = req.user.userId;
@@ -90,7 +103,6 @@ exports.updateFarmer = async (req, res) => {
 
     let farmerId;
 
-    // 🔐 Step 1: Decide which farmer ID to update
     if (role === 'farmer') {
       const user = await User.findById(userIdFromToken);
       if (!user || !user.farmer) {
@@ -98,29 +110,27 @@ exports.updateFarmer = async (req, res) => {
       }
       farmerId = user.farmer.toString();
     } else if (role === 'admin') {
-      farmerId = farmerIdFromParams;
+      // Ensure the farmer being updated was created by this admin
+      const farmer = await Farmer.findOne({ _id: farmerIdFromParams, created_by: userIdFromToken });
+      if (!farmer) {
+        return res.json({ message: 'You are not authorized to update this farmer' });
+      }
+      farmerId = farmer._id;
     } else {
       return res.json({ message: 'Unauthorized role' });
     }
 
-    // ✅ Step 2: Get the farmer document
-    const farmer = await Farmer.findById(farmerId);
-    if (!farmer) {
-      return res.json({ message: 'Farmer not found' });
-    }
-
-    // 🔒 Step 3: Prevent admin from changing passwords
+    // Restrict password update by admin
     if (updatedData.password && role === 'admin') {
       return res.json({ message: 'Admins cannot change farmer passwords' });
     }
 
-    // 🔐 Step 4: Hash password if provided by farmer
+    // Hash new password if farmer is updating it
     if (updatedData.password) {
       const hashedPassword = await bcrypt.hash(updatedData.password, 10);
       updatedData.password = hashedPassword;
     }
 
-    // ✅ Step 5: Update farmer
     const updatedFarmer = await Farmer.findByIdAndUpdate(farmerId, updatedData, { new: true });
 
     res.json({
@@ -132,41 +142,38 @@ exports.updateFarmer = async (req, res) => {
     console.error(error);
     res.json({ message: 'Update failed', error: error.message });
   }
-}
+};
 
-
+// ==============================
+// DELETE farmer (only if admin created them)
+// ==============================
 exports.deleteFarmer = async (req, res) => {
   try {
-    const deletedFarmer = await Farmer.findOneAndDelete({ farmer_code: req.params.code });
+    const adminId = req.user.userId;
 
-    if (!deletedFarmer) {
-      return res.json({ message: 'Farmer not found' });
+    const farmer = await Farmer.findOne({
+      farmer_code: req.params.code,
+      created_by: adminId
+    });
+
+    if (!farmer) {
+      return res.json({ message: 'Farmer not found or not authorized to delete' });
     }
 
-    console.log("✅ Deleted farmer:", deletedFarmer);
+    const deletedFarmer = await Farmer.findByIdAndDelete(farmer._id);
 
-    // Optional: fallback name if undefined
-    const name = deletedFarmer.fullname || deletedFarmer.name || '[No Name]';
-
-    // Update related collections
+    // Clean up related records
     await MilkRecord.updateMany(
       { farmer_code: deletedFarmer.farmer_code },
       { $set: { farmer_code: null } }
     );
-
-    // await MilkAnomalities.updateMany(
-    //   { farmer_code: deletedFarmer.farmer_code },
-    //   { $set: { farmer_code: null } }
-    // );
 
     await Notification.updateMany(
       { farmer_code: deletedFarmer.farmer_code },
       { $set: { farmer_code: null } }
     );
 
-    // Advice messages if needed
-    // await AdviceMessages.updateMany(...);
-
+    const name = deletedFarmer.fullname || deletedFarmer.name || '[No Name]';
     res.json({ message: `Farmer ${name} deleted successfully` });
 
   } catch (error) {
@@ -174,5 +181,3 @@ exports.deleteFarmer = async (req, res) => {
     res.json({ message: 'Failed to delete farmer', error: error.message });
   }
 };
-
-
