@@ -19,7 +19,7 @@ exports.createFarmer = async (req, res) => {
     // Check for duplicate email
     const emailExists = await Farmer.findOne({ email });
     if (emailExists) {
-      return res.status(400).json({ message: 'A farmer with this email already exists' });
+      return res.json({ message: 'A farmer with this email already exists' });
     }
    const difpassword="12345678"
          const password= await bcrypt.hash(difpassword,10)
@@ -42,7 +42,7 @@ exports.createFarmer = async (req, res) => {
     );
 
 
-    res.status(201).json({
+    res.json({
       message: 'Farmer profile created successfully',
       farmer: {
         id: newFarmer._id,
@@ -55,26 +55,26 @@ exports.createFarmer = async (req, res) => {
     });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: 'Failed to create farmer', error: error.message });
+    res.json({ message: 'Failed to create farmer', error: error.message });
   }
 };
               
 exports.getAllFarmers = async (req, res) => {
    try {
      const farmers = await Farmer.find();
-     res.status(200).json(farmers);
+     res.json(farmers);
    } catch (err) {
-     res.status(500).json({ message: 'Failed to fetch farmers' });
+     res.json({ message: 'Failed to fetch farmers' });
    }
  };
 
 exports.getFarmerByCode = async (req, res) => {
    try {
      const farmer = await Farmer.findOne({ farmer_code: req.params.code });
-     if (!farmer) return res.status(404).json({ message: 'Farmer not found' });
-     res.status(200).json(farmer);
+     if (!farmer) return res.json({ message: 'Farmer not found' });
+     res.json(farmer);
    } catch (err) {
-     res.status(500).json({ message: 'Failed to fetch farmer' });
+     res.json({ message: 'Failed to fetch farmer' });
    }
  }
 
@@ -94,24 +94,24 @@ exports.updateFarmer = async (req, res) => {
     if (role === 'farmer') {
       const user = await User.findById(userIdFromToken);
       if (!user || !user.farmer) {
-        return res.status(404).json({ message: 'Farmer profile not linked to user' });
+        return res.json({ message: 'Farmer profile not linked to user' });
       }
       farmerId = user.farmer.toString();
     } else if (role === 'admin') {
       farmerId = farmerIdFromParams;
     } else {
-      return res.status(403).json({ message: 'Unauthorized role' });
+      return res.json({ message: 'Unauthorized role' });
     }
 
     // ✅ Step 2: Get the farmer document
     const farmer = await Farmer.findById(farmerId);
     if (!farmer) {
-      return res.status(404).json({ message: 'Farmer not found' });
+      return res.json({ message: 'Farmer not found' });
     }
 
     // 🔒 Step 3: Prevent admin from changing passwords
     if (updatedData.password && role === 'admin') {
-      return res.status(403).json({ message: 'Admins cannot change farmer passwords' });
+      return res.json({ message: 'Admins cannot change farmer passwords' });
     }
 
     // 🔐 Step 4: Hash password if provided by farmer
@@ -123,14 +123,14 @@ exports.updateFarmer = async (req, res) => {
     // ✅ Step 5: Update farmer
     const updatedFarmer = await Farmer.findByIdAndUpdate(farmerId, updatedData, { new: true });
 
-    res.status(200).json({
+    res.json({
       message: 'Farmer profile updated successfully',
       farmer: updatedFarmer
     });
 
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: 'Update failed', error: error.message });
+    res.json({ message: 'Update failed', error: error.message });
   }
 }
 
@@ -140,7 +140,7 @@ exports.deleteFarmer = async (req, res) => {
     const deletedFarmer = await Farmer.findOneAndDelete({ farmer_code: req.params.code });
 
     if (!deletedFarmer) {
-      return res.status(404).json({ message: 'Farmer not found' });
+      return res.json({ message: 'Farmer not found' });
     }
 
     console.log("✅ Deleted farmer:", deletedFarmer);
@@ -171,7 +171,7 @@ exports.deleteFarmer = async (req, res) => {
 
   } catch (error) {
     console.error("❌ Error deleting farmer:", error);
-    res.status(500).json({ message: 'Failed to delete farmer', error: error.message });
+    res.json({ message: 'Failed to delete farmer', error: error.message });
   }
 };
 

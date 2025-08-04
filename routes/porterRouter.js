@@ -42,7 +42,7 @@ router.post('/', verifyToken, authorizeRoles('admin'), porterController.createPo
 router.get('/', verifyToken, authorizeRoles('admin'), porterController.getAllPorters);
 router.get('/:id', verifyToken, authorizeRoles('admin'), porterController.getPorterById);
 
-router.put('/myprofile', verifyToken, authorizeRoles('porter','admin'), porterController.updatePorter);
+router.put('/myprofile', verifyToken, authorizeRoles('porter'), porterController.updatePorter);
 router.put('/:id', verifyToken, authorizeRoles('admin','porter'), porterController.updatePorter);
 
 // router.put('/update/me', verifyToken,authorizeRoles('admin','porter'),porterController.updatePorter );
