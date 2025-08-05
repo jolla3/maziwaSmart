@@ -17,19 +17,19 @@ exports.createPorter = async (req, res) => {
 
      const nameExists = await Porter.findOne({ name });
         if (nameExists) {
-        return res.status(400).json({ message: `A porter with this ${name} already exists` });
+        return res.json({ message: `A porter with this ${name} already exists` });
         }
 
      const emailExists = await Porter.findOne({ email });
     if (emailExists) {
-      return res.status(400).json({ message: 'A porter with this email already exists' });
+      return res.json({ message: 'A porter with this email already exists' });
     }
 
 
     // Optional duplicate phone check
     const phoneExists = await Porter.findOne({ phone })
     if (phoneExists) {
-      return res.status(400).json({ message: 'Porter with that phone already exists' });
+      return res.json({ message: 'Porter with that phone already exists' });
     }
     const difpassword="12345678"
       const password= await bcrypt.hash(difpassword,10)
@@ -61,7 +61,7 @@ exports.createPorter = async (req, res) => {
     );
 
 
-    res.status(201).json({
+    res.json({
       message: 'Porter created successfully',
       porter: {
         id: newPorter._id,
@@ -73,7 +73,7 @@ exports.createPorter = async (req, res) => {
     });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: 'Failed to create porter', error: error.message });
+    res.json({ message: 'Failed to create porter', error: error.message });
   }
 };
 
@@ -83,9 +83,9 @@ exports.getAllPorters = async (req, res) => {
   try {
     const adminId = req.user.userId;
     const porters = await Porter.find({ created_by: adminId });
-    res.status(200).json({ porters });
+    res.json({ porters });
   } catch (error) {
-    res.status(500).json({ message: 'Error retrieving porters', error: error.message });
+    res.json({ message: 'Error retrieving porters', error: error.message });
   }
 };
 
@@ -96,12 +96,12 @@ exports.getPorterById = async (req, res) => {
     const porter = await Porter.findOne({ _id: req.params.id, created_by: adminId });
 
     if (!porter) {
-      return res.status(404).json({ message: 'Porter not found or you are not authorized' });
+      return res.json({ message: 'Porter not found or you are not authorized' });
     }
 
-    res.status(200).json({ porter });
+    res.json({ porter });
   } catch (error) {
-    res.status(500).json({ message: 'Error retrieving porter', error: error.message });
+    res.json({ message: 'Error retrieving porter', error: error.message });
   }
 };
 
@@ -122,16 +122,16 @@ if (requesterRole === 'admin') {
 
   const porter = await Porter.findOne({ _id: porterId, created_by: requesterId });
   if (!porter) {
-    return res.status(403).json({ message: 'Not authorized to update this porter' });
+    return res.json({ message: 'Not authorized to update this porter' });
   }
 
   if (updatedData.password) {
-    return res.status(403).json({ message: 'Admins cannot update porter passwords' });
+    return res.json({ message: 'Admins cannot update porter passwords' });
   }
 
   const updatedPorter = await Porter.findByIdAndUpdate(porterId, updatedData, { new: true });
 
-  return res.status(200).json({
+  return res.json({
     message: 'Admin updated porter successfully',
     porter: updatedPorter
   });
@@ -139,23 +139,23 @@ if (requesterRole === 'admin') {
 
 
     } else {
-      return res.status(403).json({ message: 'Access denied: Invalid role' });
+      return res.json({ message: 'Access denied: Invalid role' });
     }
 
     // Proceed to update
     const porter = await Porter.findById(porterId);
-    if (!porter) return res.status(404).json({ message: 'Porter not found' });
+    if (!porter) return res.json({ message: 'Porter not found' });
 
     const updatedPorter = await Porter.findByIdAndUpdate(porterId, updatedData, { new: true });
 
-    res.status(200).json({
+    res.json({
       message: `${requesterRole === 'admin' ? 'Admin updated porter' : 'Porter updated profile'} successfully`,
       porter: updatedPorter
     });
 
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: 'Update failed', error: error.message });
+    res.json({ message: 'Update failed', error: error.message });
   }
 }
 
@@ -167,7 +167,7 @@ exports.deletePorter = async (req, res) => {
 
     const porter = await Porter.findOne({ _id: porterId, created_by: adminId });
     if (!porter) {
-      return res.status(403).json({ message: "Not authorized to delete this porter" });
+      return res.json({ message: "Not authorized to delete this porter" });
     }
 
     await Porter.findByIdAndDelete(porterId);
@@ -184,6 +184,6 @@ exports.deletePorter = async (req, res) => {
 
     res.json({ message: `Porter ${porter.name} deleted successfully` });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.json({ message: error.message });
   }
 };
