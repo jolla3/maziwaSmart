@@ -1,4 +1,4 @@
-const {MilkRecord,MilkAnomaly} = require('../models/model');
+const {MilkRecord,MilkAnomaly, Farmer, Porter,DailyMilkSummary,MilkAnomaly,MilkRecord,getDailyMilkSummaryForAdmin,} = require('../models/model');
 // const  = require('../models/MilkAnomaly');
 
 exports.addMilkRecord = async (req, res) => {
@@ -44,31 +44,89 @@ exports.addMilkRecord = async (req, res) => {
 };
 
 
-
-exports.getDailyMilkSummaries = async (req, res) => {
+exports.getDailyMilkSummaryForAdmin = async (req, res) => {
   try {
-    if (req.user.role !== 'admin') {
-      return res.status(403).json({ message: 'Access denied: Admins only' });
-    }
+    // Parse ?date=YYYY-MM-DD or use today
+    const queryDate = req.query.date ? new Date(req.query.date) : new Date();
+    const startOfDay = new Date(queryDate.setHours(0, 0, 0, 0));
+    const endOfDay = new Date(queryDate.setHours(23, 59, 59, 999));
 
-    let { date } = req.query;
-
-    // If no date provided, use today
-    const targetDate = date ? new Date(date) : new Date();
-
-    const startOfDay = new Date(targetDate.setHours(0, 0, 0, 0));
-    const endOfDay = new Date(targetDate.setHours(23, 59, 59, 999));
-
+    // Fetch all milk summaries for the day
     const summaries = await DailyMilkSummary.find({
       summary_date: { $gte: startOfDay, $lte: endOfDay }
-    }).sort({ porter_name: 1, time_slot: 1 });
+    }).lean();
+
+    if (summaries.length === 0) {
+      return res.status(200).json({
+        message: 'No milk summaries found for this date',
+        date: startOfDay.toISOString().split('T')[0],
+        summaries: [],
+        daily_total: 0
+      });
+    }
+
+    // Fetch all farmer names for mapping
+    const farmers = await Farmer.find().lean();
+    const farmerMap = {};
+    farmers.forEach(f => {
+      farmerMap[f.farmer_code] = f.fullname;
+    });
+
+    // Group by porter → time slot → farmer
+    const grouped = {};
+    let dailyTotal = 0;
+
+    for (const rec of summaries) {
+      const porterId = rec.porter_id.toString();
+      const slot = rec.time_slot;
+      const farmerCode = rec.farmer_code;
+      const litres = rec.total_litres;
+
+      dailyTotal += litres;
+
+      if (!grouped[porterId]) {
+        grouped[porterId] = {
+          porter_id: porterId,
+          porter_name: rec.porter_name,
+          slots: {}
+        };
+      }
+
+      if (!grouped[porterId].slots[slot]) {
+        grouped[porterId].slots[slot] = {
+          time_slot: slot,
+          total_litres: 0,
+          farmers: []
+        };
+      }
+
+      grouped[porterId].slots[slot].total_litres += litres;
+      grouped[porterId].slots[slot].farmers.push({
+        farmer_code: farmerCode,
+        farmer_name: farmerMap[farmerCode] || 'Unknown Farmer',
+        litres
+      });
+    }
+
+    // Format final structure
+    const final = Object.values(grouped).map(porter => ({
+      porter_id: porter.porter_id,
+      porter_name: porter.porter_name,
+      slots: Object.values(porter.slots)
+    }));
 
     res.status(200).json({
-      message: 'Daily milk summaries fetched successfully',
-      date: startOfDay,
-      summaries
+      message: 'Daily milk summary fetched successfully',
+      date: startOfDay.toISOString().split('T')[0],
+      summaries: final,
+      daily_total: dailyTotal
     });
+
   } catch (error) {
-    res.status(500).json({ message: 'Failed to fetch summaries', error: error.message });
+    console.error('Error in admin summary:', error);
+    res.status(500).json({
+      message: 'Failed to fetch daily milk summary',
+      error: error.message
+    });
   }
 };
