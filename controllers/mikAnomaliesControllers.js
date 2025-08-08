@@ -42,3 +42,33 @@ exports.addMilkRecord = async (req, res) => {
     res.status(500).json({ message: 'Failed to save milk record', error: error.message });
   }
 };
+
+
+
+exports.getDailyMilkSummaries = async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ message: 'Access denied: Admins only' });
+    }
+
+    let { date } = req.query;
+
+    // If no date provided, use today
+    const targetDate = date ? new Date(date) : new Date();
+
+    const startOfDay = new Date(targetDate.setHours(0, 0, 0, 0));
+    const endOfDay = new Date(targetDate.setHours(23, 59, 59, 999));
+
+    const summaries = await DailyMilkSummary.find({
+      summary_date: { $gte: startOfDay, $lte: endOfDay }
+    }).sort({ porter_name: 1, time_slot: 1 });
+
+    res.status(200).json({
+      message: 'Daily milk summaries fetched successfully',
+      date: startOfDay,
+      summaries
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Failed to fetch summaries', error: error.message });
+  }
+};
