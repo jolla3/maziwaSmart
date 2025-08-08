@@ -13,7 +13,6 @@ const {  User,
 // const  = require('../models/MilkAnomaly');
 
 
-
 exports.getDailyMilkSummaryForAdmin = async (req, res) => {
   try {
     const queryDate = req.query.date ? new Date(req.query.date) : new Date();
@@ -45,8 +44,8 @@ exports.getDailyMilkSummaryForAdmin = async (req, res) => {
     const porters = await Porter.find({ _id: { $in: porterIds } }).lean();
     const porterMap = {};
     porters.forEach(p => {
-      porterMap[p._id.toString()] = p.name
-    })
+      porterMap[p._id.toString()] = p.name;
+    });
 
     // Group by porter → time slot → farmer
     const grouped = {};
@@ -56,7 +55,7 @@ exports.getDailyMilkSummaryForAdmin = async (req, res) => {
       const porterId = rec.porter_id.toString();
       const slot = rec.time_slot;
       const farmerCode = rec.farmer_code;
-      const litres = rec.total_litres;
+      const litres = rec.total_litres; // already correct from DB
 
       dailyTotal += litres;
 
@@ -76,15 +75,15 @@ exports.getDailyMilkSummaryForAdmin = async (req, res) => {
         };
       }
 
+      // Instead of += litres, just sum once per farmer entry
       grouped[porterId].slots[slot].total_litres += litres;
       grouped[porterId].slots[slot].farmers.push({
         farmer_code: farmerCode,
         farmer_name: farmerMap[farmerCode] || 'Unknown Farmer',
-        litres
+        litres // direct from porter, no multiplication
       });
     }
 
-    // Format final structure
     const final = Object.values(grouped).map(porter => ({
       porter_id: porter.porter_id,
       porter_name: porter.porter_name,
