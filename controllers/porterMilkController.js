@@ -1,10 +1,6 @@
 const {Farmer,MilkRecord,Porter,PorterLog} = require('../models/model');
 
 // 🚀 Add Milk Record
-const MilkRecord = require('../models/MilkRecord');
-const Farmer = require('../models/Farmer');
-const PorterLog = require('../models/PorterLog');
-const DailyMilkSummary = require('../models/DailyMilkSummary');
 
 exports.addMilkRecord = async (req, res) => {
   try {
