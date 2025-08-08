@@ -16,12 +16,10 @@ const {  User,
 
 exports.getDailyMilkSummaryForAdmin = async (req, res) => {
   try {
-    // Parse ?date=YYYY-MM-DD or use today
     const queryDate = req.query.date ? new Date(req.query.date) : new Date();
     const startOfDay = new Date(queryDate.setHours(0, 0, 0, 0));
     const endOfDay = new Date(queryDate.setHours(23, 59, 59, 999));
 
-    // Fetch all milk summaries for the day
     const summaries = await DailyMilkSummary.find({
       summary_date: { $gte: startOfDay, $lte: endOfDay }
     }).lean();
@@ -35,12 +33,20 @@ exports.getDailyMilkSummaryForAdmin = async (req, res) => {
       });
     }
 
-    // Fetch all farmer names for mapping
+    // Get all farmer names
     const farmers = await Farmer.find().lean();
     const farmerMap = {};
     farmers.forEach(f => {
       farmerMap[f.farmer_code] = f.fullname;
     });
+
+    // Get porter names by ID
+    const porterIds = [...new Set(summaries.map(s => s.porter_id.toString()))];
+    const porters = await Porter.find({ _id: { $in: porterIds } }).lean();
+    const porterMap = {};
+    porters.forEach(p => {
+      porterMap[p._id.toString()] = p.name
+    })
 
     // Group by porter → time slot → farmer
     const grouped = {};
@@ -57,7 +63,7 @@ exports.getDailyMilkSummaryForAdmin = async (req, res) => {
       if (!grouped[porterId]) {
         grouped[porterId] = {
           porter_id: porterId,
-          porter_name: rec.porter_name,
+          porter_name: porterMap[porterId] || 'Unknown Porter',
           slots: {}
         };
       }
