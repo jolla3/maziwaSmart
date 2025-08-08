@@ -6,74 +6,95 @@
 const bcrypt = require('bcrypt');
 
 
-const { Porter ,User,MilkRecord,PorterLog } = require('../models/model');
+const { Porter,Farmer ,User,MilkRecord,PorterLog, DailyMilkSummary } = require('../models/model');
 
 // Create Porter (only saves to Porter table, not User)
+// controllers/milkController.js
 
-exports.createPorter = async (req, res) => {
+exports.getDailyMilkSummaryForAdmin = async (req, res) => {
   try {
-    const { name, phone,email, assigned_route } = req.body;
-    const adminId = req.user.userId;
+    // Parse ?date=YYYY-MM-DD or use today
+    const queryDate = req.query.date ? new Date(req.query.date) : new Date();
+    const startOfDay = new Date(queryDate.setHours(0, 0, 0, 0));
+    const endOfDay = new Date(queryDate.setHours(23, 59, 59, 999));
 
-     const nameExists = await Porter.findOne({ name });
-        if (nameExists) {
-        return res.json({ message: `A porter with this ${name} already exists` });
-        }
+    // Fetch all milk summaries for the day
+    const summaries = await DailyMilkSummary.find({
+      summary_date: { $gte: startOfDay, $lte: endOfDay }
+    }).lean();
 
-     const emailExists = await Porter.findOne({ email });
-    if (emailExists) {
-      return res.json({ message: 'A porter with this email already exists' });
+    if (summaries.length === 0) {
+      return res.status(200).json({
+        message: 'No milk summaries found for this date',
+        date: startOfDay.toISOString().split('T')[0],
+        summaries: [],
+        daily_total: 0
+      });
     }
 
-
-    // Optional duplicate phone check
-    const phoneExists = await Porter.findOne({ phone })
-    if (phoneExists) {
-      return res.json({ message: 'Porter with that phone already exists' });
-    }
-    const difpassword="12345678"
-      const password= await bcrypt.hash(difpassword,10)
-    const newPorter = new Porter({
-      name,
-      phone,
-      email,
-      password,
-      assigned_route,
-      created_by: adminId,
-      is_active: true,
+    // Fetch all farmer names for mapping
+    const farmers = await Farmer.find().lean();
+    const farmerMap = {};
+    farmers.forEach(f => {
+      farmerMap[f.farmer_code] = f.fullname
     });
 
-    // // Optional: Update farmer to link manager
-    // await Porter.findByIdAndUpdate(
-    //   adminId,
-    //   { $push: {: newPorter._id } },
-    //   { new: true }
-    // );
+    // Group by porter → time slot → farmer
+    const grouped = {};
+    let dailyTotal = 0;
 
+    for (const rec of summaries) {
+      const porterId = rec.porter_id.toString();
+      const slot = rec.time_slot;
+      const farmerCode = rec.farmer_code;
+      const litres = rec.total_litres;
 
-    await newPorter.save();
+      dailyTotal += litres;
 
-    // Optional: Update farmer to link manager
-    await User.findByIdAndUpdate(
-      adminId,
-      { $push: { porters: newPorter._id } },
-      { new: true }
-    );
-
-
-    res.json({
-      message: 'Porter created successfully',
-      porter: {
-        id: newPorter._id,
-        name: newPorter.name,
-        phone: newPorter.phone,
-        assigned_route: newPorter.assigned_route,
-        created_by: adminId
+      if (!grouped[porterId]) {
+        grouped[porterId] = {
+          porter_id: porterId,
+          porter_name: rec.porter_name,
+          slots: {}
+        };
       }
+
+      if (!grouped[porterId].slots[slot]) {
+        grouped[porterId].slots[slot] = {
+          time_slot: slot,
+          total_litres: 0,
+          farmers: []
+        };
+      }
+
+      grouped[porterId].slots[slot].total_litres += litres;
+      grouped[porterId].slots[slot].farmers.push({
+        farmer_code: farmerCode,
+        farmer_name: farmerMap[farmerCode] || 'Unknown Farmer',
+        litres
+      });
+    }
+
+    // Format final structure
+    const final = Object.values(grouped).map(porter => ({
+      porter_id: porter.porter_id,
+      porter_name: porter.porter_name,
+      slots: Object.values(porter.slots)
+    }));
+
+    res.status(200).json({
+      message: 'Daily milk summary fetched successfully',
+      date: startOfDay.toISOString().split('T')[0],
+      summaries: final,
+      daily_total: dailyTotal
     });
+
   } catch (error) {
-    console.error(error);
-    res.json({ message: 'Failed to create porter', error: error.message });
+    console.error('Error in admin summary:', error);
+    res.status(500).json({
+      message: 'Failed to fetch daily milk summary',
+      error: error.message
+    });
   }
 };
 
