@@ -1,9 +1,18 @@
-const {MilkRecord,MilkAnomaly} = require('../models/model');
+const {  User,
+  Farmer,
+  Manager,
+  Porter,
+  PorterLog, 
+  Breed,
+  Cow,
+  MilkRecord,
+  DailyMilkSummary,
+  Insemination,
+  VetLog,
+  MilkAnomaly} = require('../models/model');
 // const  = require('../models/MilkAnomaly');
 
 
-const DailyMilkSummary = require('../models/DailyMilkSummary');
-const Farmer = require('../models/Farmer');
 
 exports.getDailyMilkSummaryForAdmin = async (req, res) => {
   try {
