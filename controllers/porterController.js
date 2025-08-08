@@ -11,88 +11,100 @@ const { Porter,Farmer ,User,MilkRecord,PorterLog, DailyMilkSummary } = require('
 // Create Porter (only saves to Porter table, not User)
 // controllers/milkController.js
 
-exports.getDailyMilkSummaryForAdmin = async (req, res) => {
+exports.addMilkRecord = async (req, res) => {
   try {
-    // Parse ?date=YYYY-MM-DD or use today
-    const queryDate = req.query.date ? new Date(req.query.date) : new Date();
-    const startOfDay = new Date(queryDate.setHours(0, 0, 0, 0));
-    const endOfDay = new Date(queryDate.setHours(23, 59, 59, 999));
-
-    // Fetch all milk summaries for the day
-    const summaries = await DailyMilkSummary.find({
-      summary_date: { $gte: startOfDay, $lte: endOfDay }
-    }).lean();
-
-    if (summaries.length === 0) {
-      return res.status(200).json({
-        message: 'No milk summaries found for this date',
-        date: startOfDay.toISOString().split('T')[0],
-        summaries: [],
-        daily_total: 0
-      });
+    if (req.user.role !== 'porter') {
+      return res.status(403).json({ message: 'Only porters can add milk records' });
     }
 
-    // Fetch all farmer names for mapping
-    const farmers = await Farmer.find().lean();
-    const farmerMap = {};
-    farmers.forEach(f => {
-      farmerMap[f.farmer_code] = f.fullname
+    const { farmer_code, litres } = req.body;
+
+    // Check farmer exists
+    const farmer = await Farmer.findOne({ farmer_code });
+    if (!farmer) {
+      return res.status(404).json({ message: 'Farmer not found' });
+    }
+
+    // Determine time slot
+    const now = new Date();
+    const hour = now.getHours();
+    let time_slot = '';
+    if (hour < 10) time_slot = 'morning';
+    else if (hour < 15) time_slot = 'midmorning';
+    else time_slot = 'afternoon';
+
+    // Calculate date range for today
+    const startOfDay = new Date(now.setHours(0, 0, 0, 0));
+    const endOfDay = new Date(now.setHours(23, 59, 59, 999));
+
+    // Prevent duplicates for the same farmer/porter/slot/day
+    const exists = await MilkRecord.findOne({
+      created_by: req.user.id,
+      farmer_code,
+      time_slot,
+      collection_date: { $gte: startOfDay, $lte: endOfDay }
     });
 
-    // Group by porter → time slot → farmer
-    const grouped = {};
-    let dailyTotal = 0;
-
-    for (const rec of summaries) {
-      const porterId = rec.porter_id.toString();
-      const slot = rec.time_slot;
-      const farmerCode = rec.farmer_code;
-      const litres = rec.total_litres;
-
-      dailyTotal += litres;
-
-      if (!grouped[porterId]) {
-        grouped[porterId] = {
-          porter_id: porterId,
-          porter_name: rec.porter_name,
-          slots: {}
-        };
-      }
-
-      if (!grouped[porterId].slots[slot]) {
-        grouped[porterId].slots[slot] = {
-          time_slot: slot,
-          total_litres: 0,
-          farmers: []
-        };
-      }
-
-      grouped[porterId].slots[slot].total_litres += litres;
-      grouped[porterId].slots[slot].farmers.push({
-        farmer_code: farmerCode,
-        farmer_name: farmerMap[farmerCode] || 'Unknown Farmer',
-        litres
+    if (exists) {
+      return res.status(400).json({
+        message: 'Milk already collected for this farmer in this time slot today'
       });
     }
 
-    // Format final structure
-    const final = Object.values(grouped).map(porter => ({
-      porter_id: porter.porter_id,
-      porter_name: porter.porter_name,
-      slots: Object.values(porter.slots)
-    }));
+    // 1. Save raw Milk Record
+    const newRecord = await MilkRecord.create({
+      created_by: req.user.id,
+      farmer_code,
+      litres,
+      collection_date: new Date(),
+      time_slot
+    });
 
-    res.status(200).json({
-      message: 'Daily milk summary fetched successfully',
-      date: startOfDay.toISOString().split('T')[0],
-      summaries: final,
-      daily_total: dailyTotal
+    // 2. Log porter activity
+    await PorterLog.create({
+      porter_id: req.user.id,
+      porter_name: req.user.name,
+      activity_type: 'collection',
+      log_date: new Date(),
+      litres_collected: litres,
+      remarks: `Collected milk from farmer ${farmer.fullname} (${farmer_code}) during ${time_slot}`
+    });
+
+    // 3. Update (or insert) DailyMilkSummary
+    await DailyMilkSummary.findOneAndUpdate(
+      {
+        summary_date: startOfDay,
+        porter_id: req.user.id,
+        farmer_code,
+        time_slot
+      },
+      {
+        $setOnInsert: {
+          porter_name: req.user.name,
+          summary_date: startOfDay,
+          porter_id: req.user.id,
+          farmer_code,
+          time_slot
+        },
+        $inc: {
+          total_litres: litres
+        }
+      },
+      { upsert: true, new: true }
+    );
+
+    // ✅ Summary now has litres per farmer per slot
+    // Grouping & subtotals will be handled during fetch
+
+    res.status(201).json({
+      message: 'Milk record added, activity logged, summary updated',
+      record: newRecord
     });
 
   } catch (error) {
-    console.error('Error in admin summary:', error);
+    console.error('Error adding milk record:', error);
     res.status(500).json({
-      message: 'Failed to fetch daily milk summary',
+      message: 'Failed to add milk record',
       error: error.message
     });
   }
