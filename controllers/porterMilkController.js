@@ -1,4 +1,4 @@
-const {Farmer,MilkRecord,Porter,PorterLog} = require('../models/model');
+const {Farmer,MilkRecord,Porter,PorterLog,DailyMilkSummary} = require('../models/model');
 
 // 🚀 Add Milk Record
 
