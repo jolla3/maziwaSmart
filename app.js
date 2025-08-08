@@ -74,7 +74,7 @@ const porterDashStatsRouter= require('./routes/porterDashStatsRouter')
 app.use('/api/porterstats',porterDashStatsRouter)
 
 const anomaliesRouter = require("./routes/anomaliesRouter");
-app.use('/api/porterstats',anomaliesRouter)
+app.use("/api/recordstats", anomaliesRouter);
 
 
 
