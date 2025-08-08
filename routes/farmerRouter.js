@@ -20,9 +20,7 @@
 const express = require('express');
 const router = express.Router();
 const { verifyToken, authorizeRoles} = require('../middleware/authMiddleware');
-const farmerController = require('../controllers/farmerController');
-
-
+const farmerController = require('../controllers/farmerController')
 
 router.post('/',verifyToken, authorizeRoles('admin'),  farmerController.createFarmer);
 router.get('/', verifyToken, authorizeRoles('admin'), farmerController.getAllFarmers)

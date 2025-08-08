@@ -142,6 +142,24 @@ collection_date: { type: Date, default: Date.now },
 })
 const MilkRecord = mongoose.model('MilkRecord', milkRecordSchema);
 
+
+// models/DailyMilkSummary.js
+
+const dailyMilkSummarySchema = new mongoose.Schema({
+  summary_date: { type: Date, required: true }, // start of day
+  porter_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Porter', required: true },
+  porter_code: { type: String },
+  farmer_code: { type: Number, required: true },
+  time_slot: { type: String, enum: ['morning', 'midmorning', 'afternoon'], required: true },
+  total_litres: { type: Number, default: 0 },
+}, {
+  timestamps: true
+});
+
+dailyMilkSummarySchema.index({ summary_date: 1, porter_id: 1, farmer_code: 1, time_slot: 1 }, { unique: true });
+
+const DailyMilkSummary = mongoose.model('DailyMilkSummary', dailyMilkSummarySchema);
+
 // ============================
 // Breed Schema
 // ============================
@@ -289,6 +307,7 @@ module.exports = {
   Breed,
   Cow,
   MilkRecord,
+  DailyMilkSummary,
   Insemination,
   VetLog,
   MilkAnomaly,
