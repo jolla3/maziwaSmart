@@ -33,7 +33,7 @@ exports.addMilkRecord = async (req, res) => {
     });
 
     if (exists) {
-      return res.status(400).json({ message: 'Milk already collected for this farmer at this time today' });
+      return res.status(400).json({ message: 'Milk already collected for this farmer at this time today' })
     }
 
     // 1. Save Milk Record
