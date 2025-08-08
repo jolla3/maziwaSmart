@@ -1,6 +1,11 @@
 const {Farmer,MilkRecord,Porter,PorterLog} = require('../models/model');
 
 // 🚀 Add Milk Record
+const MilkRecord = require('../models/MilkRecord');
+const Farmer = require('../models/Farmer');
+const PorterLog = require('../models/PorterLog');
+const DailyMilkSummary = require('../models/DailyMilkSummary');
+
 exports.addMilkRecord = async (req, res) => {
   try {
     if (req.user.role !== 'porter') {
@@ -8,6 +13,7 @@ exports.addMilkRecord = async (req, res) => {
     }
 
     const { farmer_code, litres } = req.body;
+
     const farmerExists = await Farmer.findOne({ farmer_code });
     if (!farmerExists) {
       return res.status(404).json({ message: 'Farmer not found' });
@@ -20,10 +26,11 @@ exports.addMilkRecord = async (req, res) => {
     else if (hour < 15) time_slot = 'midmorning';
     else time_slot = 'afternoon';
 
-    // Prevent duplicate for same day/slot/farmer
+    // Define start and end of day
     const startOfDay = new Date(now.setHours(0, 0, 0, 0));
     const endOfDay = new Date(now.setHours(23, 59, 59, 999));
 
+    // Check for duplicate record
     const exists = await MilkRecord.findOne({
       created_by: req.user.id,
       farmer_code,
@@ -44,21 +51,40 @@ exports.addMilkRecord = async (req, res) => {
       time_slot
     });
 
-    // Log the activity to PorterLogs
+    // Log activity
     await PorterLog.create({
       porter_id: req.user.id,
-      porter_name: req.user.name, // Assuming it's in token
+      porter_name: req.user.name,
       activity_type: 'collection',
       log_date: new Date(),
       litres_collected: litres,
       remarks: `Collected milk from farmer ${farmerExists.fullname} (${farmer_code}) during ${time_slot}`
     });
 
-    res.status(201).json({ message: 'Milk record added and activity logged', record: newRecord });
+    // Update or insert into daily milk summary
+    await DailyMilkSummary.findOneAndUpdate(
+      {
+        summary_date: startOfDay,
+        porter_id: req.user.id,
+        farmer_code,
+        time_slot
+      },
+      {
+        $inc: { total_litres: litres },
+        $setOnInsert: {
+          porter_code: req.user.code || '', // if available
+        }
+      },
+      { upsert: true, new: true }
+    );
+
+    res.status(201).json({ message: 'Milk record added and summary updated', record: newRecord });
   } catch (error) {
+    console.error('Error adding milk record:', error);
     res.status(500).json({ message: 'Failed to add milk record', error: error.message });
   }
-}
+};
+
 // 📥 View All Milk Records by Porter
 
 exports.getMyMilkRecords = async (req, res) => {
