@@ -16,12 +16,23 @@ exports.addMilkRecord = async (req, res) => {
     }
 
     // Determine time slot
-   const now = new Date();
+const now = new Date();
 const hour = now.getHours();
+
 let time_slot = '';
-if (hour < 10) time_slot = 'morning';
-else if (hour < 15) time_slot = 'midmorning';
-else time_slot = 'afternoon';
+
+if (hour >= 5 && hour < 10) {
+  time_slot = 'morning';
+} else if (hour >= 10 && hour < 12) {
+  time_slot = 'midmorning';
+} else if (hour >= 12 && hour < 17) {
+  time_slot = 'afternoon';
+} else if (hour >= 17 && hour < 20) {
+  time_slot = 'evening';
+} else {
+  time_slot = 'night';
+}
+
 
 const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
 const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
