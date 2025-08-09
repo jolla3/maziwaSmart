@@ -11,100 +11,144 @@ const {  User,
   VetLog,
   MilkAnomaly} = require('../models/model');
 // const  = require('../models/MilkAnomaly');
+// controllers/milkController.js
+const { MilkRecord } = require('../models'); // adjust import path
+
 exports.getDailyMilkSummaryForAdmin = async (req, res) => {
   try {
-    const queryDate = req.query.date ? new Date(req.query.date) : new Date();
-    const startOfDay = new Date(queryDate.setHours(0, 0, 0, 0));
-    const endOfDay = new Date(queryDate.setHours(23, 59, 59, 999));
+    const { date } = req.query; // optional ?date=YYYY-MM-DD
+    const targetDate = date ? new Date(date) : new Date();
 
-    const summaries = await DailyMilkSummary.find({
-      summary_date: { $gte: startOfDay, $lte: endOfDay }
-    }).lean();
+    // Normalize to start of the day
+    const startOfDay = new Date(targetDate.setHours(0, 0, 0, 0));
+    const endOfDay = new Date(startOfDay);
+    endOfDay.setDate(endOfDay.getDate() + 1);
 
-    if (summaries.length === 0) {
-      return res.status(200).json({
-        message: 'No milk summaries found for this date',
-        date: startOfDay.toISOString().split('T')[0],
-        summaries: [],
-        daily_total: 0
-      });
-    }
-
-    // Get farmer names
-    const farmers = await Farmer.find().lean();
-    const farmerMap = {};
-    farmers.forEach(f => {
-      farmerMap[f.farmer_code] = f.fullname;
-    });
-
-    // Get porter names by ID (only for those active that day)
-    const porterIds = [...new Set(summaries.map(s => s.porter_id.toString()))];
-    const porters = await Porter.find({ _id: { $in: porterIds } }).lean();
-    const porterMap = {};
-    porters.forEach(p => {
-      porterMap[p._id.toString()] = p.name;
-    });
-
-    // Time slot order map
-    const slotOrder = { morning: 1, midmorning: 2, afternoon: 3 };
-
-    // Group data
-    const grouped = {};
-    let dailyTotal = 0;
-
-    for (const rec of summaries) {
-      const porterId = rec.porter_id.toString();
-      const slot = rec.time_slot;
-      const farmerCode = rec.farmer_code;
-      const litres = rec.total_litres;
-
-      dailyTotal += litres;
-
-      if (!grouped[porterId]) {
-        grouped[porterId] = {
-          porter_id: porterId,
-          porter_name: porterMap[porterId] || 'Unknown Porter',
-          slots: {}
-        };
+    const summaries = await MilkRecord.aggregate([
+      {
+        $match: {
+          collection_date: { $gte: startOfDay, $lt: endOfDay }
+        }
+      },
+      // Join porter info
+      {
+        $lookup: {
+          from: 'porters',
+          localField: 'created_by',
+          foreignField: '_id',
+          as: 'porter'
+        }
+      },
+      { $unwind: '$porter' },
+      // Join farmer info
+      {
+        $lookup: {
+          from: 'farmers',
+          localField: 'farmer',
+          foreignField: '_id',
+          as: 'farmer'
+        }
+      },
+      { $unwind: '$farmer' },
+      // Add order index for timeslot
+      {
+        $addFields: {
+          timeSlotOrder: {
+            $switch: {
+              branches: [
+                { case: { $eq: ['$time_slot', 'morning'] }, then: 1 },
+                { case: { $eq: ['$time_slot', 'midmorning'] }, then: 2 },
+                { case: { $eq: ['$time_slot', 'afternoon'] }, then: 3 }
+              ],
+              default: 99
+            }
+          }
+        }
+      },
+      // Group by porter → timeslot → farmer
+      {
+        $group: {
+          _id: {
+            porter_id: '$porter._id',
+            porter_name: '$porter.name',
+            time_slot: '$time_slot',
+            farmer_code: '$farmer_code',
+            farmer_name: '$farmer.fullname'
+          },
+          total_litres: { $sum: '$litres' }
+        }
+      },
+      // Sort
+      {
+        $sort: {
+          '_id.porter_name': 1,
+          'timeSlotOrder': 1,
+          '_id.farmer_code': 1
+        }
+      },
+      // Regroup by porter → timeslot
+      {
+        $group: {
+          _id: {
+            porter_id: '$_id.porter_id',
+            porter_name: '$_id.porter_name',
+            time_slot: '$_id.time_slot'
+          },
+          farmers: {
+            $push: {
+              farmer_code: '$_id.farmer_code',
+              farmer_name: '$_id.farmer_name',
+              litres: '$total_litres'
+            }
+          },
+          total_litres_slot: { $sum: '$total_litres' }
+        }
+      },
+      // Sort by porter and timeslot order
+      {
+        $sort: {
+          '_id.porter_name': 1,
+          'timeSlotOrder': 1
+        }
+      },
+      // Regroup by porter
+      {
+        $group: {
+          _id: {
+            porter_id: '$_id.porter_id',
+            porter_name: '$_id.porter_name'
+          },
+          slots: {
+            $push: {
+              time_slot: '$_id.time_slot',
+              farmers: '$farmers',
+              total_litres_slot: '$total_litres_slot'
+            }
+          },
+          total_litres_porter: { $sum: '$total_litres_slot' }
+        }
+      },
+      // Final format
+      {
+        $project: {
+          _id: 0,
+          porter_id: '$_id.porter_id',
+          porter_name: '$_id.porter_name',
+          slots: 1,
+          total_litres_porter: 1
+        }
       }
+    ]);
 
-      if (!grouped[porterId].slots[slot]) {
-        grouped[porterId].slots[slot] = {
-          time_slot: slot,
-          total_litres: 0,
-          farmers: []
-        };
-      }
-
-      grouped[porterId].slots[slot].total_litres += litres;
-      grouped[porterId].slots[slot].farmers.push({
-        farmer_code: farmerCode,
-        farmer_name: farmerMap[farmerCode] || 'Unknown Farmer',
-        litres
-      });
-    }
-
-    // Format final structure with sorting
-    const final = Object.values(grouped)
-      .map(porter => ({
-        porter_id: porter.porter_id,
-        porter_name: porter.porter_name,
-        slots: Object.values(porter.slots).sort((a, b) => slotOrder[a.time_slot] - slotOrder[b.time_slot])
-      }))
-      .sort((a, b) => a.porter_name.localeCompare(b.porter_name)); // Sort porters alphabetically
-
-    res.status(200).json({
-      message: 'Daily milk summary fetched successfully',
-      date: startOfDay.toISOString().split('T')[0],
-      summaries: final,
-      daily_total: dailyTotal
+    res.json({
+      date: startOfDay,
+      summaries
     });
 
   } catch (error) {
-    console.error('Error in admin summary:', error);
-    res.status(500).json({
-      message: 'Failed to fetch daily milk summary',
-      error: error.message
-    });
+    console.error('Error getting daily milk summary:', error);
+    res.status(500).json({ error: 'Server error' });
   }
 };
+
+// module.exports = { getDailyMilkSummaryForAdmin };
