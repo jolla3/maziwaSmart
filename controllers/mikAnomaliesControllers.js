@@ -12,7 +12,7 @@ const {  User,
   MilkAnomaly} = require('../models/model');
 // const  = require('../models/MilkAnomaly');
 // controllers/milkController.js
-const { MilkRecord } = require('../models'); // adjust import path
+// const { MilkRecord } = require('../models'); // adjust import path
 
 exports.getDailyMilkSummaryForAdmin = async (req, res) => {
   try {
