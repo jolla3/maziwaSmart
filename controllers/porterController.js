@@ -77,17 +77,35 @@ exports.createPorter = async (req, res) => {
   }
 };
 
-
-// Get All Porters
+// Get All Porters with pagination and search
 exports.getAllPorters = async (req, res) => {
   try {
     const adminId = req.user.userId;
-    const porters = await Porter.find({ created_by: adminId });
-    res.json({ porters });
+
+    const page = parseInt(req.query.page) || 1; // pages start from 1
+    const limit = parseInt(req.query.limit) || 10;
+    const search = req.query.search || "";
+
+    const query = {
+      created_by: adminId,
+      name: { $regex: search, $options: "i" }, // case-insensitive search by name
+    };
+
+    const totalCount = await Porter.countDocuments(query);
+
+    const porters = await Porter.find(query)
+      .skip((page - 1) * limit)
+      .limit(limit);
+
+    res.json({
+      porters,
+      totalCount,
+    });
   } catch (error) {
-    res.json({ message: 'Error retrieving porters', error: error.message });
+    res.status(500).json({ message: 'Error retrieving porters', error: error.message });
   }
 };
+
 
 // Get Single Porter by ID
 exports.getPorterById = async (req, res) => {

@@ -21,16 +21,12 @@ const hour = now.getHours();
 
 let time_slot = '';
 
-if (hour >= 5 && hour < 10) {
+if (hour >= 5 && hour < 12) {
   time_slot = 'morning';
-} else if (hour >= 10 && hour < 12) {
-  time_slot = 'midmorning';
 } else if (hour >= 12 && hour < 17) {
   time_slot = 'afternoon';
-} else if (hour >= 17 && hour < 20) {
-  time_slot = 'evening';
 } else {
-  time_slot = 'night';
+  time_slot = 'evening'; // or 'night' if you prefer
 }
 
 
