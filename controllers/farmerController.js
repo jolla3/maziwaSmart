@@ -66,20 +66,6 @@ exports.createFarmer = async (req, res) => {
 exports.getAllFarmers = async (req, res) => {
   try {
     const adminId = req.user.userId;
-    const farmers = await Farmer.find({ created_by: adminId });
-    res.json(farmers);
-  } catch (err) {
-    res.json({ message: 'Failed to fetch farmers' });
-  }
-};
-
-// ==============================
-// GET single farmer by code (admin must have created them)
-// ==============================
-// Get all farmers with pagination & total count
-exports.getAllFarmers = async (req, res) => {
-  try {
-    const adminId = req.user.userId;
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const search = req.query.search || "";
@@ -92,13 +78,31 @@ exports.getAllFarmers = async (req, res) => {
 
     const total = await Farmer.countDocuments(filter);
 
-    const farmers = await Farmer.find(filter)
-      .skip((page - 1) * limit)
-      .limit(limit);
+    // const farmers = await Farmer.find(filter)
+    //   .skip((page - 1) * limit)
+    //   .limit(limit);
 
     res.json({ farmers, total });
   } catch (err) {
     res.status(500).json({ message: "Failed to fetch farmers", error: err.message });
+  }
+};
+
+// ==============================
+// GET single farmer by code (admin must have created them)
+// ==============================
+exports.getFarmerByCode = async (req, res) => {
+  try {
+    const adminId = req.user.userId;
+    const farmer = await Farmer.findOne({
+      farmer_code: req.params.code,
+      created_by: adminId
+    });
+
+    if (!farmer) return res.json({ message: 'Farmer not found or not yours' });
+    res.json(farmer);
+  } catch (err) {
+    res.json({ message: 'Failed to fetch farmer' });
   }
 };
 
