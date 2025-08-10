@@ -29,6 +29,7 @@ exports.adminDashStats = async (req, res) => {
             recentAnomalies,
         ] = await Promise.all([
             Farmer.countDocuments(),
+            Porter.countDocuments(),
             MilkRecord.countDocuments(),
             // MilkAnomality.countDocuments(),
             User.countDocuments({ role: 'porter' }),
