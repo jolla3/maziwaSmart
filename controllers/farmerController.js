@@ -19,7 +19,7 @@ exports.createFarmer = async (req, res) => {
     // Check for duplicate email
     const emailExists = await Farmer.findOne({ farmer_code });
     if (emailExists) {
-      return res.json({ message: 'A farmer with this email already exists' });
+      return res.json({ message: 'A farmer with this Code already exists' });
     }
    const difpassword="12345678"
          const password= await bcrypt.hash(difpassword,10)
