@@ -32,7 +32,7 @@ exports.adminDashStats = async (req, res) => {
             Porter.countDocuments(),
             MilkRecord.countDocuments(),
             // MilkAnomality.countDocuments(),
-            User.countDocuments({ role: 'porter' }),
+            Porter.countDocuments({ role: 'porter' }),
             User.countDocuments({ isActive: true }),
 
             // Recent farmers
