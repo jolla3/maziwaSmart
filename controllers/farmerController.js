@@ -17,7 +17,7 @@ exports.createFarmer = async (req, res) => {
     const adminId = req.user.userId; // ID from JWT token
 
     // Check for duplicate email
-    const emailExists = await Farmer.findOne({ email });
+    const emailExists = await Farmer.findOne({ farmer_code });
     if (emailExists) {
       return res.json({ message: 'A farmer with this email already exists' });
     }
