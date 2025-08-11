@@ -6,7 +6,7 @@ const { verifyToken ,authorizeRoles} = require('../middleware/authMiddleware');
 router.get('/', milkController.getPortersMilkSummary)
 router.get('/records',verifyToken,authorizeRoles('farmer'), milkController.farmerMilkSummary);
 router.get('/monthly',verifyToken, milkController.getMonthlyPorterMilkSummary)
-router.get('/adminSummary',verifyToken, milkController.getAdminMilkCollectionSummary)
+router.get('/adminSummary',verifyToken, milkController.getFarmerMonthlySummary)
 router.get('/farmerSummary',verifyToken, milkController.downloadMonthlyMilkReport)
 
 
