@@ -1,4 +1,5 @@
 const { Farmer, Porter, MilkRecord } = require('../models/model');
+const ExcelJS = require('exceljs');
 
 // Utility: Get formatted date string (e.g., 2025-07-18)
 const formatDate = (date) => new Date(date).toISOString().split('T')[0];
@@ -209,67 +210,85 @@ exports.getMonthlyPorterMilkSummary = async (req, res) => {
 
 
 // admin get porters milk summary
+// const Farmer = require('./models/Farmer');       // Adjust your Farmer model path
+// const MilkRecord = require('./models/MilkRecord'); // Adjust your MilkRecord model path
 
-const { Types } = require('mongoose')
-// CONTROLLER FUNCTION - Admin Overview of Registered Porters' Milk Collection
-const { ObjectId } = require('mongodb');
-
-exports.getAdminMilkCollectionSummary = async (req, res) => {
+exports.downloadMonthlyMilkReport = async (req, res) => {
   try {
-    const adminId = req.user.userId || req.user.id; // Support both cases
+    const adminId = req.user.userId || req.user.id;
 
-    console.log("Authenticated Admin ID:", adminId); // Check this in your logs
+    // Get the month param in "YYYY-MM" format from query, default to current month
+    const monthParam = req.query.month || (() => {
+      const now = new Date();
+      return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    })();
 
-    const porters = await Porter.find({ created_by: adminId }).lean();
-
-    if (!porters || porters.length === 0) {
-      return res.status(200).json({ message: 'No porters found for this admin.', summaries: [] });
+    const [year, month] = monthParam.split('-').map(Number);
+    if (!year || !month || month < 1 || month > 12) {
+      return res.status(400).json({ message: "Invalid month format. Use 'YYYY-MM'." });
     }
 
-    const today = new Date();
-    const oneWeekAgo = new Date(today)
-    oneWeekAgo.setDate(today.getDate() - 7)
-    const oneMonthAgo = new Date(today)
-    oneMonthAgo.setMonth(today.getMonth() - 1)
+    // Calculate month start and end dates
+    const monthStart = new Date(year, month - 1, 1);
+    const monthEnd = new Date(year, month, 0, 23, 59, 59, 999); // last day of the month
 
+    // Find farmers linked to admin
+    const farmers = await Farmer.find({ created_by: adminId }).lean();
+
+    if (!farmers || farmers.length === 0) {
+      return res.status(404).json({ message: 'No farmers found for this admin.' });
+    }
+
+    // Gather summaries
     const summaries = await Promise.all(
-      porters.map(async (porter) => {
-        const monthlyRecords = await MilkRecord.find({
-          created_by: porter._id,
-          collection_date: { $gte: oneMonthAgo, $lte: today }
+      farmers.map(async (farmer) => {
+        const records = await MilkRecord.find({
+          farmer_code: farmer.farmer_code,
+          collection_date: { $gte: monthStart, $lte: monthEnd }
         }).lean();
 
-        const weeklyRecords = monthlyRecords.filter(
-          (record) => new Date(record.collection_date) >= oneWeekAgo
-        );
+        const monthly_total = records.reduce((sum, r) => sum + r.litres, 0);
 
         return {
-          porter_id: porter._id,
-          porter_name: porter.name,
-          weekly_summary: {
-            from: oneWeekAgo.toISOString().split('T')[0],
-            to: today.toISOString().split('T')[0],
-            total_deliveries: weeklyRecords.length,
-            total_litres: weeklyRecords.reduce((sum, r) => sum + r.litres, 0)
-          },
-          monthly_summary: {
-            from: oneMonthAgo.toISOString().split('T')[0],
-            to: today.toISOString().split('T')[0],
-            total_deliveries: monthlyRecords.length,
-            total_litres: monthlyRecords.reduce((sum, r) => sum + r.litres, 0)
-          }
+          farmer_name: farmer.fullname,
+          farmer_code: farmer.farmer_code,
+          monthly_total
         };
       })
     );
 
-    return res.status(200).json({ summaries });
+    // Create Excel workbook and worksheet
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Monthly Milk Report');
+
+    // Define columns
+    worksheet.columns = [
+      { header: 'Farmer Name', key: 'farmer_name', width: 30 },
+      { header: 'Farmer Code', key: 'farmer_code', width: 30 },
+      { header: 'Total Milk Collected (Litres)', key: 'monthly_total', width: 25 }
+    ];
+
+    // Add rows
+    summaries.forEach(summary => {
+      worksheet.addRow(summary);
+    });
+
+    // Style header row
+    worksheet.getRow(1).font = { bold: true };
+
+    // Set response headers to trigger download
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename=milk_report_${monthParam}.xlsx`);
+
+    // Write to response
+    await workbook.xlsx.write(res);
+    res.end();
 
   } catch (error) {
-    console.error("Error in summary:", error);
-    return res.status(500).json({ message: 'Failed to fetch porter milk summary', error: error.message });
+    console.error("Error generating Excel report:", error);
+    res.status(500).json({ message: 'Failed to generate monthly milk report', error: error.message });
   }
 };
-
 
 
 // Get summary of each farmer's daily and total milk collected for current month
