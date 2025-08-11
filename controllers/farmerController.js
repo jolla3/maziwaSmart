@@ -14,7 +14,7 @@ const bcrypt = require('bcrypt');
 exports.createFarmer = async (req, res) => {
   try {
     const { fullname, phone, location, email,farmer_code } = req.body;
-    const adminId = req.user.userId; // ID from JWT token
+    const adminId = req.user.id; // ID from JWT token
 
     // Check for duplicate email
     const emailExists = await Farmer.findOne({ farmer_code });
@@ -37,7 +37,7 @@ exports.createFarmer = async (req, res) => {
     // Optional: Update farmer to link manager
     await User.findByIdAndUpdate(
       adminId,
-      { $push: { farmer: newFarmer._id } },
+      { $set: { farmer: newFarmer._id } },
       { new: true }
     );
 
@@ -65,10 +65,13 @@ exports.createFarmer = async (req, res) => {
 // ==============================
 exports.getAllFarmers = async (req, res) => {
   try {
-    const adminId = req.user.userId;
+
+    const adminId = req.user.id
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const search = req.query.search || "";
+    ;
+
 
     // Filter object
     const filter = {
@@ -83,6 +86,7 @@ exports.getAllFarmers = async (req, res) => {
       .limit(limit);
 
     res.json({ farmers, total });
+    console.log(`Admin ID: ${adminId}, Farmers found: ${farmers.length}`)
   } catch (err) {
     res.status(500).json({ message: "Failed to fetch farmers", error: err.message });
   }
@@ -93,7 +97,7 @@ exports.getAllFarmers = async (req, res) => {
 // ==============================
 exports.getFarmerByCode = async (req, res) => {
   try {
-    const adminId = req.user.userId;
+    const adminId = req.user.id;
     const farmer = await Farmer.findOne({
       farmer_code: req.params.code,
       created_by: adminId
@@ -111,7 +115,7 @@ exports.getFarmerByCode = async (req, res) => {
 // ==============================
 exports.updateFarmer = async (req, res) => {
   try {
-    const userIdFromToken = req.user.userId;
+    const userIdFromToken = req.user.id;
     const role = req.user.role;
     const farmerIdFromParams = req.params.id;
     const updatedData = req.body;
@@ -164,7 +168,7 @@ exports.updateFarmer = async (req, res) => {
 // ==============================
 exports.deleteFarmer = async (req, res) => {
   try {
-    const adminId = req.user.userId;
+    const adminId = req.user.id;
 
     const farmer = await Farmer.findOne({
       farmer_code: req.params.code,

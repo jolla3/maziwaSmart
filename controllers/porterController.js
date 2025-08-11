@@ -13,7 +13,7 @@ const { Porter ,User,MilkRecord,PorterLog } = require('../models/model');
 exports.createPorter = async (req, res) => {
   try {
     const { name, phone,email, assigned_route } = req.body;
-    const adminId = req.user.userId;
+    const adminId = req.user.id;
 
      const nameExists = await Porter.findOne({ name });
         if (nameExists) {
@@ -56,7 +56,7 @@ exports.createPorter = async (req, res) => {
     // Optional: Update farmer to link manager
     await User.findByIdAndUpdate(
       adminId,
-      { $push: { porters: newPorter._id } },
+      { $set: { porters: newPorter._id } },
       { new: true }
     );
 
@@ -80,7 +80,7 @@ exports.createPorter = async (req, res) => {
 // Get All Porters with pagination and search
 exports.getAllPorters = async (req, res) => {
   try {
-    const adminId = req.user.userId;
+    const adminId = req.user.id;
 
     const page = parseInt(req.query.page) || 1; // pages start from 1
     const limit = parseInt(req.query.limit) || 10;
@@ -110,7 +110,7 @@ exports.getAllPorters = async (req, res) => {
 // Get Single Porter by ID
 exports.getPorterById = async (req, res) => {
   try {
-    const adminId = req.user.userId;
+    const adminId = req.user.id;
     const porter = await Porter.findOne({ _id: req.params.id, created_by: adminId });
 
     if (!porter) {
@@ -128,7 +128,7 @@ exports.getPorterById = async (req, res) => {
 // ✅ Update Porter (Only Admin OR the Porter himself)
 exports.updatePorter = async (req, res) => {
   try {
-    const requesterId = req.user.userId;        // from JWT
+    const requesterId = req.user.id;        // from JWT
     const requesterRole = req.user.role;        // from JWT
     const updatedData = req.body;
 
@@ -180,7 +180,7 @@ if (requesterRole === 'admin') {
 // Delete Porter
 exports.deletePorter = async (req, res) => {
   try {
-    const adminId = req.user.userId;
+    const adminId = req.user.id;
     const porterId = req.params.id;
 
     const porter = await Porter.findOne({ _id: porterId, created_by: adminId });

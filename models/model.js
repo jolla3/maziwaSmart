@@ -16,11 +16,10 @@ const userSchema = new mongoose.Schema({
   },
 
 
-  farmer:{ type: mongoose.Schema.Types.ObjectId, ref: 'Farmer', default:null},
-  porter:{ type: mongoose.Schema.Types.ObjectId, ref: 'Porter',default:null}
+  farmer:[{ type: mongoose.Schema.Types.ObjectId, ref: 'Farmer'}],
+  porter:[{ type: mongoose.Schema.Types.ObjectId, ref: 'Porter'}]
 
   
-
 }, { timestamps: true });
 
 const User = mongoose.model('User', userSchema);
@@ -137,7 +136,7 @@ const milkRecordSchema = new mongoose.Schema({
   farmer_code: { type: Number, required: true },
   litres: { type: Number, required: true },
 collection_date: { type: Date, default: Date.now },
-  time_slot: { type: String, enum: ['morning','midmorning', 'afternoon'], required: true },
+  time_slot: { type: String, enum: ['morning','midmorning', 'afternoon','evening'], required: true },
   created_at: { type: Date, default: Date.now }
 })
 const MilkRecord = mongoose.model('MilkRecord', milkRecordSchema);
