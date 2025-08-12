@@ -1,6 +1,7 @@
 const { Farmer, Porter, MilkRecord } = require('../models/model');
 const ExcelJS = require('exceljs');
 
+
 // Utility: Get formatted date string (e.g., 2025-07-18)
 const formatDate = (date) => new Date(date).toISOString().split('T')[0];
 
@@ -158,55 +159,80 @@ exports.farmerMilkSummary = async (req, res) => {
 };
 
 
+// controllers/milkController.js
 
-// get momnthly analysis
-exports.getMonthlyPorterMilkSummary = async (req, res) => {
+// This function can be called both via HTTP and internally for socket updates
+exports.getAdminPortersMonthlySummary = async (req, res, io, adminIdParam) => {
   try {
-    if (!['porter', 'admin'].includes(req.user.role)) {
-      return res.status(403).json({ message: 'Access denied: Only porters and admins can access this route' });
+    const adminId = req?.user?.role === "admin" ? req.user.id : adminIdParam;
+    if (!adminId) {
+      if (res) return res.status(403).json({ message: "Access denied: Only admins can access this route" });
+      return;
     }
 
-    const porterId = req.user.id;
-    const today = new Date();
+    let { month, year } = req.query || {};
+    const now = new Date();
+    month = month ? parseInt(month) : now.getMonth() + 1;
+    year = year ? parseInt(year) : now.getFullYear();
 
-    const pastWeek = new Date(today);
-    pastWeek.setDate(today.getDate() - 7);
+    const startDate = new Date(year, month - 1, 1);
+    const endDate = new Date(year, month, 1);
 
-    const pastMonth = new Date(today);
-    pastMonth.setMonth(today.getMonth() - 1);
+    // Find only active porters
+    const activePorters = await Porter.find({ admin_id: adminId, status: "active" })
+      .select("_id fullname")
+      .lean();
 
-    const allRecords = await MilkRecord.find({
-      created_by: porterId,
-      collection_date: { $gte: pastMonth, $lte: today }
-    }).lean();
+    if (!activePorters.length) {
+      const emptyResponse = { month, year, porters: [] };
+      if (res) return res.status(200).json(emptyResponse);
+      if (io) io.to(`admin_${adminId}`).emit("monthly_summary_update", emptyResponse);
+      return;
+    }
 
-    const weeklyRecords = allRecords.filter(
-      record => new Date(record.collection_date) >= pastWeek
-    );
+    const porterIds = activePorters.map(p => p._id);
 
-    const weeklySummary = {
-      from: pastWeek.toISOString().split('T')[0],
-      to: today.toISOString().split('T')[0],
-      total_deliveries: weeklyRecords.length,
-      total_litres: weeklyRecords.reduce((sum, r) => sum + r.litres, 0)
-    };
+    // Aggregate efficiently
+    const summaries = await MilkRecord.aggregate([
+      {
+        $match: {
+          created_by: { $in: porterIds },
+          collection_date: { $gte: startDate, $lt: endDate }
+        }
+      },
+      {
+        $group: {
+          _id: "$created_by",
+          total_deliveries: { $sum: 1 },
+          total_litres: { $sum: "$litres" }
+        }
+      }
+    ]);
 
-    const monthlySummary = {
-      from: pastMonth.toISOString().split('T')[0],
-      to: today.toISOString().split('T')[0],
-      total_deliveries: allRecords.length,
-      total_litres: allRecords.reduce((sum, r) => sum + r.litres, 0)
-    };
-
-    res.status(200).json({
-      porter_id: porterId,
-      weekly_summary: weeklySummary,
-      monthly_summary: monthlySummary
+    const results = activePorters.map(porter => {
+      const summary = summaries.find(s => String(s._id) === String(porter._id));
+      return {
+        porter_id: porter._id,
+        porter_name: porter.fullname,
+        total_deliveries: summary ? summary.total_deliveries : 0,
+        total_litres: summary ? summary.total_litres : 0
+      };
     });
+
+    const finalResponse = { admin_id: adminId, month, year, porters: results };
+
+    // Send via HTTP if route
+    if (res) return res.status(200).json(finalResponse);
+
+    // Send via socket if triggered internally
+    if (io) io.to(`admin_${adminId}`).emit("monthly_summary_update", finalResponse);
+
   } catch (error) {
-    res.status(500).json({ message: 'Failed to fetch porter milk summary', error: error.message });
+    console.error("Error fetching monthly porter summary:", error);
+    if (res) return res.status(500).json({ message: "Failed to fetch summary", error: error.message });
   }
 }
+
 
 
 // admin get porters milk summary
@@ -288,7 +314,7 @@ exports.downloadMonthlyMilkReport = async (req, res) => {
     console.error("Error generating Excel report:", error);
     res.status(500).json({ message: 'Failed to generate monthly milk report', error: error.message });
   }
-};
+}
 
 
 // Get summary of each farmer's daily and total milk collected for current month
@@ -356,4 +382,4 @@ exports.getFarmerMonthlySummary = async (req, res) => {
       error: error.message
     });
   }
-};
+}
