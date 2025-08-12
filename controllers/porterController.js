@@ -15,15 +15,15 @@ exports.createPorter = async (req, res) => {
     const { name, phone,email, assigned_route } = req.body;
     const adminId = req.user.id;
 
-     const nameExists = await Porter.findOne({ name });
-        if (nameExists) {
-        return res.json({ message: `A porter with this ${name} already exists` });
-        }
+    //  const nameExists = await Porter.findOne({ phone });
+    //     if (nameExists) {
+    //     return res.json({ message: `A porter with this ${phone} already exists` });
+    //     }
 
-     const emailExists = await Porter.findOne({ email });
-    if (emailExists) {
-      return res.json({ message: 'A porter with this email already exists' });
-    }
+    //  const emailExists = await Porter.findOne({ email });
+    // if (emailExists) {
+    //   return res.json({ message: 'A porter with this email already exists' });
+    // }
 
 
     // Optional duplicate phone check
@@ -192,7 +192,7 @@ exports.deletePorter = async (req, res) => {
 
     await MilkRecord.updateMany(
       { porter_code: porter._id },
-      { $set: { porter_code: null } }
+      { $set: { porter_id: null } }
     );
 
     await PorterLog.updateMany(

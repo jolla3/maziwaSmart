@@ -74,6 +74,8 @@ const porterSchema = new mongoose.Schema({
   assigned_route: { type: String },
   created_by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   password: { type: String },
+  created_by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+
  role: {
     type: String,
     enum: [ 'porter']

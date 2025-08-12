@@ -1,20 +1,10 @@
-// entry file
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const http = require('http'); // Add this
-const { Server } = require('socket.io'); // Add this
 require('dotenv').config();
 require('./cron/updateCowStages');
 
 const app = express();
-const server = http.createServer(app); // Create HTTP server
-const io = new Server(server, {
-    cors: {
-        origin: "http://localhost:3000", 
-        methods: ["GET", "POST"]
-    }
-});
 
 // middleware
 app.use(express.json());
@@ -32,8 +22,8 @@ app.use('/api/farmers', farmerRouter);
 const porterRouter = require('./routes/porterRouter');
 app.use('/api/porters', porterRouter);
 
-// porter add milk (pass io to this router)
-const porterMilkRouter = require('./routes/porterMilkRouter')(io);
+// porter add milk (no io needed)
+const porterMilkRouter = require('./routes/porterMilkRouter');
 app.use('/api/milk', porterMilkRouter);
 
 // get summary
@@ -84,15 +74,8 @@ mongoose.connect(process.env.MONGO_URI)
     .then(() => console.log('connected to MongoDb'))
     .catch(err => console.log("MongoDB connection error", err));
 
-// Socket.IO connection
-io.on("connection", (socket) => {
-    console.log("A client connected:", socket.id);
-    socket.on("disconnect", () => {
-        console.log("A client disconnected:", socket.id);
-    });
-});
-
+// Start server normally without socket.io
 const Port = 5000;
-server.listen(Port, () => {
+app.listen(Port, () => {
     console.log(`Server is running on port ${Port}`);
 });

@@ -162,76 +162,98 @@ exports.farmerMilkSummary = async (req, res) => {
 // controllers/milkController.js
 
 // This function can be called both via HTTP and internally for socket updates
-exports.getAdminPortersMonthlySummary = async (req, res, io, adminIdParam) => {
+// Get Monthly Milk Summary for Admin's Active Porters
+exports.getAdminPortersMonthlySummary = async (req, res) => {
   try {
-    const adminId = req?.user?.role === "admin" ? req.user.id : adminIdParam;
-    if (!adminId) {
-      if (res) return res.status(403).json({ message: "Access denied: Only admins can access this route" });
-      return;
-    }
+    const admin_id = req.user.id;
+    const { year, month } = req.query;
 
-    let { month, year } = req.query || {};
-    const now = new Date();
-    month = month ? parseInt(month) : now.getMonth() + 1;
-    year = year ? parseInt(year) : now.getFullYear();
+    if (!year || !month) {
+      return res.status(400).json({ message: "Year and month are required" });
+    }
 
     const startDate = new Date(year, month - 1, 1);
     const endDate = new Date(year, month, 1);
 
-    // Find only active porters
-    const activePorters = await Porter.find({ admin_id: adminId, status: "active" })
-      .select("_id fullname")
-      .lean();
+    // 1️⃣ Get all porters created by admin (active or not)
+    const adminPorters = await Porter.find({ created_by: admin_id }).select("_id name is_active").lean();
 
-    if (!activePorters.length) {
-      const emptyResponse = { month, year, porters: [] };
-      if (res) return res.status(200).json(emptyResponse);
-      if (io) io.to(`admin_${adminId}`).emit("monthly_summary_update", emptyResponse);
-      return;
+    const adminPorterIds = adminPorters.map(p => p._id);
+
+    if (adminPorterIds.length === 0) {
+      return res.json({
+        admin_id,
+        month: parseInt(month),
+        year: parseInt(year),
+        total_milk_litres_collected_by_admin_porters: 0,
+        total_deliveries_by_admin_porters: 0,
+        porters: []
+      });
     }
 
-    const porterIds = activePorters.map(p => p._id);
-
-    // Aggregate efficiently
-    const summaries = await MilkRecord.aggregate([
+    // 2️⃣ Aggregate total litres and deliveries collected by admin's porters in the month
+    const overallTotalsAgg = await MilkRecord.aggregate([
       {
         $match: {
-          created_by: { $in: porterIds },
+          created_by: { $in: adminPorterIds },
+          collection_date: { $gte: startDate, $lt: endDate }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          totalLitres: { $sum: "$litres" },
+          totalDeliveries: { $sum: 1 }
+        }
+      }
+    ]);
+
+    const overallTotals = overallTotalsAgg.length ? overallTotalsAgg[0] : { totalLitres: 0, totalDeliveries: 0 };
+
+    // 3️⃣ Aggregate totals per porter (admin's porters)
+    const porterTotalsAgg = await MilkRecord.aggregate([
+      {
+        $match: {
+          created_by: { $in: adminPorterIds },
           collection_date: { $gte: startDate, $lt: endDate }
         }
       },
       {
         $group: {
           _id: "$created_by",
-          total_deliveries: { $sum: 1 },
-          total_litres: { $sum: "$litres" }
+          totalLitres: { $sum: "$litres" },
+          totalDeliveries: { $sum: 1 }
         }
       }
     ]);
 
-    const results = activePorters.map(porter => {
-      const summary = summaries.find(s => String(s._id) === String(porter._id));
+    // 4️⃣ Map totals to admin porters
+    const portersWithTotals = adminPorters.map(porter => {
+      const totalRecord = porterTotalsAgg.find(t => t._id.toString() === porter._id.toString());
       return {
         porter_id: porter._id,
-        porter_name: porter.fullname,
-        total_deliveries: summary ? summary.total_deliveries : 0,
-        total_litres: summary ? summary.total_litres : 0
+        porter_name: porter.name,
+        is_active: porter.is_active,
+        total_litres: totalRecord ? totalRecord.totalLitres : 0,
+        total_deliveries: totalRecord ? totalRecord.totalDeliveries : 0
       };
     });
 
-    const finalResponse = { admin_id: adminId, month, year, porters: results };
-
-    // Send via HTTP if route
-    if (res) return res.status(200).json(finalResponse);
-
-    // Send via socket if triggered internally
-    if (io) io.to(`admin_${adminId}`).emit("monthly_summary_update", finalResponse);
+    // 5️⃣ Return final response
+    res.json({
+      admin_id,
+      month: parseInt(month),
+      year: parseInt(year),
+      total_milk_litres_collected_by_admin_porters: overallTotals.totalLitres,
+      total_deliveries_by_admin_porters: overallTotals.totalDeliveries,
+      porters: portersWithTotals
+    });
 
   } catch (error) {
-    console.error("Error fetching monthly porter summary:", error);
-    if (res) return res.status(500).json({ message: "Failed to fetch summary", error: error.message });
+    console.error("Error fetching monthly porters summary:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
   }
-}
+};
 
 
 
