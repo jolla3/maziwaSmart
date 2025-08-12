@@ -70,7 +70,8 @@ exports.getAllFarmers = async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const search = req.query.search || "";
-    ;
+    ; console.log("[GET /api/farmers] adminId:", adminId, "page:", page, "limit:", limit, "search:", search);
+
 
 
     // Filter object
