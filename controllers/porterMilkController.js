@@ -74,14 +74,16 @@ const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 
     }
 
     // New record
-    const newRecord = await MilkRecord.create({
-      created_by: req.user.id,
-      farmer_code,
-      litres,
-      collection_date: new Date(),
-      time_slot,
-      update_count: 0
-    });
+   const newRecord = await MilkRecord.create({
+  created_by: req.user.id,
+  farmer: farmerExists._id,  // Add this line!
+  farmer_code,
+  litres,
+  collection_date: new Date(),
+  time_slot,
+  update_count: 0
+});
+
 
     // Log activity
     await PorterLog.create({
@@ -94,25 +96,31 @@ const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 
     });
 
     // Insert into DailyMilkSummary
-    await DailyMilkSummary.findOneAndUpdate(
-      {
-        summary_date: startOfDay,
-        porter_id: req.user.id,
-        farmer_code,
-        time_slot
-      },
-      {
-        $setOnInsert: {
-          porter_name: req.user.name,
-          summary_date: startOfDay,
-          time_slot,
-          farmer_code,
-          porter_id: req.user.id
-        },
-        $inc: { total_litres: litres }
-      },
-      { upsert: true, new: true }
-    );
+    const porter = await Porter.findById(req.user.id).select('name');
+if (!porter) {
+  return res.status(404).json({ message: 'Porter not found' });
+}
+
+await DailyMilkSummary.findOneAndUpdate(
+  {
+    summary_date: startOfDay,
+    porter_id: req.user.id,
+    farmer_code,
+    time_slot
+  },
+  {
+    $setOnInsert: {
+      porter_name: porter.name, // use fetched porter name here
+      summary_date: startOfDay,
+      time_slot,
+      farmer_code,
+      porter_id: req.user.id
+    },
+    $inc: { total_litres: litres }
+  },
+  { upsert: true, new: true }
+);
+
 
     res.status(201).json({
       message: 'Milk record added successfully',
