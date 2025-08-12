@@ -1,8 +1,4 @@
-const {
-  Farmer,
-  Porter,
-  MilkRecord,
-} = require('../models/model'); // Adjust path as needed
+const { Farmer, Porter, MilkRecord } = require('../models/model'); // adjust path
 
 const safeFormatDate = (d) => {
   if (!d) return "Unknown date";
@@ -15,19 +11,19 @@ exports.adminDashStats = async (req, res) => {
   try {
     const adminId = req.user.id || req.user._id;
 
-    // Get all porters and farmers for this admin once
+    // Get porters and farmers created by this admin
     const [adminPorterIds, adminFarmerIds] = await Promise.all([
       Porter.find({ created_by: adminId }).distinct('_id'),
       Farmer.find({ created_by: adminId }).distinct('_id'),
     ]);
 
-    // Get counts of farmers and porters
+    // Counts
     const [totalFarmers, totalPorters] = await Promise.all([
       Farmer.countDocuments({ created_by: adminId }),
       Porter.countDocuments({ created_by: adminId }),
     ]);
 
-    // Get total milk records count by admin's porters
+    // Total milk records count by admin's porters
     const totalMilkRecords = await MilkRecord.countDocuments({
       created_by: { $in: adminPorterIds }
     });
@@ -39,15 +35,12 @@ exports.adminDashStats = async (req, res) => {
     ]);
     const totalMilkLitres = totalMilkLitresAgg.length ? totalMilkLitresAgg[0].totalLitres : 0;
 
-    const farmerPercentage = totalFarmers + totalPorters
-      ? ((totalFarmers / (totalFarmers + totalPorters)) * 100).toFixed(1)
-      : '0.0';
+    // Calculate percentages out of total farmers + porters
+    const totalUsers = totalFarmers + totalPorters;
+    const farmerPercentage = totalUsers ? ((totalFarmers / totalUsers) * 100).toFixed(1) : '0.0';
+    const porterPercentage = totalUsers ? ((totalPorters / totalUsers) * 100).toFixed(1) : '0.0';
 
-    const porterPercentage = totalFarmers + totalPorters
-      ? ((totalPorters / (totalFarmers + totalPorters)) * 100).toFixed(1)
-      : '0.0';
-
-    // Recent milk records
+    // Recent milk records (limit 5)
     const recentMilk = await MilkRecord.find({
       created_by: { $in: adminPorterIds },
       farmer: { $in: adminFarmerIds },
@@ -58,26 +51,27 @@ exports.adminDashStats = async (req, res) => {
       .populate('farmer', 'fullname farmer_code')
       .lean();
 
-    // Recent farmers
+    // Recent farmers (limit 5)
     const recentFarmers = await Farmer.find({ created_by: adminId })
       .sort({ join_date: -1 })
       .limit(5)
       .select('fullname farmer_code join_date')
       .lean();
 
-    // Recent porters
+    // Recent porters (limit 5)
     const recentPorters = await Porter.find({ created_by: adminId })
       .sort({ createdAt: -1 })
       .limit(5)
       .select('name createdAt')
       .lean();
 
+    // Build recent activities array combining above
     let recentActivities = [];
 
     recentMilk.forEach(r => {
       recentActivities.push({
         date: safeFormatDate(r.collection_date),
-        activity: `Milk record: ${r.litres}L collected by porter ${r.created_by?.name || 'Unknown'} from farmer ${r.farmer?.fullname ||  'Unknown'}`,
+        activity: `Milk record: ${r.litres}L collected by porter ${r.created_by?.name || 'Unknown'} from farmer ${r.farmer?.fullname || 'Unknown'}`,
       });
     });
 
@@ -95,11 +89,12 @@ exports.adminDashStats = async (req, res) => {
       });
     });
 
+    // Sort by date descending and take top 10
     recentActivities = recentActivities
       .sort((a, b) => new Date(b.date) - new Date(a.date))
       .slice(0, 10);
 
-    // Milk collected per day (last 7 days) scoped to admin's porters & farmers
+    // Milk collected per day for last 7 days
     const today = new Date();
     const last7Days = [...Array(7)].map((_, i) => {
       const d = new Date(today);
@@ -132,19 +127,18 @@ exports.adminDashStats = async (req, res) => {
       return { date: day, milk: record ? record.totalLitres : 0 };
     });
 
-    res.status(200).json({
+    return res.status(200).json({
       totalFarmers,
       totalPorters,
       farmerPercentage,
       porterPercentage,
-      totalMilkRecords,  // count of records by admin's porters
-      totalMilkLitres,   // sum of litres collected by admin's porters
+      totalMilkRecords,
+      totalMilkLitres,
       recentActivities,
       milkPerDay,
     });
-
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'Server error' });
+    console.error("Error fetching admin dashboard stats:", error);
+    res.status(500).json({ message: "Server error" });
   }
 };
