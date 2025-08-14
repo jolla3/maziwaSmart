@@ -1,18 +1,41 @@
 const {Farmer,MilkRecord,Porter,PorterLog,DailyMilkSummary} = require('../models/model');
 
 // 🚀 Add Milk Record
+
+// 🚀 Add Milk Record - FIXED VERSION
 exports.addMilkRecord = async (req, res) => {
   try {
     if (req.user.role !== "porter") {
-      return res.status(403).json({ message: "Only porters can add milk records" });
+      return res.status(403).json({ 
+        success: false,
+        message: "Only porters can add milk records" 
+      });
     }
 
     const { farmer_code, litres } = req.body;
 
+    // Input validation
+    if (!farmer_code || !litres) {
+      return res.status(400).json({
+        success: false,
+        message: "Farmer code and litres are required"
+      });
+    }
+
+    if (litres <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Litres must be greater than 0"
+      });
+    }
+
     // 1️⃣ Validate farmer
-    const farmer = await Farmer.findOne({ farmer_code });
+    const farmer = await Farmer.findOne({ farmer_code: parseInt(farmer_code) });
     if (!farmer) {
-      return res.status(404).json({ message: "Farmer not found" });
+      return res.status(404).json({ 
+        success: false,
+        message: "Farmer not found" 
+      });
     }
 
     // 2️⃣ Determine time slot - FIXED to match schema
@@ -28,74 +51,95 @@ exports.addMilkRecord = async (req, res) => {
         : "evening";
 
     const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-    const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
 
     // 3️⃣ Find existing record for same farmer, porter, slot, and day
     let existingRecord = await MilkRecord.findOne({
-      farmer_code,
+      farmer_code: parseInt(farmer_code),
       time_slot,
       created_by: req.user.id,
-      collection_date: { $gte: startOfDay, $lte: endOfDay }
+      collection_date: { $gte: startOfDay, $lt: new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000) }
     });
 
-    // 4️⃣ If record exists, check update limit
+    // Get porter info once
+    const porter = await Porter.findById(req.user.id).select("name");
+    if (!porter) {
+      return res.status(404).json({ 
+        success: false,
+        message: "Porter not found" 
+      });
+    }
+
+    // 4️⃣ HANDLE EXISTING RECORD (UPDATE SCENARIO)
     if (existingRecord) {
-      // ✅ FIXED: Check update_count properly
+      // Check if porter has already used their 1 update
       if (existingRecord.update_count >= 1) {
         return res.status(400).json({
-          message: `Update limit reached for farmer ${farmer_code} in ${time_slot} slot today. You can only update once.`,
-          current_litres: existingRecord.litres,
-          update_count: existingRecord.update_count
+          success: false,
+          message: `Update limit reached! You can only update farmer ${farmer_code}'s record once per ${time_slot} slot today.`,
+          details: {
+            current_litres: existingRecord.litres,
+            updates_used: existingRecord.update_count,
+            max_updates: 1,
+            farmer_name: farmer.fullname,
+            time_slot: time_slot
+          }
         });
       }
 
       const oldLitres = existingRecord.litres;
-      const litreDifference = litres - oldLitres;
+      const litreDifference = parseFloat(litres) - oldLitres;
 
       // Update the record
-      existingRecord.litres = litres;
+      existingRecord.litres = parseFloat(litres);
       existingRecord.update_count = existingRecord.update_count + 1;
       await existingRecord.save();
 
-      // ✅ FIXED: Update summary by adding the difference, not replacing
+      // ✅ FIXED: Update summary with difference only (no conflict)
       await DailyMilkSummary.findOneAndUpdate(
         {
           summary_date: startOfDay,
           porter_id: req.user.id,
-          farmer_code,
+          farmer_code: parseInt(farmer_code),
           time_slot
         },
-        { $inc: { total_litres: litreDifference } } // Add difference, don't replace
+        { $inc: { total_litres: litreDifference } }
       );
 
       // Log update activity
       await PorterLog.create({
         porter_id: req.user.id,
         porter_name: req.user.name,
-        activity_type: "update-collection", // Use the enum value from schema
+        activity_type: "update-collection",
         log_date: now,
-        litres_collected: litres,
-        remarks: `Updated milk record for farmer ${farmer.fullname} (${farmer_code}) from ${oldLitres}L to ${litres}L during ${time_slot}. Update ${existingRecord.update_count}/1`
+        litres_collected: parseFloat(litres),
+        remarks: `UPDATED: ${farmer.fullname} (${farmer_code}) from ${oldLitres}L to ${litres}L (${time_slot}). Updates remaining: ${1 - existingRecord.update_count}`
       });
 
       return res.status(200).json({
-        message: "Milk record updated successfully",
-        record: existingRecord,
-        previous_litres: oldLitres,
-        new_litres: litres,
-        updates_remaining: 1 - existingRecord.update_count
+        success: true,
+        message: `✅ Record updated successfully! You have ${1 - existingRecord.update_count} update${1 - existingRecord.update_count !== 1 ? 's' : ''} remaining for today.`,
+        data: {
+          record: existingRecord,
+          farmer_name: farmer.fullname,
+          previous_litres: oldLitres,
+          new_litres: parseFloat(litres),
+          difference: litreDifference > 0 ? `+${litreDifference}L` : `${litreDifference}L`,
+          updates_remaining: 1 - existingRecord.update_count,
+          time_slot: time_slot,
+          action: "updated"
+        }
       });
     }
 
-    // 5️⃣ New record (update_count starts at 0)
+    // 5️⃣ CREATE NEW RECORD (FIRST-TIME ENTRY)
     const newRecord = await MilkRecord.create({
       created_by: req.user.id,
       farmer: farmer._id,
-      farmer_code,
-      litres,
+      farmer_code: parseInt(farmer_code),
+      litres: parseFloat(litres),
       collection_date: now,
       time_slot,
-      update_count: 0 // ✅ Explicitly set to 0
+      update_count: 0
     });
 
     // Log collection activity
@@ -104,92 +148,88 @@ exports.addMilkRecord = async (req, res) => {
       porter_name: req.user.name,
       activity_type: "collection",
       log_date: now,
-      litres_collected: litres,
-      remarks: `Collected milk from farmer ${farmer.fullname} (${farmer_code}) during ${time_slot}`
+      litres_collected: parseFloat(litres),
+      remarks: `NEW COLLECTION: ${farmer.fullname} (${farmer_code}) - ${litres}L (${time_slot})`
     });
 
-    // Ensure porter exists
-    const porter = await Porter.findById(req.user.id).select("name");
-    if (!porter) {
-      return res.status(404).json({ message: "Porter not found" });
-    }
+    // ✅ FIXED: Handle daily summary creation/update properly
+    try {
+      // First, try to find existing summary
+      const existingSummary = await DailyMilkSummary.findOne({
+        summary_date: startOfDay,
+        porter_id: req.user.id,
+        farmer_code: parseInt(farmer_code),
+        time_slot
+      });
 
-    // Insert or update daily summary
-    await DailyMilkSummary.findOneAndUpdate(
-      { summary_date: startOfDay, porter_id: req.user.id, farmer_code, time_slot },
-      {
-        $setOnInsert: {
+      if (existingSummary) {
+        // Update existing summary
+        existingSummary.total_litres += parseFloat(litres);
+        await existingSummary.save();
+      } else {
+        // Create new summary
+        await DailyMilkSummary.create({
+          porter_id: req.user.id,
           porter_name: porter.name,
           summary_date: startOfDay,
           time_slot,
-          farmer_code,
-          porter_id: req.user.id,
-          total_litres: 0 // Initialize to 0
-        },
-        $inc: { total_litres: litres }
-      },
-      { upsert: true }
-    );
+          farmer_code: parseInt(farmer_code),
+          total_litres: parseFloat(litres)
+        });
+      }
+    } catch (summaryError) {
+      console.warn("Summary update failed (non-critical):", summaryError.message);
+      // Don't fail the whole operation if summary fails
+    }
 
-    res.status(201).json({
-      message: "Milk record added successfully",
-      record: newRecord,
-      updates_remaining: 1
+    // Success response for new record
+    return res.status(201).json({
+      success: true,
+      message: `✅ New milk record added successfully!`,
+      data: {
+        record: newRecord,
+        farmer_name: farmer.fullname,
+        litres: parseFloat(litres),
+        updates_remaining: 1,
+        time_slot: time_slot,
+        action: "created"
+      }
     });
 
   } catch (error) {
-    console.error("Error adding milk record:", error);
-    res.status(500).json({ message: "Failed to add milk record", error: error.message });
-  }
-};
-
-// ============================
-// OPTIONAL: Helper function to check update status
-// ============================
-exports.checkUpdateStatus = async (req, res) => {
-  try {
-    const { farmer_code } = req.params;
-    const now = new Date();
-    const hour = now.getHours();
-    const time_slot =
-      hour >= 5 && hour < 10 ? "morning"
-      : hour >= 10 && hour < 12 ? "midmorning" 
-      : hour >= 12 && hour < 17 ? "afternoon"
-      : "evening";
-
-    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-    const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-
-    const existingRecord = await MilkRecord.findOne({
-      farmer_code: parseInt(farmer_code),
-      time_slot,
-      created_by: req.user.id,
-      collection_date: { $gte: startOfDay, $lte: endOfDay }
-    });
-
-    if (!existingRecord) {
-      return res.json({
-        can_add: true,
-        can_update: false,
-        message: "No record exists for this farmer in current time slot today"
+    console.error("❌ Error in addMilkRecord:", error);
+    
+    // Handle specific MongoDB errors
+    if (error.name === 'ValidationError') {
+      return res.status(400).json({
+        success: false,
+        message: "Validation error",
+        details: error.message
       });
     }
 
-    const canUpdate = existingRecord.update_count < 1;
-    
-    res.json({
-      can_add: false,
-      can_update: canUpdate,
-      current_litres: existingRecord.litres,
-      update_count: existingRecord.update_count,
-      updates_remaining: Math.max(0, 1 - existingRecord.update_count),
-      message: canUpdate ? "Can update record" : "Update limit reached"
-    });
+    if (error.code === 11000) {
+      return res.status(400).json({
+        success: false,
+        message: "Duplicate entry detected"
+      });
+    }
 
-  } catch (error) {
-    res.status(500).json({ message: "Error checking update status", error: error.message });
+    if (error.code === 40) {
+      return res.status(400).json({
+        success: false,
+        message: "Database conflict error - please try again"
+      });
+    }
+
+    return res.status(500).json({ 
+      success: false,
+      message: "Internal server error occurred while processing milk record",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 };
+
 
 // 📥 View All Milk Records by Porter
 
