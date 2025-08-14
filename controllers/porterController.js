@@ -126,57 +126,80 @@ exports.getPorterById = async (req, res) => {
 // Update Porter
 
 // ✅ Update Porter (Only Admin OR the Porter himself)
+
 exports.updatePorter = async (req, res) => {
   try {
-    const requesterId = req.user.id;        // from JWT
-    const requesterRole = req.user.role;        // from JWT
-    const updatedData = req.body;
+    const requesterId = req.user.id; // from JWT
+    const requesterRole = req.user.role;
+    let { password, role, created_by, ...updatedData } = req.body; // Destructure to filter
 
     let porterId;
 
-    // Admin updates any porter using params
-if (requesterRole === 'admin') {
-  porterId = req.params.id;
+    // ===== ADMIN UPDATING THEIR OWN PORTER =====
+    if (requesterRole === 'admin') {
+      porterId = req.params.id;
 
-  const porter = await Porter.findOne({ _id: porterId, created_by: requesterId });
-  if (!porter) {
-    return res.json({ message: 'Not authorized to update this porter' });
-  }
+      const porter = await Porter.findOne({
+        _id: porterId,
+        created_by: requesterId // ✅ Only porters this admin created
+      });
 
-  if (updatedData.password) {
-    return res.json({ message: 'Admins cannot update porter passwords' });
-  }
+      if (!porter) {
+        return res.status(403).json({ message: 'Not authorized to update this porter' });
+      }
 
-  const updatedPorter = await Porter.findByIdAndUpdate(porterId, updatedData, { new: true });
+      // Prevent admin from changing password/role/created_by
+      if (password) {
+        return res.status(403).json({ message: 'Admins cannot update porter passwords' });
+      }
 
-  return res.json({
-    message: 'Admin updated porter successfully',
-    porter: updatedPorter
-  });
+      const updatedPorter = await Porter.findByIdAndUpdate(
+        porterId,
+        updatedData,
+        { new: true, select: '-password' }
+      );
 
-
-
-    } else {
-      return res.json({ message: 'Access denied: Invalid role' });
+      return res.json({
+        message: 'Admin updated porter successfully',
+        porter: updatedPorter
+      });
     }
 
-    // Proceed to update
-    const porter = await Porter.findById(porterId);
-    if (!porter) return res.json({ message: 'Porter not found' });
+    // ===== PORTER UPDATING THEMSELVES =====
+    if (requesterRole === 'porter') {
+      porterId = requesterId;
 
-    const updatedPorter = await Porter.findByIdAndUpdate(porterId, updatedData, { new: true });
+      const porter = await Porter.findById(porterId);
+      if (!porter) {
+        return res.status(404).json({ message: 'Porter not found' });
+      }
 
-    res.json({
-      message: `${requesterRole === 'admin' ? 'Admin updated porter' : 'Porter updated profile'} successfully`,
-      porter: updatedPorter
-    });
+      // If updating password, hash it
+      if (password) {
+        const salt = await bcrypt.genSalt(10);
+        updatedData.password = await bcrypt.hash(password, salt);
+      }
+
+      const updatedPorter = await Porter.findByIdAndUpdate(
+        porterId,
+        updatedData,
+        { new: true, select: '-password' }
+      );
+
+      return res.json({
+        message: 'Porter updated profile successfully',
+        porter: updatedPorter
+      });
+    }
+
+    // ===== INVALID ROLE =====
+    return res.status(403).json({ message: 'Access denied: Invalid role' });
 
   } catch (error) {
     console.error(error);
-    res.json({ message: 'Update failed', error: error.message });
+    res.status(500).json({ message: 'Update failed', error: error.message });
   }
-}
-
+};
 // Delete Porter
 exports.deletePorter = async (req, res) => {
   try {
