@@ -97,10 +97,11 @@ const porterLogSchema = new mongoose.Schema({
     type: String // Optional for quick lookups without population
   },
   activity_type: {
-    type: String,
-    enum: ['collection', 'delivery', 'check-in', 'check-out', 'other'],
-    required: true
-  },
+  type: String,
+  enum: ['collection', 'delivery', 'check-in', 'check-out', 'other', 'update-collection'],
+  required: true
+}
+,
   log_date: {
     type: Date,
     default: Date.now
