@@ -135,13 +135,14 @@ module.exports = PorterLog
 const milkRecordSchema = new mongoose.Schema({
   created_by: {type : mongoose.Schema.Types.ObjectId, ref: 'Porter' },
   farmer: { type: mongoose.Schema.Types.ObjectId, ref: 'Farmer' },
-
   farmer_code: { type: Number, required: true },
   litres: { type: Number, required: true },
-collection_date: { type: Date, default: Date.now },
+  collection_date: { type: Date, default: Date.now },
   time_slot: { type: String, enum: ['morning','midmorning', 'afternoon','evening'], required: true },
+  update_count: { type: Number, default: 0 }, // ✅ ADDED: Missing field
   created_at: { type: Date, default: Date.now }
-})
+});
+
 const MilkRecord = mongoose.model('MilkRecord', milkRecordSchema);
 
 
