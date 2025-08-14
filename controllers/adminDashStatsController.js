@@ -11,36 +11,47 @@ exports.adminDashStats = async (req, res) => {
   try {
     const adminId = req.user.id || req.user._id;
 
-    // Get porters and farmers created by this admin
+    // Get IDs of porters and farmers created by this admin
     const [adminPorterIds, adminFarmerIds] = await Promise.all([
       Porter.find({ created_by: adminId }).distinct('_id'),
       Farmer.find({ created_by: adminId }).distinct('_id'),
     ]);
 
-    // Counts
+    // Counts scoped to this admin
     const [totalFarmers, totalPorters] = await Promise.all([
       Farmer.countDocuments({ created_by: adminId }),
       Porter.countDocuments({ created_by: adminId }),
     ]);
 
-    // Total milk records count by admin's porters
+    // Count milk records strictly where porter and farmer belong to this admin
     const totalMilkRecords = await MilkRecord.countDocuments({
-      created_by: { $in: adminPorterIds }
+      created_by: { $in: adminPorterIds },
+      farmer: { $in: adminFarmerIds },
     });
 
-    // Sum total litres collected by admin's porters
+    // Sum total litres collected by admin's porters for admin's farmers
     const totalMilkLitresAgg = await MilkRecord.aggregate([
-      { $match: { created_by: { $in: adminPorterIds } } },
-      { $group: { _id: null, totalLitres: { $sum: "$litres" } } }
+      {
+        $match: {
+          created_by: { $in: adminPorterIds },
+          farmer: { $in: adminFarmerIds },
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          totalLitres: { $sum: "$litres" }
+        }
+      }
     ]);
     const totalMilkLitres = totalMilkLitresAgg.length ? totalMilkLitresAgg[0].totalLitres : 0;
 
-    // Calculate percentages out of total farmers + porters
+    // Calculate percentage distributions
     const totalUsers = totalFarmers + totalPorters;
     const farmerPercentage = totalUsers ? ((totalFarmers / totalUsers) * 100).toFixed(1) : '0.0';
     const porterPercentage = totalUsers ? ((totalPorters / totalUsers) * 100).toFixed(1) : '0.0';
 
-    // Recent milk records (limit 5)
+    // Recent milk records filtered by admin ownership
     const recentMilk = await MilkRecord.find({
       created_by: { $in: adminPorterIds },
       farmer: { $in: adminFarmerIds },
@@ -51,21 +62,21 @@ exports.adminDashStats = async (req, res) => {
       .populate('farmer', 'fullname farmer_code')
       .lean();
 
-    // Recent farmers (limit 5)
+    // Recent farmers for this admin
     const recentFarmers = await Farmer.find({ created_by: adminId })
       .sort({ join_date: -1 })
       .limit(5)
       .select('fullname farmer_code join_date')
       .lean();
 
-    // Recent porters (limit 5)
+    // Recent porters for this admin
     const recentPorters = await Porter.find({ created_by: adminId })
       .sort({ createdAt: -1 })
       .limit(5)
       .select('name createdAt')
       .lean();
 
-    // Build recent activities array combining above
+    // Combine recent activities
     let recentActivities = [];
 
     recentMilk.forEach(r => {
@@ -94,7 +105,7 @@ exports.adminDashStats = async (req, res) => {
       .sort((a, b) => new Date(b.date) - new Date(a.date))
       .slice(0, 10);
 
-    // Milk collected per day for last 7 days
+    // Prepare last 7 days date array
     const today = new Date();
     const last7Days = [...Array(7)].map((_, i) => {
       const d = new Date(today);
@@ -102,14 +113,20 @@ exports.adminDashStats = async (req, res) => {
       return safeFormatDate(d);
     }).reverse();
 
+    // Define start and end date with time boundary
+    const startDate = new Date(last7Days[0]);
+    const endDate = new Date(last7Days[last7Days.length - 1]);
+    endDate.setHours(23, 59, 59, 999);  // Include entire last day
+
+    // Aggregate total litres per day for admin's porters and farmers
     const milkPerDayAgg = await MilkRecord.aggregate([
       {
         $match: {
           created_by: { $in: adminPorterIds },
           farmer: { $in: adminFarmerIds },
           collection_date: {
-            $gte: new Date(last7Days[0]),
-            $lte: new Date(last7Days[last7Days.length - 1]),
+            $gte: startDate,
+            $lte: endDate,
           },
         },
       },
@@ -122,11 +139,13 @@ exports.adminDashStats = async (req, res) => {
       { $sort: { _id: 1 } },
     ]);
 
+    // Map aggregation results to last 7 days, fill zeros if no data for a day
     const milkPerDay = last7Days.map(day => {
       const record = milkPerDayAgg.find(r => r._id === day);
       return { date: day, milk: record ? record.totalLitres : 0 };
     });
 
+    // Respond with all aggregated stats
     return res.status(200).json({
       totalFarmers,
       totalPorters,
