@@ -155,7 +155,7 @@ const dailyMilkSummarySchema = new mongoose.Schema({
   porter_name: { type: String, required: true },
   summary_date: { type: Date, required: true }, // Date-only
   farmer_code: { type: Number, required: true },
-  time_slot: { type: String, enum: ['morning', 'midmorning', 'afternoon'], required: true },
+  time_slot: { type: String, enum:  ['morning', 'midmorning', 'afternoon', 'evening'], required: true },
   total_litres: { type: Number, default: 0 },
   created_at: { type: Date, default: Date.now }
 });
