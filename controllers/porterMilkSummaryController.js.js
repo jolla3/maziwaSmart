@@ -102,6 +102,76 @@ exports.getPortersMilkSummary = async (req, res) => {
 }
 
 
+// gett individual porter record
+exports.getMyMonthlyMilkSummary = async (req, res) => {
+  try {
+    if (req.user.role !== 'porter') {
+      return res.status(403).json({ message: 'Access denied: Only porters can view this' });
+    }
+
+    const porterId = req.user.id;
+
+    // Get start and end of current month
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+
+    // Fetch all milk records for this porter in the current month
+    const records = await MilkRecord.find({
+      created_by: porterId,
+      collection_date: { $gte: startOfMonth, $lte: endOfMonth }
+    }).lean();
+
+    if (!records.length) {
+      return res.status(200).json({
+        porter: req.user.name,
+        month: now.toLocaleString('default', { month: 'long', year: 'numeric' }),
+        farmers: [],
+        total_litres_for_month: 0,
+        total_deliveries: 0
+      });
+    }
+
+    // Fetch farmers for name mapping
+    const farmerCodes = [...new Set(records.map(r => r.farmer_code))];
+    const farmers = await Farmer.find({ farmer_code: { $in: farmerCodes } }).lean();
+    const farmerMap = {};
+    farmers.forEach(f => farmerMap[f.farmer_code] = f.fullname);
+
+    // Aggregate litres per farmer
+    const farmerSummary = {};
+    let totalLitres = 0;
+
+    records.forEach(rec => {
+      if (!farmerSummary[rec.farmer_code]) {
+        farmerSummary[rec.farmer_code] = {
+          farmer_code: rec.farmer_code,
+          farmer_name: farmerMap[rec.farmer_code] || 'Unknown Farmer',
+          total_litres: 0
+        };
+      }
+      farmerSummary[rec.farmer_code].total_litres += rec.litres;
+      totalLitres += rec.litres;
+    });
+
+    const result = {
+      porter: req.user.name,
+      month: now.toLocaleString('default', { month: 'long', year: 'numeric' }),
+      farmers: Object.values(farmerSummary).sort((a, b) =>
+        a.farmer_name.localeCompare(b.farmer_name)
+      ),
+      total_litres_for_month: totalLitres,
+      total_deliveries: records.length
+    };
+
+    res.status(200).json(result);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Failed to generate monthly summary', error: error.message });
+  }
+};
+
+
 
 // const { MilkRecord, Farmer } = require('../models/model');
 // individual farmers record

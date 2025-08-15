@@ -8,6 +8,7 @@ router.get('/records',verifyToken,authorizeRoles('farmer'), milkController.farme
 router.get('/monthly',verifyToken, milkController.getAdminPortersMonthlySummary)
 router.get('/adminSummary',verifyToken, milkController.getFarmerMonthlySummary)
 router.get('/farmerSummary',verifyToken, milkController.downloadMonthlyMilkReport)
+router.get('/monthlyPorterSummary',verifyToken, milkController.getMyMonthlyMilkSummary)
 
 
 module.exports = router
