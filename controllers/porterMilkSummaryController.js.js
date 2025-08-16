@@ -111,12 +111,24 @@ exports.getMyMonthlyMilkSummary = async (req, res) => {
 
     const porterId = req.user.id;
 
-    // Get start and end of current month
-    const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+    // Check if month param exists (format: YYYY-MM)
+    const { month } = req.query;
+    let targetDate = new Date();
 
-    // Fetch all milk records for this porter in the current month
+    if (month) {
+      // Validate format YYYY-MM
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+        return res.status(400).json({ message: "Invalid month format. Use YYYY-MM" });
+      }
+      const [year, monthIndex] = month.split("-").map(Number);
+      targetDate = new Date(year, monthIndex - 1, 1);
+    }
+
+    // Compute month start and end
+    const startOfMonth = new Date(targetDate.getFullYear(), targetDate.getMonth(), 1);
+    const endOfMonth = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 0, 23, 59, 59);
+
+    // Fetch all milk records for this porter in the given month
     const records = await MilkRecord.find({
       created_by: porterId,
       collection_date: { $gte: startOfMonth, $lte: endOfMonth }
@@ -125,7 +137,7 @@ exports.getMyMonthlyMilkSummary = async (req, res) => {
     if (!records.length) {
       return res.status(200).json({
         porter: req.user.name,
-        month: now.toLocaleString('default', { month: 'long', year: 'numeric' }),
+        month: targetDate.toLocaleString("default", { month: "long", year: "numeric" }),
         farmers: [],
         total_litres_for_month: 0,
         total_deliveries: 0
@@ -136,7 +148,7 @@ exports.getMyMonthlyMilkSummary = async (req, res) => {
     const farmerCodes = [...new Set(records.map(r => r.farmer_code))];
     const farmers = await Farmer.find({ farmer_code: { $in: farmerCodes } }).lean();
     const farmerMap = {};
-    farmers.forEach(f => farmerMap[f.farmer_code] = f.fullname);
+    farmers.forEach(f => (farmerMap[f.farmer_code] = f.fullname));
 
     // Aggregate litres per farmer
     const farmerSummary = {};
@@ -146,7 +158,7 @@ exports.getMyMonthlyMilkSummary = async (req, res) => {
       if (!farmerSummary[rec.farmer_code]) {
         farmerSummary[rec.farmer_code] = {
           farmer_code: rec.farmer_code,
-          farmer_name: farmerMap[rec.farmer_code] || 'Unknown Farmer',
+          farmer_name: farmerMap[rec.farmer_code] || "Unknown Farmer",
           total_litres: 0
         };
       }
@@ -156,7 +168,7 @@ exports.getMyMonthlyMilkSummary = async (req, res) => {
 
     const result = {
       porter: req.user.name,
-      month: now.toLocaleString('default', { month: 'long', year: 'numeric' }),
+      month: targetDate.toLocaleString("default", { month: "long", year: "numeric" }),
       farmers: Object.values(farmerSummary).sort((a, b) =>
         a.farmer_name.localeCompare(b.farmer_name)
       ),
@@ -167,9 +179,12 @@ exports.getMyMonthlyMilkSummary = async (req, res) => {
     res.status(200).json(result);
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: 'Failed to generate monthly summary', error: error.message });
+    res
+      .status(500)
+      .json({ message: "Failed to generate monthly summary", error: error.message });
   }
 };
+
 
 
 
