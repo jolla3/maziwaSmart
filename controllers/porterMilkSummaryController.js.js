@@ -111,18 +111,14 @@ exports.getMyMonthlyMilkSummary = async (req, res) => {
 
     const porterId = req.user.id;
 
-    // Check if month param exists (format: YYYY-MM)
-    const { month } = req.query;
-    let targetDate = new Date();
+    // Use month from query or fallback to current month
+    const monthParam = req.query.month || (() => {
+      const now = new Date();
+      return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    })();
 
-    if (month) {
-      // Validate format YYYY-MM
-      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
-        return res.status(400).json({ message: "Invalid month format. Use YYYY-MM" });
-      }
-      const [year, monthIndex] = month.split("-").map(Number);
-      targetDate = new Date(year, monthIndex - 1, 1);
-    }
+    const [year, monthIndex] = monthParam.split("-").map(Number);
+    const targetDate = new Date(year, monthIndex - 1, 1);
 
     // Compute month start and end
     const startOfMonth = new Date(targetDate.getFullYear(), targetDate.getMonth(), 1);
