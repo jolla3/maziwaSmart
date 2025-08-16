@@ -56,7 +56,7 @@ exports.createPorter = async (req, res) => {
     // Optional: Update farmer to link manager
     await User.findByIdAndUpdate(
       adminId,
-      { $set: { porters: newPorter._id } },
+      { $set: { porter: newPorter._id } },
       { new: true }
     );
 
