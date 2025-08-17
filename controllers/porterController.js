@@ -31,7 +31,7 @@ exports.createPorter = async (req, res) => {
     if (phoneExists) {
       return res.json({ message: 'Porter with that phone already exists' });
     }
-    const difpassword="12345678"
+    const difpassword="123porter"
       const password= await bcrypt.hash(difpassword,10)
     const newPorter = new Porter({
       name,

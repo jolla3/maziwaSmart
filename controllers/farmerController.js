@@ -21,7 +21,7 @@ exports.createFarmer = async (req, res) => {
     if (emailExists) {
       return res.json({ message: 'A farmer with this Code already exists' });
     }
-   const difpassword="12345678"
+   const difpassword="123farmer"
          const password= await bcrypt.hash(difpassword,10)
     const newFarmer = new Farmer({
       fullname,
