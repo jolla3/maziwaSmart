@@ -82,9 +82,9 @@ exports.getAllFarmers = async (req, res) => {
 
     const total = await Farmer.countDocuments(filter);
 
-    // const farmers = await Farmer.find(filter)
-    //   .skip((page - 1) * limit)
-    //   .limit(limit);
+    const farmers = await Farmer.find(filter)
+      .skip((page - 1) * limit)
+      .limit(limit);
 
     res.json({ farmers, total });
     console.log(`Admin ID: ${adminId}, Farmers found: ${farmers.length}`)
