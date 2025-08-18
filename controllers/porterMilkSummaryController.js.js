@@ -190,13 +190,13 @@ exports.farmerMilkSummary = async (req, res) => {
   try {
     // Ensure only farmers access this route
     if (req.user.role !== 'farmer') {
-      return res.status(403).json({ message: 'Access denied: Only farmers can view this' });
+      return res.json({ message: 'Access denied: Only farmers can view this' });
     }
 
     // Get farmer using farmer_code from token
     const farmer = await Farmer.findOne({ farmer_code: req.user.farmer_code });
     if (!farmer) {
-      return res.status(404).json({ message: 'Farmer not found' });
+      return res.json({ message: 'Farmer not found' });
     }
 
     const records = await MilkRecord.find({ farmer_code: farmer.farmer_code }).lean();

@@ -65,34 +65,39 @@ exports.createFarmer = async (req, res) => {
 // ==============================
 exports.getAllFarmers = async (req, res) => {
   try {
-
-    const adminId = req.user.id
+    const adminId = req.user.id;
     const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) ;
+    const limit = parseInt(req.query.limit) || 10; // Add default value
     const search = req.query.search || "";
-    ; console.log("[GET /api/farmers] adminId:", adminId, "page:", page, "limit:", limit, "search:", search);
-
-
-
+    
+    console.log("[GET /api/farmers] adminId:", adminId, "page:", page, "limit:", limit, "search:", search);
+    
     // Filter object
     const filter = {
       created_by: adminId,
       fullname: { $regex: search, $options: "i" }
     };
-
+    
     const total = await Farmer.countDocuments(filter);
-
+    
     const farmers = await Farmer.find(filter)
       .skip((page - 1) * limit)
-      .limit(limit);
-
-    res.json({ farmers, total });
-    console.log(`Admin ID: ${adminId}, Farmers found: ${farmers.length}`)
+      .limit(limit)
+      .sort({ createdAt: -1 }); // Optional: add sorting
+    
+    res.json({ 
+      farmers, 
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit) // Include this for debugging
+    });
+    
+    console.log(`Admin ID: ${adminId}, Farmers found: ${farmers.length}, Total: ${total}`);
   } catch (err) {
     res.status(500).json({ message: "Failed to fetch farmers", error: err.message });
   }
 };
-
 // ==============================
 // GET single farmer by code (admin must have created them)
 // ==============================
