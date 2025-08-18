@@ -6,7 +6,7 @@ exports.createCow = async (req, res) => {
   try {
     const { cow_name, breed_id, gender, birth_date, litres_per_day, mother_id } = req.body;
     const farmer_id = req.user._id;
-    const farmer_code = req.user.farmer_code;
+    const farmer_code = req.user.code;
 
     const newCow = new Cow({
       cow_name,
@@ -36,7 +36,7 @@ exports.createCow = async (req, res) => {
 // GET /api/farmer/cows
 exports.getMyCows = async (req, res) => {
   try {
-    const farmer_code = req.user.farmer_code;
+    const farmer_code = req.user.code;
 
     const cows = await Cow.find({ farmer_code })
       .populate('breed_id', 'breed_name')  // include breed details
@@ -54,7 +54,7 @@ exports.getMyCows = async (req, res) => {
 // PUT /api/farmer/cows/:id
 exports.updateCow = async (req, res) => {
   try {
-    const farmer_code = req.user.farmer_code; // from token
+    const farmer_code = req.user.code; // from token
     const cowId = req.params.id; // from URL
     const updateData = req.body; // data to update
 
@@ -82,7 +82,7 @@ exports.updateCow = async (req, res) => {
 // DELETE /api/farmer/cows/:id
 exports.deleteCow = async (req, res) => {
   try {
-    const farmer_code = req.user.farmer_code;
+    const farmer_code = req.user.code;
     const cowId = req.params.id;
 
     const deleted = await Cow.findOneAndDelete({ _id: cowId, farmer_code });
@@ -105,7 +105,7 @@ exports.addCowLitres = async (req, res) => {
   try {
     const { id } = req.params; // cow ID
     const { litres } = req.body;
-    const farmer_code = req.user.farmer_code;
+    const farmer_code = req.user.code;
 
     if (!litres || isNaN(litres)) {
       return res.status(400).json({ message: "❌ Please provide valid litres" });
