@@ -21,6 +21,7 @@ const {
 // ============================
 // Farmer Dashboard Controller
 // ============================
+// 🚀 Farmer Dashboard Controller
 exports.farmerDashboard = async (req, res) => {
   try {
     // Ensure only farmers can access
@@ -79,6 +80,23 @@ exports.farmerDashboard = async (req, res) => {
       farmer_code: farmerCode,
     });
 
+    // ✅ Stage breakdown (calves, heifers, cows)
+    const stageBreakdown = await Cow.aggregate([
+      { $match: { farmer_code: String(farmerCode) } }, // ensure same type
+      {
+        $group: {
+          _id: "$stage",
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    // Transform into object: { calf: X, heifer: Y, cow: Z }
+    const cowStages = { calf: 0, heifer: 0, cow: 0 };
+    stageBreakdown.forEach((s) => {
+      cowStages[s._id] = s.count;
+    });
+
     // 4. Managers linked
     const managers = await Manager.find({ farmer_code: farmerCode }).select(
       "name phone email"
@@ -99,6 +117,7 @@ exports.farmerDashboard = async (req, res) => {
         total_milk: totalLitres,
         milk_by_slot: slotTotals, // ✅ usable in graphs
         cows: cowCount,
+        cow_stages: cowStages, // ✅ { calf: X, heifer: Y, cow: Z }
         breeds: breedCount,
         inseminations: inseminationCount,
         anomalies: anomalyCount,
