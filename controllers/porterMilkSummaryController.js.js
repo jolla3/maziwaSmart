@@ -188,46 +188,52 @@ exports.getMyMonthlyMilkSummary = async (req, res) => {
 // individual farmers record
 exports.farmerMilkSummary = async (req, res) => {
   try {
-    // Ensure only farmers access this route
+    // ✅ Ensure only farmers access this route
     if (req.user.role !== 'farmer') {
-      return res.json({ message: 'Access denied: Only farmers can view this' });
+      return res.status(403).json({ message: 'Access denied: Only farmers can view this' });
     }
 
-    // Get farmer using farmer_code from token
-    const farmer = await Farmer.findOne({ farmer_code: req.user.code });
+    // ✅ Get farmer using farmer_code from token (payload already has farmer_code)
+    const farmer = await Farmer.findOne({ farmer_code: req.user.farmer_code });
     if (!farmer) {
-      return res.json({ message: 'Farmer not found' });
+      return res.status(404).json({ message: 'Farmer not found' });
     }
 
+    // ✅ Get all milk records for this farmer
     const records = await MilkRecord.find({ farmer_code: farmer.farmer_code }).lean();
 
-    const summary = {
-      morning: {},
-      midmorning: {},
-      afternoon: {}
-    };
+    // ✅ Dynamic summary object
+    const summary = {};
 
+    // Helper: format date as YYYY-MM-DD
     const formatDate = (date) => new Date(date).toISOString().split('T')[0];
 
+    // ✅ Group litres by date + slot
     records.forEach(rec => {
       const date = formatDate(rec.collection_date);
       const slot = rec.time_slot;
 
+      if (!summary[slot]) {
+        summary[slot] = {}; // create slot if not exists
+      }
+
       if (!summary[slot][date]) {
         summary[slot][date] = 0;
       }
+
       summary[slot][date] += rec.litres;
     });
 
-    // Prepare frontend format
+    // ✅ Convert into frontend-friendly format
     const formatted = {};
-    for (let slot of ['morning', 'midmorning', 'afternoon']) {
+    for (let slot of Object.keys(summary)) {
       formatted[slot] = Object.entries(summary[slot]).map(([date, litres]) => ({
         date,
         litres
       }));
     }
 
+    // ✅ Final response
     res.status(200).json({
       farmer_code: farmer.farmer_code,
       farmer_name: farmer.fullname,
