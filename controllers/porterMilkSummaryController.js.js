@@ -194,7 +194,7 @@ exports.farmerMilkSummary = async (req, res) => {
     }
 
     // Get farmer using farmer_code from token
-    const farmer = await Farmer.findOne({ farmer_code: req.user.farmer_code });
+    const farmer = await Farmer.findOne({ farmer_code: req.user.code });
     if (!farmer) {
       return res.json({ message: 'Farmer not found' });
     }
