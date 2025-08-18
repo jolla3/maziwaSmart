@@ -71,34 +71,34 @@ exports.login = async (req, res) => {
       code = ''; // Admins may not have codes
     } else {
       // 2. Check in Farmers
-      user = await Farmer.findOne({ email });
+      user = await Farmer.findOne({ email })
       if (user) {
         role = 'farmer';
-        code = user.farmer_code;
+        code = user.farmer_code
       } else {
         // 3. Check in Porters
-        user = await Porter.findOne({ email });
+        user = await Porter.findOne({ email })
         if (user) {
           role = 'porter';
-          code = user.porter_code || '';
+          code = user.porter_code || ''
         }
       }
     }
 
     // Not found in any model
     if (!user) {
-      return res.status(404).json({ message: 'Account not found' });
+      return res.json({ message: 'Account not found' });
     }
 
     // Missing password
     if (!user.password) {
-      return res.status(403).json({ message: `This ${role} has no login credentials` });
+      return res.json({ message: `This ${role} has no login credentials` });
     }
 
     // Password check
     const validPass = await bcrypt.compare(password, user.password);
     if (!validPass) {
-      return res.status(400).json({ message: 'Invalid password' });
+      return res.json({ message: 'Invalid password' });
     }
 
     // Token payload
