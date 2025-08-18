@@ -69,6 +69,9 @@ app.use('/api/porterstats', porterDashStatsRouter);
 const anomaliesRouter = require("./routes/anomaliesRouter");
 app.use("/api/recordstats", anomaliesRouter);
 
+const farmerDashboard = require("./routes/FarmerDashboardRouter");
+app.use("/api/farmerdash", farmerDashboard);
+
 // MongoDB connection
 mongoose.connect(process.env.MONGO_URI)
     .then(() => console.log('connected to MongoDb'))
