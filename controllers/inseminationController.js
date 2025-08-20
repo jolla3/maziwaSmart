@@ -38,7 +38,7 @@ exports.addInseminationRecord = async (req, res) => {
       error: error.message
     });
   }
-};
+}
 
 
 // ocr picture scaning
@@ -47,17 +47,17 @@ exports.uploadInseminationImage = async (req, res) => {
   try {
     const imagePath = req.file.path;
 
-    // 🧠 OCR with Tesseract
+    // Run OCR
     const { data: { text } } = await Tesseract.recognize(imagePath, 'eng');
+    console.log("📄 Extracted Text:", text);
 
-    // You can now process the text to auto-fill fields if format is consistent
-    console.log("📄 OCR Text Output:", text);
-
+    // Return JSON response so client doesn’t timeout
     return res.status(200).json({
       message: "✅ OCR completed",
       raw_text: text,
       file_path: imagePath
     });
+
   } catch (error) {
     console.error("❌ OCR Error:", error);
     return res.status(500).json({
