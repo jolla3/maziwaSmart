@@ -36,21 +36,33 @@ exports.createCow = async (req, res) => {
 exports.getMyCows = async (req, res) => {
   try {
     const farmer_code = req.user.code;
+    const { gender, stage } = req.query; // ✅ Destructure gender and stage from query parameters
 
-    const cows = await Cow.find({ farmer_code })
+    // ✅ Build a dynamic filter object
+    const filter = { farmer_code };
+
+    if (gender) {
+      filter.gender = gender;
+    }
+
+    if (stage) {
+      filter.stage = stage;
+    }
+
+    const cows = await Cow.find(filter) // ✅ Use the dynamic filter
       .populate('breed_id', 'breed_name')
       .populate('mother_id', 'cow_name')
       .populate({
         path: 'offspring_ids',
-        select: 'cow_name birth_date' // ⬅️ Select only the necessary fields
+        select: 'cow_name birth_date'
       });
 
     res.status(200).json({ cows });
   } catch (error) {
+    console.error("❌ Error fetching cows:", error);
     res.status(500).json({ message: "Failed to fetch cows", error: error.message });
   }
 };
-
 
 
 // PUT /api/farmer/cows/:id
