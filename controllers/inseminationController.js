@@ -51,6 +51,7 @@ exports.uploadInseminationImage = async (req, res) => {
     const { data: { text } } = await Tesseract.recognize(imagePath, 'eng');
     console.log("📄 Extracted Text:", text);
 
+    
     // Return JSON response so client doesn’t timeout
     return res.status(200).json({
       message: "✅ OCR completed",
