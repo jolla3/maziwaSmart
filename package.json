@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "",
   "main": "app.js",
+  "proxy": "https://maziwasmart.onrender.com",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node app.js"
@@ -28,6 +29,7 @@
     "mongoose": "^8.16.1",
     "multer": "^2.0.2",
     "node-cron": "^4.2.1",
+    "sharp": "^0.34.3",
     "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1",
     "string-similarity": "^4.0.4",
