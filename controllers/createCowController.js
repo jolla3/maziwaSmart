@@ -34,37 +34,40 @@ exports.createCow = async (req, res) => {
 
 // GET /api/farmer/cows
 exports.getMyCows = async (req, res) => {
-  try {
-    const farmer_code = req.user.code;
-    const { gender, stage } = req.query; // ✅ Destructure gender and stage from query parameters
+  try {
+    const farmer_code = req.user.code;
+    const { gender, stage } = req.query; // ✅ Destructure gender and stage from query parameters
 
-    // ✅ Build a dynamic filter object
-    const filter = { farmer_code };
+    // ✅ Build a dynamic filter object
+    const filter = { farmer_code };
 
-    if (gender) {
-      filter.gender = gender;
-    }
+    if (gender) {
+      filter.gender = gender;
+    }
 
-    if (stage) {
-      filter.stage = stage;
-    }
+    if (stage) {
+      // Check if 'stage' is an array. The frontend sends it as such.
+      if (Array.isArray(stage)) {
+        filter.stage = { $in: stage }; // ✅ Use $in operator for arrays
+      } else {
+        filter.stage = stage;
+      }
+    }
 
-    const cows = await Cow.find(filter) // ✅ Use the dynamic filter
-      .populate('breed_id', 'breed_name')
-      .populate('mother_id', 'cow_name')
-      .populate({
-        path: 'offspring_ids',
-        select: 'cow_name birth_date'
-      });
+    const cows = await Cow.find(filter) // ✅ Use the dynamic filter
+      .populate('breed_id', 'breed_name')
+      .populate('mother_id', 'cow_name')
+      .populate({
+        path: 'offspring_ids',
+        select: 'cow_name birth_date'
+      });
 
-    res.status(200).json({ cows });
-  } catch (error) {
-    console.error("❌ Error fetching cows:", error);
-    res.status(500).json({ message: "Failed to fetch cows", error: error.message });
-  }
+   res.status(200).json({ cows });
+  } catch (error) {
+    console.error("❌ Error fetching cows:", error);
+    res.status(500).json({ message: "Failed to fetch cows", error: error.message });
+  }
 };
-
-
 // PUT /api/farmer/cows/:id
 exports.updateCow = async (req, res) => {
   try {

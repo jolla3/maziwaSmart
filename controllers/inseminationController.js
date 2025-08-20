@@ -1,6 +1,9 @@
-const {Insemination,Cow} = require('../models/model');
+const { Insemination, Cow } = require('../models/model');
 const Tesseract = require('tesseract.js');
 const path = require('path');
+const stringSimilarity = require('string-similarity');
+const chrono = require('chrono-node');
+const sharp = require('sharp');
 
 exports.addInseminationRecord = async (req, res) => {
   try {
@@ -40,9 +43,6 @@ exports.addInseminationRecord = async (req, res) => {
   }
 }
 
-
-// ocr picture scaning
-// ocr picture scaning
 exports.uploadInseminationImage = async (req, res) => {
   try {
     const imagePath = req.file.path;
@@ -51,7 +51,6 @@ exports.uploadInseminationImage = async (req, res) => {
     const { data: { text } } = await Tesseract.recognize(imagePath, 'eng');
     console.log("📄 Extracted Text:", text);
 
-    
     // Return JSON response so client doesn’t timeout
     return res.status(200).json({
       message: "✅ OCR completed",
@@ -67,119 +66,214 @@ exports.uploadInseminationImage = async (req, res) => {
     });
   }
 };
-
-
-const stringSimilarity = require('string-similarity');
-const chrono = require('chrono-node'); // ✅ for smart date parsing
-
 exports.handleOCRUpload = async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ message: '❌ No image uploaded' });
+    if (!req.file) {
+      return res.status(400).json({ message: '❌ No image uploaded' });
+    }
 
     const imagePath = req.file.path;
     const farmerCode = req.user.code;
 
-    // ✅ OCR Read with whitelist (helps messy handwriting)
-    const { data: { text } } = await Tesseract.recognize(imagePath, 'eng', {
-      tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789/- ',
+    // --- Validate Image Size ---
+    const metadata = await sharp(imagePath).metadata();
+    if (metadata.width < 200 || metadata.height < 200) {
+      console.error('❌ Image too small:', metadata);
+      return res.status(400).json({ message: '❌ Image resolution too low. Please upload a higher-quality image.' });
+    }
+
+    // --- Respond Early to Avoid Timeout ---
+    res.status(202).json({
+      message: '⏳ OCR processing started',
+      file: imagePath,
     });
-    console.log('Extracted Text:', text);
 
-    // --- Helper: regex-based extraction (for labels like Breed: XYZ)
-    const extract = (label) => {
-      const match = text.match(new RegExp(`${label}\\s*[:\\-]?\\s*(.+)`, 'i'));
-      return match ? match[1].trim() : null;
-    };
+    // --- Enhanced Image Preprocessing ---
+    const processedPath = path.join(path.dirname(imagePath), `processed-${path.basename(imagePath)}`);
+    try {
+      await sharp(imagePath)
+        .rotate() // Auto-rotate based on EXIF data
+        .resize({ width: 2500, height: 2500, fit: 'contain', background: { r: 255, g: 255, b: 255 } }) // Larger size
+        .grayscale()
+        .normalize()
+        .sharpen({ sigma: 1, m1: 0, m2: 3 }) // Stronger sharpening
+        .threshold(100) // Adjusted threshold for better contrast
+        .toFile(processedPath);
+      console.log('📷 Preprocessed image saved at:', processedPath);
+    } catch (sharpError) {
+      console.error('❌ Image preprocessing error:', sharpError.message);
+      return;
+    }
 
-    // --- Helper: line-based extraction (handles multi-word cow names)
-    const getValueAfterKeyword = (text, keywords) => {
-      const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+    // --- Improved OCR Configuration ---
+    const { data: { text } } = await Tesseract.recognize(processedPath, 'eng', {
+      tessedit_pageseg_mode: 3, // Auto page segmentation
+      tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-/ :.',
+      preserve_interword_spaces: 1,
+      tessedit_ocr_engine_mode: 1, // LSTM engine
+    });
+    console.log('📄 Extracted Text:', text);
+
+    const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+
+    // --- Helper: Fuzzy Extraction with Stricter Validation ---
+    const extractNearLabel = (labels, maxLength = 50, minLength = 2) => {
       for (let i = 0; i < lines.length; i++) {
-        for (const keyword of keywords) {
-          if (lines[i].toLowerCase().includes(keyword.toLowerCase())) {
-            const parts = lines[i].split(/\s+/);
-            const idx = parts.findIndex(p =>
-              p.toLowerCase().includes(keyword.toLowerCase())
-            );
-
-            // ✅ return all words after the keyword on same line
-            if (idx !== -1 && parts[idx + 1]) return parts.slice(idx + 1).join(" ");
-
-            // ✅ otherwise take the full next line (multi-word safe)
-            if (lines[i + 1]) return lines[i + 1];
+        for (const label of labels) {
+          const lineLower = lines[i].toLowerCase();
+          const labelLower = label.toLowerCase();
+          if (
+            stringSimilarity.compareTwoStrings(lineLower, labelLower) > 0.75 ||
+            lineLower.includes(labelLower.slice(0, 4))
+          ) {
+            let cleaned = lines[i].replace(/[^a-zA-Z0-9\s\-/.:]/g, '').trim();
+            if (
+              cleaned &&
+              cleaned.length >= minLength &&
+              cleaned.length <= maxLength &&
+              !/avoid|heat|comfort|insemination|clinicals|services|priority/i.test(cleaned)
+            ) {
+              return cleaned;
+            }
+            // Check next line as fallback
+            if (i + 1 < lines.length) {
+              cleaned = lines[i + 1].replace(/[^a-zA-Z0-9\s\-/.:]/g, '').trim();
+              if (
+                cleaned &&
+                cleaned.length >= minLength &&
+                cleaned.length <= maxLength &&
+                !/avoid|heat|comfort|insemination|clinicals|services|priority/i.test(cleaned)
+              ) {
+                return cleaned;
+              }
+            }
           }
         }
       }
       return null;
     };
 
-    // Try to extract values
-    const cowNameRaw = extract('Cow Name') || extract('Cow') || getValueAfterKeyword(text, ['Animal', 'Name']);
-    const inseminationDateRaw = extract('Insemination Date') || extract('Date');
-    const bullBreed = extract('Bull Breed') || extract('Breed');
-    const technician = extract('Technician') || extract('Vet') || extract('Inseminator');
+    const safeExtract = (field, labels) => {
+      const value = extractNearLabel(labels);
+      console.log(`🔎 Extracted ${field}:`, value || 'null');
+      return value;
+    };
+
+    // --- Field Extraction ---
+    const farmerName = safeExtract('Farmer', ['Farmer', 'Farm', 'Owner']);
+
+    // Cow Name (Regex + Fallback)
+    let cowNameRaw = null;
+    const animalMatch = text.match(/(?:Animal|Cow|Name)\s*[:\-]?\s*([A-Za-z0-9\s]{2,30})/i);
+    if (animalMatch && animalMatch[1].length <= 30) {
+      cowNameRaw = animalMatch[1].trim();
+      console.log('🔎 Cow Name (regex):', cowNameRaw);
+    } else {
+      cowNameRaw = safeExtract('Cow Name', ['Animal', 'Cow', 'Name', 'Ear No']);
+    }
+
+    // Bull Breed
+    const bullBreed = safeExtract('Bull Breed', ['Breed', 'Bull', 'Sire']);
+
+    // Technician
+    const technician = safeExtract('Technician', ['Inseminator', 'Technician', 'Vet', 'Seminator']);
+
+    // Insemination Date
+    let inseminationDateRaw = safeExtract('Insemination Date', ['Insemination Date', 'Date', 'Year', 'Month']);
+    let inseminationDate = null;
+    if (inseminationDateRaw) {
+      const cleanedDate = inseminationDateRaw.replace(/[^0-9\s\-/:.]/g, '').trim();
+      inseminationDate = chrono.parseDate(cleanedDate) || chrono.parseDate(cleanedDate, { forwardDate: true });
+      // Custom date parsing fallback
+      if (!inseminationDate) {
+        const dateMatch = cleanedDate.match(/(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/);
+        if (dateMatch) {
+          const [_, day, month, year] = dateMatch;
+          const fullYear = year.length === 2 ? `20${year}` : year; // Assume 20XX for two-digit years
+          inseminationDate = new Date(`${fullYear}-${month}-${day}`);
+          if (isNaN(inseminationDate.getTime())) {
+            inseminationDate = null;
+          }
+        }
+      }
+      console.log('🔎 Parsed Date:', inseminationDate ? inseminationDate.toISOString() : 'null');
+    }
+
+    // Notes
     const notes = text;
 
-    // ✅ Robust date parsing
-    const inseminationDate = inseminationDateRaw ? chrono.parseDate(inseminationDateRaw) : null;
-
-    // ✅ Cow name processing
-    const cowName = cowNameRaw ? cowNameRaw.trim() : null;
-    if (!cowName) {
-      return res.status(400).json({ message: '❌ Cow name not detected in OCR text.' });
+    // --- Validation ---
+    if (!cowNameRaw) {
+      console.error('❌ Cow name not detected in OCR text.');
+      return;
     }
 
-    // Try direct match
-    let cow = await Cow.findOne({
-      cow_name: { $regex: new RegExp(`^${cowName}$`, 'i') },
-      farmer_code: farmerCode
-    });
-
-    // If no direct match, try fuzzy match
-    if (!cow) {
-      const possible = await Cow.find({ farmer_code: farmerCode }).select('cow_name');
-      const cowNames = possible.map(c => c.cow_name);
-
-      const match = stringSimilarity.findBestMatch(cowName, cowNames);
-      if (match.bestMatch.rating > 0.6) {
-        cow = await Cow.findOne({
-          cow_name: match.bestMatch.target,
-          farmer_code: farmerCode
-        });
-      }
-
-      if (!cow) {
-        return res.status(404).json({
-          message: '❌ Cow not found for this farmer',
-          extractedCowName: cowName,
-          suggestion: cowNames
-        });
-      }
-    }
-
+    const cowName = cowNameRaw.trim();
     if (!inseminationDate) {
-      return res.status(400).json({ message: '❌ Insemination Date not detected or invalid in OCR' });
+      console.warn('⚠️ Insemination Date not detected. Using current date as fallback.');
+      inseminationDate = new Date();
     }
 
-    // ✅ Save record
+    // --- Database Query ---
+    let cow = null;
+    try {
+      cow = await Cow.findOne({
+        cow_name: { $regex: new RegExp(`^${cowName}$`, 'i') },
+        farmer_code: farmerCode,
+      }).maxTimeMS(5000);
+    } catch (dbError) {
+      console.error('❌ Database error during cow lookup:', dbError.message);
+      return;
+    }
+
+    // Fuzzy match fallback
+    let possibleCows = [];
+    if (!cow) {
+      try {
+        possibleCows = await Cow.find({ farmer_code: farmerCode })
+          .select('cow_name')
+          .lean()
+          .maxTimeMS(5000);
+        const cowNames = possibleCows.map(c => c.cow_name);
+
+        if (cowNames.length > 0) {
+          const match = stringSimilarity.findBestMatch(cowName, cowNames);
+          if (match.bestMatch.rating > 0.75) {
+            cow = await Cow.findOne({
+              cow_name: match.bestMatch.target,
+              farmer_code: farmerCode,
+            }).maxTimeMS(5000);
+          }
+        }
+      } catch (dbError) {
+        console.error('❌ Database error during fuzzy match:', dbError.message);
+        possibleCows = []; // Ensure possibleCows is defined
+      }
+    }
+
+    if (!cow) {
+      console.error('❌ Cow not found for this farmer', {
+        extractedCowName: cowName,
+        suggestion: possibleCows.map(c => c.cow_name),
+      });
+      return;
+    }
+
+    // --- Save Insemination Record ---
     const record = new Insemination({
       cow_id: cow._id,
       farmer_code: farmerCode,
       insemination_date: inseminationDate,
-      bull_breed: bullBreed,
-      inseminator: technician,
-      notes
+      bull_breed: bullBreed || 'Unknown',
+      inseminator: technician || 'Unknown',
+      notes,
     });
 
     await record.save();
-
-    res.status(201).json({
-      message: '✅ OCR extraction & data saved.',
-      record
-    });
+    console.log('✅ OCR extraction & record saved:', record);
 
   } catch (error) {
     console.error('❌ Error during OCR:', error.message);
-    res.status(500).json({ message: 'OCR or save failed.', error: error.message });
+    return;
   }
 };
