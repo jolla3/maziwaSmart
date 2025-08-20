@@ -32,22 +32,24 @@ exports.createCow = async (req, res) => {
 };
 
 
-
 // GET /api/farmer/cows
 exports.getMyCows = async (req, res) => {
   try {
     const farmer_code = req.user.code;
 
     const cows = await Cow.find({ farmer_code })
-      .populate('breed_id', 'breed_name')  // include breed details
-      .populate('mother_id', 'cow_name');  // optional, show mother
+      .populate('breed_id', 'breed_name')
+      .populate('mother_id', 'cow_name')
+      .populate({
+        path: 'offspring_ids',
+        select: 'cow_name birth_date' // ⬅️ Select only the necessary fields
+      });
 
     res.status(200).json({ cows });
   } catch (error) {
     res.status(500).json({ message: "Failed to fetch cows", error: error.message });
   }
 };
-
 
 
 
