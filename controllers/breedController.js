@@ -1,80 +1,116 @@
 const {Breed,Cow} = require('../models/model');
 
 // Create a new breed
+// controllers/breedController.js
+
+// ✅ Create a new breed
 exports.createBreed = async (req, res) => {
   try {
-    const farmerId = req.user._id || req.user.id; // Extract from token
+    const farmerId = req.user._id;
 
     if (!farmerId) {
-      return res.status(401).json({ message: 'Farmer ID not found in token' });
+      return res.status(401).json({ message: "Farmer ID not found in token" });
     }
 
-    const { breed_name, description } = req.body;
+    const { breed_name, description, species } = req.body;
+
+    if (!species) {
+      return res.status(400).json({ message: "Species is required" });
+    }
+
+    // Check if breed already exists for this farmer + species
+    const exists = await Breed.findOne({ farmer_id: farmerId, breed_name, species });
+    if (exists) {
+      return res.status(400).json({ message: `${breed_name} already exists for ${species}` });
+    }
 
     const newBreed = new Breed({
       breed_name,
       description,
-      farmer_id: farmerId // ✅ important!
+      species,
+      farmer_id: farmerId
     });
 
     await newBreed.save();
 
-    res.status(201).json({ message: "Breed created successfully", breed: newBreed });
+    res.status(201).json({
+      message: "✅ Breed created successfully",
+      breed: {
+        id: newBreed._id,
+        breed_name: newBreed.breed_name,
+        species: newBreed.species,
+        description: newBreed.description
+      }
+    });
   } catch (error) {
-    console.error(error);
+    console.error("❌ Error creating breed:", error);
     res.status(500).json({ message: "Error creating breed", error: error.message });
   }
 };
 
-
-
+// ✅ Get all breeds for logged farmer
 exports.getBreeds = async (req, res) => {
   try {
-    const farmer_id = req.user.id; // ⬅ FIXED
-    console.log("Fetching breeds for farmer:", farmer_id);
+    const farmerId = req.user._id || req.user.id;
+    const { species } = req.query; // 🔑 frontend passes species e.g. ?species=cow
 
-    const breeds = await Breed.find({ farmer_id });
-    console.log("Found breeds:", breeds);
+    let query = { farmer_id: farmerId, is_active: true };
+    if (species) query.species = species; // apply species filter only if provided
 
-    res.status(200).json({ breeds });
+    const breeds = await Breed.find(query).sort({ breed_name: 1 });
+
+    res.status(200).json({
+      count: breeds.length,
+      species: species || "all",
+      breeds
+    });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'Failed to fetch breeds', error: error.message });
+    console.error("❌ Error fetching breeds:", error);
+    res.status(500).json({ message: "Failed to fetch breeds", error: error.message });
   }
 };
 
 
-// Update a breed
-// Toggle breed active status (activate/deactivate)
-exports.toggleBreedStatus = async (req, res) => {
+// ✅ Update a breed
+exports.updateBreed = async (req, res) => {
   try {
-    const farmer_code = req.user.farmer_code; // from JWT
-    const cowId = req.params.id; // from URL
+    const { id } = req.params;
+    const farmerId = req.user._id || req.user.id;
 
-    console.log("Toggle request - Farmer Code:", farmer_code);
-    console.log("Toggle request - Cow ID:", cowId);
+    const breed = await Breed.findOneAndUpdate(
+      { _id: id, farmer_id: farmerId },
+      req.body,
+      { new: true }
+    );
 
-    // Find the cow that belongs to the logged-in farmer
-    const cow = await Cow.findOne({ _id: cowId, farmer_code });
-
-    if (!cow) {
-      return res.status(404).json({ message: "Cow not found or unauthorized" });
+    if (!breed) {
+      return res.status(404).json({ message: "Breed not found" });
     }
 
-    // Toggle the cow's status
-    cow.is_active = !cow.is_active;
-    await cow.save();
-
-    res.status(200).json({
-      message: `Cow has been ${cow.is_active ? 'reactivated' : 'deactivated'} successfully.`,
-      cow: {
-        id: cow._id,
-        name: cow.cow_name,
-        is_active: cow.is_active
-      }
-    });
+    res.json({ message: "Breed updated successfully", breed });
   } catch (error) {
-    console.error("Toggle error:", error);
-    res.status(500).json({ message: 'Failed to update cow status', error: error.message });
+    res.status(500).json({ message: "Error updating breed", error: error.message });
+  }
+};
+
+// ✅ Soft delete (deactivate) a breed
+exports.deleteBreed = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const farmerId = req.user._id || req.user.id;
+
+    const breed = await Breed.findOneAndUpdate(
+      { _id: id, farmer_id: farmerId },
+      { is_active: false },
+      { new: true }
+    );
+
+    if (!breed) {
+      return res.status(404).json({ message: "Breed not found" });
+    }
+
+    res.json({ message: "Breed deactivated successfully", breed });
+  } catch (error) {
+    res.status(500).json({ message: "Error deleting breed", error: error.message });
   }
 };

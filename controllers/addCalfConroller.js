@@ -1,41 +1,87 @@
-const { Cow } = require('../models/model'); // Adjust the path as needed
+// const { Cow } = require('../models/model'); // Adjust the path as needed
 const moment = require('moment');
-
+const { Cow, Breed, Insemination } = require('../models/model');
 exports.addCalf = async (req, res) => {
   try {
-    const { cow_name, gender, breed_id, birth_date, mother_id } = req.body;
+    const { insemination_id, cow_name, gender, birth_date, cow_code } = req.body;
     const farmer_id = req.user.userId;
     const farmer_code = req.user.code;
 
+    // 1️⃣ Verify insemination record
+    const insemination = await Insemination.findOne({
+      _id: insemination_id,
+      farmer_code
+    });
+    if (!insemination) {
+      return res.status(404).json({ message: "❌ Insemination record not found" });
+    }
+
+    // 2️⃣ Verify mother cow exists
+    const mother = await Cow.findOne({
+      _id: insemination.cow_id,
+      farmer_code
+    });
+    if (!mother) {
+      return res.status(404).json({ message: "❌ Mother cow not found" });
+    }
+
+    // 3️⃣ Ensure bull breed is tracked in farmer's breeds
+    let breedDoc = null;
+    if (insemination.bull_breed) {
+      breedDoc = await Breed.findOne({
+        farmer_id,
+        breed_name: insemination.bull_breed
+      });
+
+      if (!breedDoc) {
+        breedDoc = new Breed({
+          breed_name: insemination.bull_breed,
+          farmer_id
+        });
+        await breedDoc.save();
+      }
+    }
+
+    // 4️⃣ Register the calf
     const calf = new Cow({
       cow_name,
+      cow_code: cow_code || null,
       gender,
-      breed_id,
+      breed_id: breedDoc ? breedDoc._id : null,
+      bull_code: insemination.bull_code || null,
+      bull_name: insemination.bull_name || null,
       birth_date,
-      mother_id: mother_id || null,
+      mother_id: mother._id,
+      insemination_id: insemination._id, // 🔗 trace insemination
       stage: 'calf',
       is_calf: true,
-      from_birth: true, // ✅ Only calves added via this route are updated by cron
+      from_birth: true,
       farmer_id,
-      farmer_code
+      farmer_code,
+      status: 'active'
     });
 
     await calf.save();
 
-    // 🐄 Add to mother's offspring_ids if mother exists
-    if (mother_id) {
-      await Cow.findByIdAndUpdate(mother_id, {
-        $push: { offspring_ids: calf._id }
-      });
-    }
+    // 5️⃣ Update mother’s offspring list + count
+    await Cow.findByIdAndUpdate(mother._id, {
+      $push: { offspring_ids: calf._id },
+      $inc: { total_offspring: 1 }
+    });
 
+    // 6️⃣ (Optional) mark insemination as "calved"
+    insemination.has_calved = true;
+    insemination.calf_id = calf._id;
+    await insemination.save();
+
+    // ✅ Response
     res.status(201).json({
-      message: "🐄 Calf registered successfully",
+      message: "🐄 Calf registered successfully from insemination",
       calf
     });
 
   } catch (err) {
-    console.error("❌ Error registering calf:", err);
+    console.error("❌ Error adding calf from insemination:", err);
     res.status(500).json({
       message: "❌ Failed to register calf",
       error: err.message
@@ -104,5 +150,102 @@ exports.getCowFamilyTree = async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ message: "Failed to load family tree", error: err.message });
+  }
+};
+
+
+exports.getAwaitingCalves = async (req, res) => {
+  try {
+    const farmer_id = req.user.userId;
+    const farmer_code = req.user.code;
+
+    // Find all cows marked as pregnant
+    const pregnantCows = await Cow.find({
+      farmer_id,
+      farmer_code,
+      'pregnancy.is_pregnant': true,
+      status: 'pregnant'
+    })
+    .populate('pregnancy.insemination_id', 'insemination_date expected_due_date bull_breed bull_code bull_name')
+    .lean();
+
+    res.status(200).json({
+      message: "🐄 Pregnant cows awaiting calves",
+      awaiting_calves: pregnantCows
+    });
+  } catch (err) {
+    console.error("❌ Error fetching awaiting calves:", err);
+    res.status(500).json({ message: "❌ Failed to fetch awaiting calves", error: err.message });
+  }
+};
+
+exports.addCalfFromPregnancy = async (req, res) => {
+  try {
+    const { insemination_id, cow_name, gender, birth_date, cow_code } = req.body;
+    const farmer_id = req.user.userId;
+    const farmer_code = req.user.code;
+
+    // 1️⃣ Get insemination record
+    const insemination = await Insemination.findOne({ _id: insemination_id, farmer_code });
+    if (!insemination) {
+      return res.status(404).json({ message: "❌ Insemination record not found" });
+    }
+
+    // 2️⃣ Get mother cow
+    const mother = await Cow.findById(insemination.cow_id);
+    if (!mother) {
+      return res.status(404).json({ message: "❌ Mother cow not found" });
+    }
+
+    // 3️⃣ Ensure breed exists
+    if (insemination.bull_breed) {
+      let breed = await Breed.findOne({ farmer_id, breed_name: insemination.bull_breed });
+      if (!breed) {
+        breed = await new Breed({ breed_name: insemination.bull_breed, farmer_id }).save();
+      }
+    }
+
+    // 4️⃣ Create calf
+    const calf = new Cow({
+      cow_name,
+      cow_code: cow_code || null,
+      gender,
+      breed_id: insemination.bull_breed 
+        ? (await Breed.findOne({ farmer_id, breed_name: insemination.bull_breed }))._id 
+        : null,
+      bull_code: insemination.bull_code || null,
+      bull_name: insemination.bull_name || null,
+      birth_date,
+      mother_id: mother._id,
+      stage: 'calf',
+      is_calf: true,
+      from_birth: true,
+      farmer_id,
+      farmer_code,
+      status: 'active'
+    });
+
+    await calf.save();
+
+    // 5️⃣ Update mother's offspring list
+    await Cow.findByIdAndUpdate(mother._id, {
+      $push: { offspring_ids: calf._id },
+      $inc: { total_offspring: 1 },
+      $set: {
+        'pregnancy.is_pregnant': false,
+        'pregnancy.insemination_id': null,
+        'pregnancy.expected_due_date': null,
+        status: 'active'
+      }
+    });
+
+    res.status(201).json({
+      message: "🐮 Calf registered successfully",
+      calf
+    });
+
+  } catch (err) {
+    console.error("❌ Error adding calf:", err);
+    res.status(500).json({ message: "❌ Failed to register calf", error: err.message });
   }
 };

@@ -1,279 +1,389 @@
-const { Insemination, Cow } = require('../models/model');
+const { Insemination, Cow , Breed,Notification} = require('../models/model');
 const Tesseract = require('tesseract.js');
 const path = require('path');
 const stringSimilarity = require('string-similarity');
 const chrono = require('chrono-node');
 const sharp = require('sharp');
-
 exports.addInseminationRecord = async (req, res) => {
   try {
-    const { cow_id, insemination_date, inseminator, bull_breed, notes } = req.body;
-    const farmer_code = req.user.code; // from token
-
-    // ✅ Check cow belongs to this farmer
-    const cow = await Cow.findOne({ _id: cow_id, farmer_code });
-
-    if (!cow) {
-      return res.status(404).json({ message: "🐄 Cow not found or unauthorized" });
-    }
-
-    // ✅ Save record
-    const record = new Insemination({
-      cow_id,
-      farmer_code,
+    const {
+      animal_id,       // ✅ generic instead of cow_id
       insemination_date,
       inseminator,
+      bull_code,
+      bull_name,
       bull_breed,
+      notes
+    } = req.body;
+
+    const farmer_code = req.user.code;
+    const farmer_id = req.user._id || req.user.id;
+
+    // ✅ Find the animal (cow, goat, sheep, etc.)
+    const animal = await Cow.findOne({ _id: animal_id, farmer_code });
+    if (!animal) {
+      return res.status(404).json({ message: "❌ Animal not found or unauthorized" });
+    }
+
+    // ✅ Validate insemination_date
+    const inseminationDate = insemination_date ? new Date(insemination_date) : new Date();
+    if (isNaN(inseminationDate)) {
+      return res.status(400).json({ message: "❌ Invalid insemination_date format. Use YYYY-MM-DD." });
+    }
+
+    // Compute expected due date (species-specific, default 283 days for cows)
+    let gestationDays = 283; // default for cows
+    if (animal.species === "goat") gestationDays = 150;
+    if (animal.species === "sheep") gestationDays = 152;
+    if (animal.species === "camel") gestationDays = 390;
+
+    const due = new Date(inseminationDate);
+    due.setDate(due.getDate() + gestationDays);
+
+    // Save insemination record
+    const record = new Insemination({
+      animal_id,
+      farmer_code,
+      animal_name: animal.name,
+      species: animal.species, // ✅ track species
+      insemination_date: inseminationDate,
+      inseminator,
+      bull_code,
+      bull_name,
+      bull_breed,
+      outcome: "pregnant",
+      expected_due_date: due,
       notes
     });
 
     await record.save();
 
+    // Update pregnancy status
+    animal.pregnancy = {
+      is_pregnant: true,
+      insemination_id: record._id,
+      expected_due_date: due
+    };
+    animal.status = "pregnant";
+    await animal.save();
+
+    // Notification
+    await Notification.create({
+      farmer_code,
+      animal: animal._id,
+      type: 'gestation_alert',
+      message: `${animal.species} ${animal.name} is confirmed pregnant. Expected due: ${due.toDateString()}`
+    });
+
+    // Auto-add bull breed under correct species
+    if (bull_breed) {
+      const exists = await Breed.findOne({
+        farmer_id,
+        breed_name: bull_breed,
+        species: animal.species
+      });
+
+      if (!exists) {
+        await new Breed({
+          breed_name: bull_breed,
+          description: `Auto-added from insemination of ${animal.name}`,
+          species: animal.species,
+          farmer_id
+        }).save();
+      }
+    }
+
     res.status(201).json({
       message: "✅ Insemination record added successfully",
-      data: record
+      data: {
+        _id: record._id,
+        animal_id: record.animal_id,
+        animal_name: record.animal_name,
+        species: record.species,
+        insemination_date: record.insemination_date,
+        bull_name: record.bull_name,
+        bull_breed: record.bull_breed,
+        expected_due_date: record.expected_due_date,
+        outcome: record.outcome,
+        notes: record.notes
+      },
+      animal: {
+        _id: animal._id,
+        name: animal.name,
+        species: animal.species,
+        status: animal.status,
+        pregnancy: animal.pregnancy
+      }
     });
 
   } catch (error) {
     console.error("❌ Error in addInseminationRecord:", error);
+    res.status(500).json({ message: "❌ Failed to add insemination record", error: error.message });
+  }
+};
+
+
+exports.getInseminationRecords = async (req, res) => {
+  try {
+    const farmer_code = req.user.code;
+
+    const records = await Insemination.find({ farmer_code })
+      .populate("animal_id", "name tag_id status species") // ✅ generic
+      .sort({ insemination_date: -1 });
+
+    // 🧹 Clean response
+    const formatted = records.map(r => ({
+      id: r._id,
+      animal: r.animal_id ? {
+        id: r.animal_id._id,
+        name: r.animal_id.name,
+        tag: r.animal_id.tag_id,
+        status: r.animal_id.status,
+        species: r.animal_id.species
+      } : null,
+      insemination_date: r.insemination_date,
+      expected_due_date: r.expected_due_date,
+      inseminator: r.inseminator,
+      bull: {
+        code: r.bull_code,
+        name: r.bull_name,
+        breed: r.bull_breed
+      },
+      outcome: r.outcome,
+      notes: r.notes,
+      has_calved: r.has_calved
+    }));
+
+    res.status(200).json({
+      success: true,
+      count: formatted.length,
+      records: formatted
+    });
+  } catch (error) {
+    console.error("❌ Error fetching insemination records:", error);
     res.status(500).json({
-      message: "❌ Failed to add insemination record",
+      success: false,
+      message: "Failed to fetch insemination records",
       error: error.message
     });
   }
-}
+};
+
 
 exports.uploadInseminationImage = async (req, res) => {
   try {
+    // Get the path of the uploaded image
     const imagePath = req.file.path;
 
-    // Run OCR
+    // Run OCR on the image to extract text
     const { data: { text } } = await Tesseract.recognize(imagePath, 'eng');
-    console.log("📄 Extracted Text:", text);
+    console.log(`Extracted text from image: ${text}`);
 
     // Return JSON response so client doesn’t timeout
     return res.status(200).json({
-      message: "✅ OCR completed",
+      message: "OCR completed successfully",
       raw_text: text,
       file_path: imagePath
     });
 
   } catch (error) {
-    console.error("❌ OCR Error:", error);
+    console.error(`Error occurred while processing image: ${error}`);
     return res.status(500).json({
-      message: "❌ Failed to process image",
+      message: "Failed to process image",
       error: error.message
     });
   }
 };
+
 exports.handleOCRUpload = async (req, res) => {
   try {
     if (!req.file) {
-      return res.status(400).json({ message: '❌ No image uploaded' });
+      return res.status(400).json({ error: "No file uploaded" });
     }
 
-    const imagePath = req.file.path;
-    const farmerCode = req.user.code;
+    // Run OCR
+    const { data: { text } } = await Tesseract.recognize(req.file.path, "eng");
+    console.log("📄 OCR Text:", text);
 
-    // --- Validate Image Size ---
-    const metadata = await sharp(imagePath).metadata();
-    if (metadata.width < 200 || metadata.height < 200) {
-      console.error('❌ Image too small:', metadata);
-      return res.status(400).json({ message: '❌ Image resolution too low. Please upload a higher-quality image.' });
+    let cow_name = null;
+
+    // 1️⃣ Try regex extraction (Name: Mercy)
+    const nameRegex = text.match(/(?:Name|Cow)\s*[:\-]?\s*([A-Za-z]{3,})/i);
+    if (nameRegex) {
+      cow_name = nameRegex[1].trim();
     }
 
-    // --- Respond Early to Avoid Timeout ---
-    res.status(202).json({
-      message: '⏳ OCR processing started',
-      file: imagePath,
-    });
+    // 2️⃣ If regex fails, do fuzzy match with DB cows
+    if (!cow_name) {
+      const cows = await Cow.find({ farmer_code: req.user.code }); 
+      const cowNames = cows.map(c => c.cow_name);
 
-    // --- Enhanced Image Preprocessing ---
-    const processedPath = path.join(path.dirname(imagePath), `processed-${path.basename(imagePath)}`);
-    try {
-      await sharp(imagePath)
-        .rotate() // Auto-rotate based on EXIF data
-        .resize({ width: 2500, height: 2500, fit: 'contain', background: { r: 255, g: 255, b: 255 } }) // Larger size
-        .grayscale()
-        .normalize()
-        .sharpen({ sigma: 1, m1: 0, m2: 3 }) // Stronger sharpening
-        .threshold(100) // Adjusted threshold for better contrast
-        .toFile(processedPath);
-      console.log('📷 Preprocessed image saved at:', processedPath);
-    } catch (sharpError) {
-      console.error('❌ Image preprocessing error:', sharpError.message);
-      return;
-    }
-
-    // --- Improved OCR Configuration ---
-    const { data: { text } } = await Tesseract.recognize(processedPath, 'eng', {
-      tessedit_pageseg_mode: 3, // Auto page segmentation
-      tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-/ :.',
-      preserve_interword_spaces: 1,
-      tessedit_ocr_engine_mode: 1, // LSTM engine
-    });
-    console.log('📄 Extracted Text:', text);
-
-    const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-
-    // --- Helper: Fuzzy Extraction with Stricter Validation ---
-    const extractNearLabel = (labels, maxLength = 50, minLength = 2) => {
-      for (let i = 0; i < lines.length; i++) {
-        for (const label of labels) {
-          const lineLower = lines[i].toLowerCase();
-          const labelLower = label.toLowerCase();
-          if (
-            stringSimilarity.compareTwoStrings(lineLower, labelLower) > 0.75 ||
-            lineLower.includes(labelLower.slice(0, 4))
-          ) {
-            let cleaned = lines[i].replace(/[^a-zA-Z0-9\s\-/.:]/g, '').trim();
-            if (
-              cleaned &&
-              cleaned.length >= minLength &&
-              cleaned.length <= maxLength &&
-              !/avoid|heat|comfort|insemination|clinicals|services|priority/i.test(cleaned)
-            ) {
-              return cleaned;
-            }
-            // Check next line as fallback
-            if (i + 1 < lines.length) {
-              cleaned = lines[i + 1].replace(/[^a-zA-Z0-9\s\-/.:]/g, '').trim();
-              if (
-                cleaned &&
-                cleaned.length >= minLength &&
-                cleaned.length <= maxLength &&
-                !/avoid|heat|comfort|insemination|clinicals|services|priority/i.test(cleaned)
-              ) {
-                return cleaned;
-              }
-            }
-          }
-        }
+      const match = stringSimilarity.findBestMatch(text, cowNames);
+      if (match.bestMatch.rating > 0.5) {
+        cow_name = match.bestMatch.target;
       }
-      return null;
-    };
-
-    const safeExtract = (field, labels) => {
-      const value = extractNearLabel(labels);
-      console.log(`🔎 Extracted ${field}:`, value || 'null');
-      return value;
-    };
-
-    // --- Field Extraction ---
-    const farmerName = safeExtract('Farmer', ['Farmer', 'Farm', 'Owner']);
-
-    // Cow Name (Regex + Fallback)
-    let cowNameRaw = null;
-    const animalMatch = text.match(/(?:Animal|Cow|Name)\s*[:\-]?\s*([A-Za-z0-9\s]{2,30})/i);
-    if (animalMatch && animalMatch[1].length <= 30) {
-      cowNameRaw = animalMatch[1].trim();
-      console.log('🔎 Cow Name (regex):', cowNameRaw);
-    } else {
-      cowNameRaw = safeExtract('Cow Name', ['Animal', 'Cow', 'Name', 'Ear No']);
     }
 
-    // Bull Breed
-    const bullBreed = safeExtract('Bull Breed', ['Breed', 'Bull', 'Sire']);
+    if (!cow_name) {
+      return res.status(400).json({ error: "Could not extract cow name from card" });
+    }
 
-    // Technician
-    const technician = safeExtract('Technician', ['Inseminator', 'Technician', 'Vet', 'Seminator']);
+    // Find the cow in DB
+    const cowDoc = await Cow.findOne({ cow_name, farmer_code: req.user.code });
+    if (!cowDoc) {
+      return res.status(404).json({ error: "Cow not found in database. Please register cow first." });
+    }
 
-    // Insemination Date
-    let inseminationDateRaw = safeExtract('Insemination Date', ['Insemination Date', 'Date', 'Year', 'Month']);
+    // Extract bull + inseminator
+    const bullCodeMatch = text.match(/Bull\s*code\s*[:\-]?\s*([A-Za-z0-9]+)/i);
+    const bullBreedMatch = text.match(/Breed\s*[:\-]?\s*([A-Za-z]+)/i);
+    const inseminatorMatch = text.match(/Inseminator\s*[:\-]?\s*([A-Za-z ]+)/i);
+
+    // Extract date
+    const dateMatch = text.match(/(\d{2,4}[\/\-\s]\d{1,2}[\/\-\s]\d{1,2})/);
     let inseminationDate = null;
-    if (inseminationDateRaw) {
-      const cleanedDate = inseminationDateRaw.replace(/[^0-9\s\-/:.]/g, '').trim();
-      inseminationDate = chrono.parseDate(cleanedDate) || chrono.parseDate(cleanedDate, { forwardDate: true });
-      // Custom date parsing fallback
-      if (!inseminationDate) {
-        const dateMatch = cleanedDate.match(/(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/);
-        if (dateMatch) {
-          const [_, day, month, year] = dateMatch;
-          const fullYear = year.length === 2 ? `20${year}` : year; // Assume 20XX for two-digit years
-          inseminationDate = new Date(`${fullYear}-${month}-${day}`);
-          if (isNaN(inseminationDate.getTime())) {
-            inseminationDate = null;
-          }
-        }
-      }
-      console.log('🔎 Parsed Date:', inseminationDate ? inseminationDate.toISOString() : 'null');
+    if (dateMatch) {
+      inseminationDate = new Date(dateMatch[1]);
     }
-
-    // Notes
-    const notes = text;
-
-    // --- Validation ---
-    if (!cowNameRaw) {
-      console.error('❌ Cow name not detected in OCR text.');
-      return;
-    }
-
-    const cowName = cowNameRaw.trim();
-    if (!inseminationDate) {
-      console.warn('⚠️ Insemination Date not detected. Using current date as fallback.');
+    if (!inseminationDate || isNaN(inseminationDate)) {
+      console.warn("⚠️ Could not parse insemination date from OCR. Using today.");
       inseminationDate = new Date();
     }
 
-    // --- Database Query ---
-    let cow = null;
-    try {
-      cow = await Cow.findOne({
-        cow_name: { $regex: new RegExp(`^${cowName}$`, 'i') },
-        farmer_code: farmerCode,
-      }).maxTimeMS(5000);
-    } catch (dbError) {
-      console.error('❌ Database error during cow lookup:', dbError.message);
-      return;
-    }
-
-    // Fuzzy match fallback
-    let possibleCows = [];
-    if (!cow) {
-      try {
-        possibleCows = await Cow.find({ farmer_code: farmerCode })
-          .select('cow_name')
-          .lean()
-          .maxTimeMS(5000);
-        const cowNames = possibleCows.map(c => c.cow_name);
-
-        if (cowNames.length > 0) {
-          const match = stringSimilarity.findBestMatch(cowName, cowNames);
-          if (match.bestMatch.rating > 0.75) {
-            cow = await Cow.findOne({
-              cow_name: match.bestMatch.target,
-              farmer_code: farmerCode,
-            }).maxTimeMS(5000);
-          }
-        }
-      } catch (dbError) {
-        console.error('❌ Database error during fuzzy match:', dbError.message);
-        possibleCows = []; // Ensure possibleCows is defined
-      }
-    }
-
-    if (!cow) {
-      console.error('❌ Cow not found for this farmer', {
-        extractedCowName: cowName,
-        suggestion: possibleCows.map(c => c.cow_name),
-      });
-      return;
-    }
-
-    // --- Save Insemination Record ---
-    const record = new Insemination({
-      cow_id: cow._id,
-      farmer_code: farmerCode,
+    // Build insemination record
+    const inseminationData = {
+      cow_id: cowDoc._id,
+      farmer_code: req.user.code,
+      cow_name,
+      bull_code: bullCodeMatch ? bullCodeMatch[1] : null,
+      bull_breed: bullBreedMatch ? bullBreedMatch[1] : null,
+      inseminator: inseminatorMatch ? inseminatorMatch[1].trim() : null,
       insemination_date: inseminationDate,
-      bull_breed: bullBreed || 'Unknown',
-      inseminator: technician || 'Unknown',
-      notes,
-    });
+    };
 
+    const record = new Insemination(inseminationData);
     await record.save();
-    console.log('✅ OCR extraction & record saved:', record);
+
+    res.status(201).json({ message: "Insemination record saved", record });
+
+  } catch (err) {
+    console.error("OCR Handler Error:", err);
+    res.status(500).json({ error: "Failed to process insemination card" });
+  }
+};
+
+// controllers/inseminationController.js
+exports.deleteInseminationRecord = async (req, res) => {
+  try {
+    const farmer_code = req.user.code;
+    const { id } = req.params;
+
+    // 🔍 Check record
+    const record = await Insemination.findOne({ _id: id, farmer_code });
+    if (!record) {
+      return res.status(404).json({ message: "❌ Insemination record not found" });
+    }
+
+    // ⛔ Prevent deleting after calving
+    if (record.has_calved) {
+      return res.status(400).json({ message: "❌ Cannot delete insemination record after calving" });
+    }
+
+    // 🗑 Delete record
+    await Insemination.deleteOne({ _id: id });
+
+    // 🐄 Reset pregnancy status only if this insemination is still active on the cow
+    await Cow.findOneAndUpdate(
+      { _id: record.cow_id, "pregnancy.insemination_id": record._id },
+      {
+        $set: {
+          "pregnancy.is_pregnant": false,
+          "pregnancy.insemination_id": null,
+          "pregnancy.expected_due_date": null,
+          status: "active"
+        }
+      }
+    );
+
+    res.status(200).json({ message: "✅ Insemination record deleted successfully" });
 
   } catch (error) {
-    console.error('❌ Error during OCR:', error.message);
-    return;
+    console.error("❌ Error deleting insemination record:", error);
+    res.status(500).json({
+      message: "❌ Failed to delete insemination record",
+      error: error.message
+    });
+  }
+};
+
+exports.updateInseminationRecord = async (req, res) => {
+  try {
+    const farmer_code = req.user.code;
+    const { id } = req.params;
+    const updates = req.body;
+
+    const record = await Insemination.findOneAndUpdate(
+      { _id: id, farmer_code },
+      { $set: updates },
+      { new: true }
+    );
+
+    if (!record) return res.status(404).json({ message: "Record not found" });
+
+    // if outcome is updated to not_pregnant, reset cow pregnancy
+    if (updates.outcome === "not_pregnant") {
+      await Cow.findByIdAndUpdate(record.cow_id, {
+        $set: { pregnancy: { is_pregnant: false }, status: "available" }
+      });
+    }
+
+    res.status(200).json({ message: "Record updated", record });
+  } catch (error) {
+    console.error("❌ Error updating insemination record:", error);
+    res.status(500).json({ message: "Failed to update insemination record", error: error.message });
+  }
+};
+
+// 🟢 Get single insemination record
+exports.getInseminationRecordById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const farmer_code = req.user.code;
+
+    const record = await Insemination.findOne({ _id: id, farmer_code })
+      .populate("cow_id", "cow_name tag_id status");
+
+    if (!record) {
+      return res.status(404).json({ success: false, message: "Insemination record not found" });
+    }
+
+    // 🧹 Clean response
+    const formatted = {
+      id: record._id,
+      cow: record.cow_id ? {
+        id: record.cow_id._id,
+        name: record.cow_id.cow_name,
+        tag: record.cow_id.tag_id,
+        status: record.cow_id.status
+      } : null,
+      insemination_date: record.insemination_date,
+      expected_due_date: record.expected_due_date,
+      inseminator: record.inseminator,
+      bull: {
+        code: record.bull_code,
+        name: record.bull_name,
+        breed: record.bull_breed
+      },
+      outcome: record.outcome,
+      notes: record.notes,
+      has_calved: record.has_calved,
+      calf_id: record.calf_id,
+      created_at: record.created_at
+    };
+
+    res.status(200).json({ success: true, record: formatted });
+  } catch (error) {
+    console.error("❌ Error fetching insemination record:", error);
+    res.status(500).json({ success: false, message: "Failed to fetch insemination record", error: error.message });
   }
 };

@@ -1,21 +1,38 @@
-// server.js or socket.js
-const { getAdminPortersMonthlySummary } = require("../controllers/porterMilkSummaryController.js");
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+const mongoose = require('mongoose');
+const Notification = require('./models/model').Notification;
 
-io.on("connection", (socket) => {
-  console.log("New client connected:", socket.id);
+const app = express();
+const server = http.createServer(app);
 
-  // Admin joins their own room for targeted updates
-  socket.on("join_admin_room", (adminId) => {
-    socket.join(`admin_${adminId}`);
-    console.log(`Admin ${adminId} joined room admin_${adminId}`);
+const io = new Server(server, {
+  cors: {
+    origin: "*",  // frontend domain goes here
+    methods: ["GET", "POST"]
+  }
+});
+
+// Store sockets by role or farmer_code
+io.on('connection', (socket) => {
+  console.log('⚡ New client connected:', socket.id);
+
+  // Join room based on farmer_code or role
+  socket.on('join', ({ farmer_code, role }) => {
+    if (farmer_code) {
+      socket.join(`farmer_${farmer_code}`);
+      console.log(`👨‍🌾 Farmer ${farmer_code} joined room`);
+    }
+    if (role) {
+      socket.join(role);
+      console.log(`🔑 User joined role: ${role}`);
+    }
   });
 
-  // Triggered when a milk record is created/updated
-  socket.on("milk_record_updated", async (adminId) => {
-    await getAdminPortersMonthlySummary(null, null, io, adminId);
-  });
-
-  socket.on("disconnect", () => {
-    console.log("Client disconnected:", socket.id);
+  socket.on('disconnect', () => {
+    console.log('❌ Client disconnected:', socket.id);
   });
 });
+
+app.set('io', io); // 🔑 so controllers can access io
