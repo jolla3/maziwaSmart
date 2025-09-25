@@ -1,13 +1,10 @@
 const { Farmer, Porter, MilkRecord } = require('../models/model');
 const ExcelJS = require('exceljs');
 
-
-// Utility: Get formatted date string (e.g., 2025-07-18)
+// 📌 Helpers
 const formatDate = (date) => new Date(date).toISOString().split('T')[0];
-
-// Utility: Get weekday name from date
 const getDayName = (date) => {
-  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
   return days[new Date(date).getDay()];
 };
 
@@ -17,11 +14,12 @@ exports.getPortersMilkSummary = async (req, res) => {
     const porters = await Porter.find().lean();
     const farmers = await Farmer.find().lean();
 
+    // maps
     const porterMap = {};
     porters.forEach(p => porterMap[p._id.toString()] = p.name);
 
     const farmerMap = {};
-    farmers.forEach(f => farmerMap[f.farmer_code] = f.fullname);
+    farmers.forEach(f => farmerMap[parseInt(f.farmer_code)] = f.fullname);
 
     const groupedByDate = {};
 
@@ -35,8 +33,8 @@ exports.getPortersMilkSummary = async (req, res) => {
       groupedByDate[dateKey][timeSlot].push({
         porter_id: rec.created_by?.toString() || 'unknown',
         porter_name: porterMap[rec.created_by?.toString()] || 'Unknown Porter',
-        farmer_code: rec.farmer_code,
-        farmer_name: farmerMap[rec.farmer_code] || 'Unknown Farmer',
+        farmer_code: parseInt(rec.farmer_code),
+        farmer_name: farmerMap[parseInt(rec.farmer_code)] || 'Unknown Farmer',
         litres: rec.litres
       });
     }
@@ -46,8 +44,8 @@ exports.getPortersMilkSummary = async (req, res) => {
     for (let date in groupedByDate) {
       const readableDay = getDayName(date);
       let dateSummary = {
-        date,                   // e.g. "2025-07-18"
-        day: readableDay,       // e.g. "Friday"
+        date,
+        day: readableDay,
         slots: [],
         porter_totals: {},
         total_litres_for_day: 0
@@ -76,7 +74,6 @@ exports.getPortersMilkSummary = async (req, res) => {
             litres: rec.litres
           });
 
-          // Daily porter total
           if (!dateSummary.porter_totals[rec.porter_name]) {
             dateSummary.porter_totals[rec.porter_name] = 0;
           }
@@ -99,7 +96,7 @@ exports.getPortersMilkSummary = async (req, res) => {
   } catch (error) {
     res.status(500).json({ message: 'Failed to generate summary', error: error.message });
   }
-}
+};
 
 
 // gett individual porter record
@@ -111,7 +108,6 @@ exports.getMyMonthlyMilkSummary = async (req, res) => {
 
     const porterId = req.user.id;
 
-    // Use month from query or fallback to current month
     const monthParam = req.query.month || (() => {
       const now = new Date();
       return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -120,11 +116,9 @@ exports.getMyMonthlyMilkSummary = async (req, res) => {
     const [year, monthIndex] = monthParam.split("-").map(Number);
     const targetDate = new Date(year, monthIndex - 1, 1);
 
-    // Compute month start and end
     const startOfMonth = new Date(targetDate.getFullYear(), targetDate.getMonth(), 1);
     const endOfMonth = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 0, 23, 59, 59);
 
-    // Fetch all milk records for this porter in the given month
     const records = await MilkRecord.find({
       created_by: porterId,
       collection_date: { $gte: startOfMonth, $lte: endOfMonth }
@@ -140,29 +134,28 @@ exports.getMyMonthlyMilkSummary = async (req, res) => {
       });
     }
 
-    // Fetch farmers for name mapping
-    const farmerCodes = [...new Set(records.map(r => r.farmer_code))];
+    const farmerCodes = [...new Set(records.map(r => parseInt(r.farmer_code)))];
     const farmers = await Farmer.find({ farmer_code: { $in: farmerCodes } }).lean();
     const farmerMap = {};
-    farmers.forEach(f => (farmerMap[f.farmer_code] = f.fullname));
+    farmers.forEach(f => (farmerMap[parseInt(f.farmer_code)] = f.fullname));
 
-    // Aggregate litres per farmer
     const farmerSummary = {};
     let totalLitres = 0;
 
     records.forEach(rec => {
-      if (!farmerSummary[rec.farmer_code]) {
-        farmerSummary[rec.farmer_code] = {
-          farmer_code: rec.farmer_code,
-          farmer_name: farmerMap[rec.farmer_code] || "Unknown Farmer",
+      const code = parseInt(rec.farmer_code);
+      if (!farmerSummary[code]) {
+        farmerSummary[code] = {
+          farmer_code: code,
+          farmer_name: farmerMap[code] || "Unknown Farmer",
           total_litres: 0
         };
       }
-      farmerSummary[rec.farmer_code].total_litres += rec.litres;
+      farmerSummary[code].total_litres += rec.litres;
       totalLitres += rec.litres;
     });
 
-    const result = {
+    res.status(200).json({
       porter: req.user.name,
       month: targetDate.toLocaleString("default", { month: "long", year: "numeric" }),
       farmers: Object.values(farmerSummary).sort((a, b) =>
@@ -170,14 +163,10 @@ exports.getMyMonthlyMilkSummary = async (req, res) => {
       ),
       total_litres_for_month: totalLitres,
       total_deliveries: records.length
-    };
+    });
 
-    res.status(200).json(result);
   } catch (error) {
-    console.error(error);
-    res
-      .status(500)
-      .json({ message: "Failed to generate monthly summary", error: error.message });
+    res.status(500).json({ message: "Failed to generate monthly summary", error: error.message });
   }
 };
 
@@ -188,52 +177,35 @@ exports.getMyMonthlyMilkSummary = async (req, res) => {
 // individual farmers record
 exports.farmerMilkSummary = async (req, res) => {
   try {
-    // ✅ Ensure only farmers access this route
     if (req.user.role !== 'farmer') {
       return res.status(403).json({ message: 'Access denied: Only farmers can view this' });
     }
 
-    // ✅ Get farmer using farmer_code from token (payload already has farmer_code)
-    const farmer = await Farmer.findOne({ farmer_code: req.user.code });
+    const farmer = await Farmer.findOne({ farmer_code: parseInt(req.user.code) });
     if (!farmer) {
       return res.status(404).json({ message: 'Farmer not found' });
     }
 
-    // ✅ Get all milk records for this farmer
-    const records = await MilkRecord.find({ farmer_code: farmer.farmer_code }).lean();
+    const records = await MilkRecord.find({ farmer_code: parseInt(farmer.farmer_code) }).lean();
 
-    // ✅ Dynamic summary object
     const summary = {};
-
-    // Helper: format date as YYYY-MM-DD
     const formatDate = (date) => new Date(date).toISOString().split('T')[0];
 
-    // ✅ Group litres by date + slot
     records.forEach(rec => {
       const date = formatDate(rec.collection_date);
       const slot = rec.time_slot;
 
-      if (!summary[slot]) {
-        summary[slot] = {}; // create slot if not exists
-      }
-
-      if (!summary[slot][date]) {
-        summary[slot][date] = 0;
-      }
+      if (!summary[slot]) summary[slot] = {};
+      if (!summary[slot][date]) summary[slot][date] = 0;
 
       summary[slot][date] += rec.litres;
     });
 
-    // ✅ Convert into frontend-friendly format
     const formatted = {};
     for (let slot of Object.keys(summary)) {
-      formatted[slot] = Object.entries(summary[slot]).map(([date, litres]) => ({
-        date,
-        litres
-      }));
+      formatted[slot] = Object.entries(summary[slot]).map(([date, litres]) => ({ date, litres }));
     }
 
-    // ✅ Final response
     res.status(200).json({
       farmer_code: farmer.farmer_code,
       farmer_name: farmer.fullname,
@@ -262,12 +234,10 @@ exports.getAdminPortersMonthlySummary = async (req, res) => {
     const startDate = new Date(year, month - 1, 1);
     const endDate = new Date(year, month, 1);
 
-    // 1️⃣ Get all porters created by admin (active or not)
     const adminPorters = await Porter.find({ created_by: admin_id }).select("_id name is_active").lean();
-
     const adminPorterIds = adminPorters.map(p => p._id);
 
-    if (adminPorterIds.length === 0) {
+    if (!adminPorterIds.length) {
       return res.json({
         admin_id,
         month: parseInt(month),
@@ -278,43 +248,18 @@ exports.getAdminPortersMonthlySummary = async (req, res) => {
       });
     }
 
-    // 2️⃣ Aggregate total litres and deliveries collected by admin's porters in the month
     const overallTotalsAgg = await MilkRecord.aggregate([
-      {
-        $match: {
-          created_by: { $in: adminPorterIds },
-          collection_date: { $gte: startDate, $lt: endDate }
-        }
-      },
-      {
-        $group: {
-          _id: null,
-          totalLitres: { $sum: "$litres" },
-          totalDeliveries: { $sum: 1 }
-        }
-      }
+      { $match: { created_by: { $in: adminPorterIds }, collection_date: { $gte: startDate, $lt: endDate } } },
+      { $group: { _id: null, totalLitres: { $sum: "$litres" }, totalDeliveries: { $sum: 1 } } }
     ]);
 
     const overallTotals = overallTotalsAgg.length ? overallTotalsAgg[0] : { totalLitres: 0, totalDeliveries: 0 };
 
-    // 3️⃣ Aggregate totals per porter (admin's porters)
     const porterTotalsAgg = await MilkRecord.aggregate([
-      {
-        $match: {
-          created_by: { $in: adminPorterIds },
-          collection_date: { $gte: startDate, $lt: endDate }
-        }
-      },
-      {
-        $group: {
-          _id: "$created_by",
-          totalLitres: { $sum: "$litres" },
-          totalDeliveries: { $sum: 1 }
-        }
-      }
+      { $match: { created_by: { $in: adminPorterIds }, collection_date: { $gte: startDate, $lt: endDate } } },
+      { $group: { _id: "$created_by", totalLitres: { $sum: "$litres" }, totalDeliveries: { $sum: 1 } } }
     ]);
 
-    // 4️⃣ Map totals to admin porters
     const portersWithTotals = adminPorters.map(porter => {
       const totalRecord = porterTotalsAgg.find(t => t._id.toString() === porter._id.toString());
       return {
@@ -326,7 +271,6 @@ exports.getAdminPortersMonthlySummary = async (req, res) => {
       };
     });
 
-    // 5️⃣ Return final response
     res.json({
       admin_id,
       month: parseInt(month),
@@ -337,7 +281,6 @@ exports.getAdminPortersMonthlySummary = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Error fetching monthly porters summary:", error);
     res.status(500).json({ message: "Server error", error: error.message });
   }
 };
@@ -429,7 +372,7 @@ exports.downloadMonthlyMilkReport = async (req, res) => {
 // Get summary of each farmer's daily and total milk collected for current month
 exports.getFarmerMonthlySummary = async (req, res) => {
   try {
-    const adminId = req.user.userId;
+    const adminId = req.user.userId || req.user.id
 
     // 1. Get the first and last day of current month
     const now = new Date();

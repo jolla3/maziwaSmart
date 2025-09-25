@@ -6,7 +6,7 @@
   "proxy": "https://maziwasmart.onrender.com",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node app.js"
+    "start": "nodemon app.js"
   },
   "keywords": [],
   "author": "",
@@ -29,6 +29,8 @@
     "mongoose": "^8.16.1",
     "multer": "^2.0.2",
     "node-cron": "^4.2.1",
+    "passport": "^0.7.0",
+    "passport-google-oauth20": "^2.0.0",
     "sharp": "^0.34.3",
     "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1",

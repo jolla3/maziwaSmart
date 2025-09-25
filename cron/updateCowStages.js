@@ -1,6 +1,6 @@
 // /cron/updateCowStages.js
 // ================================
-// Daily stage promotions + pregnancy reminders
+// Daily stage promotions + pregnancy reminders + auto-calving
 // ================================
 
 const cron = require('node-cron');
@@ -19,11 +19,8 @@ const updateStagesAndPregnancies = async () => {
     });
 
     for (const calf of calvesToPromote) {
-      if (calf.gender === 'female') {
-        calf.stage = 'heifer';
-      } else if (calf.gender === 'male') {
-        calf.stage = 'bull';
-      }
+      if (calf.gender === 'female') calf.stage = 'heifer';
+      else if (calf.gender === 'male') calf.stage = 'bull';
       calf.is_calf = false;
       await calf.save();
     }
@@ -34,7 +31,6 @@ const updateStagesAndPregnancies = async () => {
       from_birth: true,
       birth_date: { $lte: moment().subtract(2, 'years').toDate() }
     });
-
     for (const heifer of heifersToPromote) {
       heifer.stage = 'cow';
       await heifer.save();
@@ -46,13 +42,12 @@ const updateStagesAndPregnancies = async () => {
       from_birth: true,
       birth_date: { $lte: moment().subtract(3, 'years').toDate() }
     });
-
     for (const bull of youngBullsToPromote) {
       bull.stage = 'mature_bull';
       await bull.save();
     }
 
-    /** 👶 4. Pregnancy reminders + overdue handling */
+    /** 👶 4. Pregnancy reminders + overdue handling + auto-calving */
     const pregnantAnimals = await Cow.find({
       'pregnancy.is_pregnant': true,
       'pregnancy.expected_due_date': { $exists: true }
@@ -66,9 +61,43 @@ const updateStagesAndPregnancies = async () => {
       if ([90, 30, 7, 1].includes(daysLeft)) {
         await Notification.create({
           farmer_code: animal.farmer_code,
-          animal: animal._id,
+          cow: animal._id,
           type: 'gestation_reminder',
           message: `⏳ Reminder: Your ${animal.species} ${animal.cow_name || 'animal'} is due in ${daysLeft} day(s).`
+        });
+      }
+
+      // Auto-calving if due date passed (>= today)
+      if (today.isSameOrAfter(dueDate, 'day')) {
+        // Create calf record (gender unknown until farmer updates)
+        const calf = new Cow({
+          species: animal.species,
+          stage: 'calf',
+          is_calf: true,
+          from_birth: true,
+          birth_date: today.toDate(),
+          farmer_code: animal.farmer_code,
+          farmer_id: animal.farmer_id,
+          mother_id: animal._id,
+          bull_code: animal.bull_code || null,
+          bull_name: animal.bull_name || null,
+          status: 'active'
+        });
+        await calf.save();
+
+        // Reset mother
+        animal.pregnancy.is_pregnant = false;
+        animal.pregnancy.expected_due_date = null;
+        animal.pregnancy.insemination_id = null;
+        animal.status = 'active';
+        await animal.save();
+
+        // Notify farmer
+        await Notification.create({
+          farmer_code: animal.farmer_code,
+          cow: animal._id,
+          type: 'calving_alert',
+          message: `🎉 Your ${animal.species} ${animal.cow_name || 'animal'} has calved today! A new calf was added to your herd.`
         });
       }
 
@@ -77,10 +106,9 @@ const updateStagesAndPregnancies = async () => {
         const insemination = await Insemination.findById(animal.pregnancy.insemination_id);
         if (insemination) {
           const daysSinceInsemination = today.diff(moment(insemination.insemination_date), 'days');
-
           const gestationDaysMap = { cow: 283, goat: 150, sheep: 152 };
           const gestationDays = gestationDaysMap[animal.species] || 283;
-          const overdueLimit = Math.round(gestationDays * 1.2); // 20% buffer
+          const overdueLimit = Math.round(gestationDays * 1.2);
 
           if (daysSinceInsemination > overdueLimit) {
             animal.pregnancy.is_pregnant = false;
@@ -99,9 +127,9 @@ const updateStagesAndPregnancies = async () => {
       ${youngBullsToPromote.length} bulls ➜ mature_bull,
       ${pregnantAnimals.length} pregnancies checked.`);
   } catch (err) {
-    console.error('❌ Error in cow stage/pregnancy cron:', err.message);
+    console.error('❌ Error in stage/pregnancy cron:', err.message);
   }
 };
 
-// Run every morning at 7AM
-cron.schedule('0 7 * * *', updateStagesAndPregnancies);
+// Run every day at midnight (00:00)
+cron.schedule('0 0 * * *', updateStagesAndPregnancies);

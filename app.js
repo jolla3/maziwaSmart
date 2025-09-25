@@ -6,6 +6,7 @@ const http = require('http');
 const socketIo = require('socket.io');
 require('dotenv').config();
 require('./cron/updateCowStages');
+const passport = require("./config/passport");
 
 const app = express();
 
@@ -13,7 +14,13 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
+
+app.use(passport.initialize());
+
+
+
 // all your routes...
+
 const userAuth = require('./routes/authRouter');
 app.use('/api/userAuth', userAuth);
 
@@ -62,19 +69,20 @@ app.use("/api/recordstats", anomaliesRouter);
 const farmerDashboard = require("./routes/FarmerDashboardRouter");
 app.use("/api/farmerdash", farmerDashboard);
 
-
 const notificationRoutes = require('./routes/notificationRoutes');
 app.use('/api/notifications', notificationRoutes);
 
-const AnimalRouter = require('./routes/AnimalRouter')
+const AnimalRouter = require('./routes/AnimalRouter');
 app.use('/api/animals', AnimalRouter);
 
 const anomalyRoutes = require('./routes/anomalyRoutes');
 app.use('/api/anomalies', anomalyRoutes);
 
+const chatRoutes = require('./routes/chatRoutes');
+app.use('/api/chat', chatRoutes);
 
-
-
+const marketRoutes = require('./routes/marketRoutes');
+app.use('/api/market', marketRoutes);
 
 // MongoDB connection
 mongoose.connect(process.env.MONGO_URI)
@@ -91,7 +99,6 @@ const io = socketIo(server, {
   }
 });
 
-
 // Store io inside app (so controllers can use req.app.get('io'))
 app.set('io', io);
 
@@ -99,9 +106,18 @@ app.set('io', io);
 io.on('connection', (socket) => {
   console.log(`🔌 New client connected: ${socket.id}`);
 
+  // Join private room (userId)
   socket.on('join_room', (room) => {
     socket.join(room);
     console.log(`📡 Socket ${socket.id} joined room: ${room}`);
+  });
+
+  // Listen for chat messages
+  socket.on('send_message', (data) => {
+    console.log('💬 New message:', data);
+
+    // Emit to receiver's room
+    io.to(data.receiver).emit('receive_message', data);
   });
 
   socket.on('disconnect', () => {

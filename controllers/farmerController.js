@@ -7,165 +7,129 @@ const { Farmer, User ,MilkAnomalities,MilkRecord,Notification,AdviceMessages} = 
 const bcrypt = require('bcrypt');
 
 
-
-// ================================
-// Create Farmer
-// ================================
+// ==============================
+// CREATE farmer (admin only)
+// ==============================
 exports.createFarmer = async (req, res) => {
   try {
-    const { fullname, phone, location, email,farmer_code } = req.body;
-    const adminId = req.user.id; // ID from JWT token
+    const { fullname, phone, farmer_code, location_description } = req.body;
+    const adminId = req.user.id || req.user._id;
 
-    // Check for duplicate email
-    const emailExists = await Farmer.findOne({ farmer_code });
-    if (emailExists) {
-      return res.json({ message: 'A farmer with this Code already exists' });
+    // Ensure farmer_code is unique
+    const exists = await Farmer.findOne({ farmer_code });
+    if (exists) {
+      return res.status(400).json({ message: "A farmer with this code already exists" });
     }
-   const difpassword="123farmer"
-         const password= await bcrypt.hash(difpassword,10)
+
     const newFarmer = new Farmer({
       fullname,
       phone,
-      email,
-      password,
       farmer_code,
-      location,
+      location_description,
       created_by: adminId
     });
 
     await newFarmer.save();
-    // Optional: Update farmer to link manager
-    await User.findByIdAndUpdate(
-      adminId,
-      { $set: { farmer: newFarmer._id } },
-      { new: true }
-    );
 
-
-    res.json({
-      message: 'Farmer profile created successfully',
+    res.status(201).json({
+      message: "Farmer profile created successfully",
       farmer: {
         id: newFarmer._id,
         fullname: newFarmer.fullname,
-        email: newFarmer.email,
         phone: newFarmer.phone,
-        location: newFarmer.location,
+        farmer_code: newFarmer.farmer_code,
+        location_description: newFarmer.location_description,
         created_by: newFarmer.created_by
       }
     });
   } catch (error) {
     console.error(error);
-    res.json({ message: 'Failed to create farmer', error: error.message });
+    res.status(500).json({ message: "Failed to create farmer", error: error.message });
   }
 };
-              
 
 // ==============================
-// GET all farmers created by this admin
+// GET all farmers created by this admin (with pagination + search)
 // ==============================
 exports.getAllFarmers = async (req, res) => {
   try {
-    const adminId = req.user.id;
+    const adminId = req.user.id || req.user._id;
     const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10; // Add default value
+    const limit = parseInt(req.query.limit) || 10;
     const search = req.query.search || "";
-    
-    console.log("[GET /api/farmers] adminId:", adminId, "page:", page, "limit:", limit, "search:", search);
-    
-    // Filter object
+
     const filter = {
       created_by: adminId,
       fullname: { $regex: search, $options: "i" }
     };
-    
+
     const total = await Farmer.countDocuments(filter);
-    
+
     const farmers = await Farmer.find(filter)
       .skip((page - 1) * limit)
       .limit(limit)
-      .sort({ createdAt: -1 }); // Optional: add sorting
-    
-    res.json({ 
-      farmers, 
+      .sort({ created_at: -1 });
+
+    res.json({
+      farmers,
       total,
       page,
       limit,
-      totalPages: Math.ceil(total / limit) // Include this for debugging
+      totalPages: Math.ceil(total / limit)
     });
-    
-    console.log(`Admin ID: ${adminId}, Farmers found: ${farmers.length}, Total: ${total}`);
   } catch (err) {
     res.status(500).json({ message: "Failed to fetch farmers", error: err.message });
   }
 };
+
 // ==============================
-// GET single farmer by code (admin must have created them)
+// GET single farmer by code
 // ==============================
 exports.getFarmerByCode = async (req, res) => {
   try {
-    const adminId = req.user.id;
+    const adminId = req.user.id || req.user._id;
     const farmer = await Farmer.findOne({
       farmer_code: req.params.code,
       created_by: adminId
     });
 
-    if (!farmer) return res.json({ message: 'Farmer not found or not yours' });
+    if (!farmer) {
+      return res.status(404).json({ message: "Farmer not found or not yours" });
+    }
+
     res.json(farmer);
   } catch (err) {
-    res.json({ message: 'Failed to fetch farmer' });
+    res.status(500).json({ message: "Failed to fetch farmer", error: err.message });
   }
 };
 
 // ==============================
-// UPDATE farmer (only the admin who created the farmer OR the farmer themself)
+// UPDATE farmer (admin only for their farmers)
 // ==============================
 exports.updateFarmer = async (req, res) => {
   try {
-    const userIdFromToken = req.user.id;
-    const role = req.user.role;
-    const farmerIdFromParams = req.params.id;
-    const updatedData = req.body;
+    const adminId = req.user.id || req.user._id;
+    const farmerId = req.params.id;
 
-    let farmerId;
-
-    if (role === 'farmer') {
-      const user = await User.findById(userIdFromToken);
-      if (!user || !user.farmer) {
-        return res.json({ message: 'Farmer profile not linked to user' });
-      }
-      farmerId = user.farmer.toString();
-    } else if (role === 'admin') {
-      // Ensure the farmer being updated was created by this admin
-      const farmer = await Farmer.findOne({ _id: farmerIdFromParams, created_by: userIdFromToken });
-      if (!farmer) {
-        return res.json({ message: 'You are not authorized to update this farmer' });
-      }
-      farmerId = farmer._id;
-    } else {
-      return res.json({ message: 'Unauthorized role' });
+    // Verify farmer belongs to this admin
+    const farmer = await Farmer.findOne({ _id: farmerId, created_by: adminId });
+    if (!farmer) {
+      return res.status(403).json({ message: "You are not authorized to update this farmer" });
     }
 
-    // Restrict password update by admin
-    if (updatedData.password && role === 'admin') {
-      return res.json({ message: 'Admins cannot change farmer passwords' });
-    }
-
-    // Hash new password if farmer is updating it
-    if (updatedData.password) {
-      const hashedPassword = await bcrypt.hash(updatedData.password, 10);
-      updatedData.password = hashedPassword;
-    }
-
-    const updatedFarmer = await Farmer.findByIdAndUpdate(farmerId, updatedData, { new: true });
+    const updatedFarmer = await Farmer.findByIdAndUpdate(
+      farmerId,
+      req.body,
+      { new: true }
+    );
 
     res.json({
-      message: 'Farmer profile updated successfully',
+      message: "Farmer profile updated successfully",
       farmer: updatedFarmer
     });
-
   } catch (error) {
     console.error(error);
-    res.json({ message: 'Update failed', error: error.message });
+    res.status(500).json({ message: "Update failed", error: error.message });
   }
 };
 

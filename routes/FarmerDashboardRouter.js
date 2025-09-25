@@ -5,7 +5,7 @@ const porterDashStatController = require("../controllers/FarmerDashboardControll
 const { verifyToken, authorizeRoles } = require('../middleware/authMiddleware');
 
 // router.get('/all', verifyToken, CowSummaryController.CowSummaryController);
-router.get("/", verifyToken,authorizeRoles('farmer'),porterDashStatController.farmerDashboard)
+router.get("/", verifyToken,porterDashStatController.farmerDashboard)
 // router.get("/:id", verifyToken,addCalfController.getCowFamilyTree)
 
 module.exports = router

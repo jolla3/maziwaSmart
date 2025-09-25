@@ -39,36 +39,34 @@ exports.farmerDashboard = async (req, res) => {
       return res.status(404).json({ message: "Farmer not found" });
     }
 
-    // 2. Milk Records
+    // 2. Milk Records (populate porter correctly)
     const milkRecords = await MilkRecord.find({ farmer_code: farmerCode })
-      .populate("created_by", "fullname phone") // porter details
-      .sort({ collection_date: -1 }) // latest first
+      .populate("created_by", "name phone") // ✅ Porter fields
+      .sort({ collection_date: -1 })
       .lean();
 
     // Stats
     let totalLitres = 0;
-    const slotTotals = {}; // group by time slot
+    const slotTotals = {};
     let startDate = null;
 
     milkRecords.forEach((r) => {
       totalLitres += r.litres;
       slotTotals[r.time_slot] = (slotTotals[r.time_slot] || 0) + r.litres;
-
-      // track first record date
       if (!startDate || r.collection_date < startDate) {
         startDate = r.collection_date;
       }
     });
 
-    // Recent activities (last 5 records)
+    // Recent activities
     const recentActivities = milkRecords.slice(0, 5).map((r) => ({
       date: r.collection_date,
       litres: r.litres,
       slot: r.time_slot,
       porter: r.created_by
-        ? { name: r.created_by.fullname, phone: r.created_by.phone }
+        ? { name: r.created_by.name, phone: r.created_by.phone }
         : null,
-    }));
+    }))
 
     // 3. Other Stats
     const cowCount = await Cow.countDocuments({ farmer_code: farmerCode });
@@ -80,21 +78,15 @@ exports.farmerDashboard = async (req, res) => {
       farmer_code: farmerCode,
     });
 
-    // ✅ Stage breakdown (calves, heifers, cows)
+    // ✅ Stage breakdown
     const stageBreakdown = await Cow.aggregate([
-      { $match: { farmer_code: String(farmerCode) } }, // ensure same type
-      {
-        $group: {
-          _id: "$stage",
-          count: { $sum: 1 },
-        },
-      },
+      { $match: { farmer_code: farmerCode } }, // use Number directly
+      { $group: { _id: "$stage", count: { $sum: 1 } } },
     ]);
 
-    // Transform into object: { calf: X, heifer: Y, cow: Z }
     const cowStages = { calf: 0, heifer: 0, cow: 0 };
     stageBreakdown.forEach((s) => {
-      cowStages[s._id] = s.count;
+      if (s._id) cowStages[s._id] = s.count;
     });
 
     // 4. Managers linked
@@ -111,19 +103,19 @@ exports.farmerDashboard = async (req, res) => {
         name: farmer.fullname,
         email: farmer.email,
         phone: farmer.phone,
-        start_date: startDate, // ✅ since first record
+        start_date: startDate,
       },
       stats: {
         total_milk: totalLitres,
-        milk_by_slot: slotTotals, // ✅ usable in graphs
+        milk_by_slot: slotTotals,
         cows: cowCount,
-        cow_stages: cowStages, // ✅ { calf: X, heifer: Y, cow: Z }
+        cow_stages: cowStages,
         breeds: breedCount,
         inseminations: inseminationCount,
         anomalies: anomalyCount,
         managers,
       },
-      recent_activities: recentActivities, // ✅ porter + litres + date
+      recent_activities: recentActivities,
     });
   } catch (err) {
     res

@@ -16,11 +16,14 @@ const userSchema = new Schema({
   password: { type: String, required: true },
   role: {
     type: String,
-    enum: ['admin', 'broker', 'buyer', 'vet', 'manager'],
+    enum: ['admin', 'broker', 'buyer', 'seller', 'manager'],
     required: true
   },
   photo: { type: String }, // profile picture
-  created_by: { type: Schema.Types.ObjectId, ref: 'User' }
+  created_by: { type: Schema.Types.ObjectId, ref: 'User' },
+
+  // 🚨 new field for external sellers
+  is_approved_seller: { type: Boolean, default: false }
 }, { timestamps: true });
 
 const User = mongoose.model('User', userSchema);
@@ -155,13 +158,14 @@ const cowSchema = new Schema({
   cow_code: { type: Number }, // numeric code if used
   farmer_code: { type: Number, required: true },
   breed_id: { type: Schema.Types.ObjectId, ref: 'Breed' },
+  cow_id: { type: Schema.Types.ObjectId, ref: 'Cow' },
   farmer_id: { type: Schema.Types.ObjectId, ref: 'Farmer' },
   gender: { type: String, enum: ['male', 'female', 'unknown'] },
   birth_date: { type: Date },
 
   // status / stage
   status: { type: String, enum: ['active', 'pregnant', 'for_sale', 'sold', 'deceased'], default: 'active' },
-  stage: { type: String, enum: ['calf', 'heifer', 'cow'], default: 'cow' },
+  stage: { type: String, enum: ['calf', 'heifer', 'cow']  },
   is_calf: { type: Boolean, default: false },
   from_birth: { type: Boolean, default: false },
 
@@ -585,18 +589,83 @@ const MilkAnomaly = mongoose.model('MilkAnomaly', milkAnomalySchema);
 // Listing Schema (Marketplace)
 // ---------------------------
 const listingSchema = new Schema({
-  animal_type: { type: String, enum: ['cow', 'bull', 'goat', 'sheep', 'pig', 'chicken'], required: true },
-  animal_id: { type: Schema.Types.ObjectId, ref: 'Cow' },
-  farmer: { type: Schema.Types.ObjectId, ref: 'Farmer', required: true },
+  title: { type: String, required: true },
+  animal_type: { type: String, enum: ['cow','bull','goat','sheep','pig','chicken'], required: true },
+  animal_id: { type: Schema.Types.ObjectId, ref: 'Cow' }, // null if non-farmer
+    farmer: { type: Schema.Types.ObjectId, ref: 'Farmer', required: true },
+
+  seller: { type: Schema.Types.ObjectId, ref: 'User', required: true }, // ✅ farmer OR seller
   price: { type: Number, required: true },
-  description: { type: String },
-  photos: [{ type: String }], // multiple photos
-  is_active: { type: Boolean, default: true },
-  flagged_for_anomaly: { type: Boolean, default: false }, // 🚨 new field
-  anomaly_count: { type: Number, default: 0 }, // total anomalies detected
+  description: String,
+  photos: [String],
+  location: String,
+  status: { type: String, enum: ['available','reserved','sold'], default: 'available' },
+  flagged_for_anomaly: { type: Boolean, default: false },
+  anomaly_count: { type: Number, default: 0 },
+  views: { type: Number, default: 0 },
   created_at: { type: Date, default: Date.now }
 });
+
 const Listing = mongoose.model('Listing', listingSchema);
+
+
+const chatSchema = new Schema({
+  participants: [{ type: Schema.Types.ObjectId, ref: 'User' }], // buyer + seller
+  listing: { type: Schema.Types.ObjectId, ref: 'Listing' },
+  messages: [{
+    sender: { type: Schema.Types.ObjectId, ref: 'User' },
+    text: String,
+    sent_at: { type: Date, default: Date.now }
+  }],
+  created_at: { type: Date, default: Date.now }
+});
+
+const Chat = mongoose.model('Chat', chatSchema);
+
+// models/chatModel.js
+ 
+const chatRoomSchema = new mongoose.Schema({
+  participants: [
+    { type: mongoose.Schema.Types.ObjectId, ref: "User" } // buyer + seller
+  ],
+  listing: { type: mongoose.Schema.Types.ObjectId, ref: "Listing" }, // optional link
+  created_at: { type: Date, default: Date.now }
+});
+const ChatRoom = mongoose.model("ChatRoom", chatRoomSchema);
+
+
+// ---------------------------
+// ChatMessage Schema
+// ---------------------------
+
+
+const chatMessageSchema = new Schema({
+  sender: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  receiver: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  listing: { type: Schema.Types.ObjectId, ref: 'Listing', required: true }, // 👈 link to listing
+  message: { type: String, required: true },
+  created_at: { type: Date, default: Date.now }
+});
+
+const ChatMessage = mongoose.model('ChatMessage', chatMessageSchema);
+
+// const dealSchema = new Schema({
+//   listing: { type: Schema.Types.ObjectId, ref: 'Listing', required: true },
+//   buyer: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+//   seller: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+//   price_agreed: { type: Number, required: true },
+//   status: {
+//     type: String,
+//     enum: ['pending', 'confirmed', 'completed', 'cancelled'],
+//     default: 'pending'
+//   },
+//   created_at: { type: Date, default: Date.now },
+//   updated_at: { type: Date, default: Date.now }
+// });
+
+// const ChatMessage = mongoose.model('ChatMessage', dealSchema);
+
+
 
 // ---------------------------
 // Exports
@@ -621,5 +690,8 @@ module.exports = {
   Report,
   SmsLog,
   MilkAnomaly,
-  Listing
+  Listing,
+  Chat,
+  ChatRoom,
+   ChatMessage
 };

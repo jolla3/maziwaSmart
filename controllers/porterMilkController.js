@@ -372,21 +372,43 @@ exports.adminUpdateMilkRecord = async (req, res) => {
 }
 
 // ❌ Delete Milk Record
+// ❌ Delete Milk Record - FIXED
 exports.deleteMilkRecord = async (req, res) => {
   try {
-    const porterCode = req.user.code;
+    if (req.user.role !== "porter") {
+      return res.status(403).json({ message: "Only porters can delete their records" });
+    }
+
     const recordId = req.params.id;
 
     const record = await MilkRecord.findById(recordId);
-    if (!record) return res.status(404).json({ message: 'Milk record not found' });
+    if (!record) {
+      return res.status(404).json({ message: "Milk record not found" });
+    }
 
-    if (record.porter_code !== porterCode) {
-      return res.status(403).json({ message: 'Unauthorized to delete this record' });
+    // check ownership: record.created_by must match logged-in porter
+    if (record.created_by.toString() !== req.user.id) {
+      return res.status(403).json({ message: "Unauthorized: you can only delete your own records" });
     }
 
     await MilkRecord.findByIdAndDelete(recordId);
-    res.status(200).json({ message: 'Milk record deleted successfully' });
+
+    // optional: also log this delete
+    await PorterLog.create({
+      porter_id: req.user.id,
+      porter_name: req.user.name,
+      activity_type: "delete-collection",
+      log_date: new Date(),
+      litres_collected: record.litres,
+      remarks: `Deleted record for farmer ${record.farmer_code} (${record.litres}L, ${record.time_slot})`
+    });
+
+    res.status(200).json({ 
+      success: true,
+      message: "Milk record deleted successfully" 
+    });
   } catch (error) {
-    res.status(500).json({ message: 'Delete failed', error: error.message });
+    console.error("❌ deleteMilkRecord failed:", error);
+    res.status(500).json({ message: "Delete failed", error: error.message });
   }
-}
+};

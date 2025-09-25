@@ -7,7 +7,7 @@ const sharp = require('sharp');
 exports.addInseminationRecord = async (req, res) => {
   try {
     const {
-      animal_id,       // ✅ generic instead of cow_id
+      animal_id,       // generic input id
       insemination_date,
       inseminator,
       bull_code,
@@ -19,7 +19,7 @@ exports.addInseminationRecord = async (req, res) => {
     const farmer_code = req.user.code;
     const farmer_id = req.user._id || req.user.id;
 
-    // ✅ Find the animal (cow, goat, sheep, etc.)
+    // ✅ Find the animal from Cow model
     const animal = await Cow.findOne({ _id: animal_id, farmer_code });
     if (!animal) {
       return res.status(404).json({ message: "❌ Animal not found or unauthorized" });
@@ -31,21 +31,22 @@ exports.addInseminationRecord = async (req, res) => {
       return res.status(400).json({ message: "❌ Invalid insemination_date format. Use YYYY-MM-DD." });
     }
 
-    // Compute expected due date (species-specific, default 283 days for cows)
-    let gestationDays = 283; // default for cows
+    // ✅ Species-specific gestation periods
+    let gestationDays = 283; // cows
     if (animal.species === "goat") gestationDays = 150;
     if (animal.species === "sheep") gestationDays = 152;
+    if (animal.species === "pig") gestationDays = 115;
     if (animal.species === "camel") gestationDays = 390;
 
     const due = new Date(inseminationDate);
     due.setDate(due.getDate() + gestationDays);
 
-    // Save insemination record
+    // ✅ Save insemination record
     const record = new Insemination({
-      animal_id,
+      cow_id: animal._id,       // store reference properly
       farmer_code,
-      animal_name: animal.name,
-      species: animal.species, // ✅ track species
+      cow_name: animal.cow_name,
+      species: animal.species,
       insemination_date: inseminationDate,
       inseminator,
       bull_code,
@@ -58,7 +59,7 @@ exports.addInseminationRecord = async (req, res) => {
 
     await record.save();
 
-    // Update pregnancy status
+    // ✅ Update pregnancy status on the animal
     animal.pregnancy = {
       is_pregnant: true,
       insemination_id: record._id,
@@ -67,15 +68,15 @@ exports.addInseminationRecord = async (req, res) => {
     animal.status = "pregnant";
     await animal.save();
 
-    // Notification
+    // ✅ Notification
     await Notification.create({
       farmer_code,
-      animal: animal._id,
+      cow: animal._id,
       type: 'gestation_alert',
-      message: `${animal.species} ${animal.name} is confirmed pregnant. Expected due: ${due.toDateString()}`
+      message: `${animal.species} ${animal.cow_name} is confirmed pregnant. Expected due: ${due.toDateString()}`
     });
 
-    // Auto-add bull breed under correct species
+    // ✅ Auto-add bull breed under the correct species
     if (bull_breed) {
       const exists = await Breed.findOne({
         farmer_id,
@@ -86,19 +87,20 @@ exports.addInseminationRecord = async (req, res) => {
       if (!exists) {
         await new Breed({
           breed_name: bull_breed,
-          description: `Auto-added from insemination of ${animal.name}`,
+          description: `Auto-added from insemination of ${animal.cow_name}`,
           species: animal.species,
           farmer_id
         }).save();
       }
     }
 
+    // ✅ Response (cleaned)
     res.status(201).json({
       message: "✅ Insemination record added successfully",
       data: {
         _id: record._id,
-        animal_id: record.animal_id,
-        animal_name: record.animal_name,
+        animal_id: record.cow_id,
+        animal_name: record.cow_name,
         species: record.species,
         insemination_date: record.insemination_date,
         bull_name: record.bull_name,
@@ -109,7 +111,7 @@ exports.addInseminationRecord = async (req, res) => {
       },
       animal: {
         _id: animal._id,
-        name: animal.name,
+        name: animal.cow_name,
         species: animal.species,
         status: animal.status,
         pregnancy: animal.pregnancy
@@ -123,23 +125,23 @@ exports.addInseminationRecord = async (req, res) => {
 };
 
 
-exports.getInseminationRecords = async (req, res) => {
+exports.getInseminationRecords = async (req, res) => { 
   try {
     const farmer_code = req.user.code;
 
     const records = await Insemination.find({ farmer_code })
-      .populate("animal_id", "name tag_id status species") // ✅ generic
+      .populate("cow_id", "cow_name tag_id status species") // ✅ use cow_id here
       .sort({ insemination_date: -1 });
 
     // 🧹 Clean response
     const formatted = records.map(r => ({
       id: r._id,
-      animal: r.animal_id ? {
-        id: r.animal_id._id,
-        name: r.animal_id.name,
-        tag: r.animal_id.tag_id,
-        status: r.animal_id.status,
-        species: r.animal_id.species
+      animal: r.cow_id ? {
+        id: r.cow_id._id,
+        name: r.cow_id.cow_name,
+        tag: r.cow_id.tag_id,
+        species: r.cow_id.species,
+        status: r.cow_id.status
       } : null,
       insemination_date: r.insemination_date,
       expected_due_date: r.expected_due_date,
@@ -154,18 +156,10 @@ exports.getInseminationRecords = async (req, res) => {
       has_calved: r.has_calved
     }));
 
-    res.status(200).json({
-      success: true,
-      count: formatted.length,
-      records: formatted
-    });
+    res.status(200).json({ success: true, count: formatted.length, records: formatted });
   } catch (error) {
     console.error("❌ Error fetching insemination records:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch insemination records",
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: "Failed to fetch insemination records", error: error.message });
   }
 };
 

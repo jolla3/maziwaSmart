@@ -1,42 +1,46 @@
+// utils/upload.js
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 
-// Ensure directory exists
-const uploadDir = path.join(__dirname, '../uploads/inseminations');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
+/**
+ * Create a multer instance with dynamic folder
+ * @param {String} folderName - e.g. 'cows', 'users', 'farmers', 'listings', 'insemination'
+ */
+function makeUploader(folderName) {
+  const uploadDir = path.join(__dirname, `../uploads/${folderName}`);
+  if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+  }
+
+  const storage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, uploadDir),
+    filename: (req, file, cb) => {
+      const cleanName = file.originalname
+        .replace(/\s+/g, '_')
+        .replace(/[^a-zA-Z0-9._-]/g, '');
+      cb(null, `${Date.now()}-${cleanName}`);
+    },
+  });
+
+  const fileFilter = (req, file, cb) => {
+    // For images we allow jpg, jpeg, png
+    const imageExts = ['.jpg', '.jpeg', '.png'];
+    // For insemination, maybe we allow pdf too
+    const inseminationExts = ['.jpg', '.jpeg', '.png', '.pdf'];
+
+    const ext = path.extname(file.originalname).toLowerCase();
+
+    if (folderName === 'insemination') {
+      if (inseminationExts.includes(ext)) cb(null, true);
+      else cb(new Error('❌ Only .jpg, .jpeg, .png, .pdf files are allowed for insemination.'));
+    } else {
+      if (imageExts.includes(ext)) cb(null, true);
+      else cb(new Error('❌ Only .jpg, .jpeg, .png files are allowed.'));
+    }
+  };
+
+  return multer({ storage, fileFilter });
 }
 
-// Multer storage config
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    // Sanitize file name: remove spaces & special characters
-    const cleanName = file.originalname
-      .replace(/\s+/g, '_')              // Replace spaces with underscores
-      .replace(/[^a-zA-Z0-9._-]/g, '');  // Remove unsupported characters
-
-    const uniqueName = `${Date.now()}-${cleanName}`;
-    cb(null, uniqueName);
-  }
-});
-
-// Filter only image files
-const fileFilter = (req, file, cb) => {
-  const allowed = ['.jpg', '.jpeg', '.png'];
-  const ext = path.extname(file.originalname).toLowerCase();
-
-  if (allowed.includes(ext)) {
-    cb(null, true);
-  } else {
-    cb(new Error('❌ Only .jpg, .jpeg, .png image files are allowed.'));
-  }
-};
-
-// Export the multer upload instance
-const upload = multer({ storage, fileFilter });
-
-module.exports = upload;
+module.exports = makeUploader;

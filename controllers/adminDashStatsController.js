@@ -58,8 +58,8 @@ exports.adminDashStats = async (req, res) => {
     })
       .sort({ collection_date: -1 })
       .limit(5)
-      .populate('created_by', 'name')
-      .populate('farmer', 'fullname farmer_code')
+      .populate('created_by', 'name')          // Porter (has name)
+      .populate('farmer', 'fullname farmer_code') // Farmer (has fullname + farmer_code)
       .lean();
 
     // Recent farmers for this admin
