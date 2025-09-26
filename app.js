@@ -84,6 +84,9 @@ app.use('/api/chat', chatRoutes);
 const marketRoutes = require('./routes/marketRoutes');
 app.use('/api/market', marketRoutes);
 
+const listingRoutes = require('./routes/listingRoutes');
+app.use('/api/listing', listingRoutes)
+
 // MongoDB connection
 mongoose.connect(process.env.MONGO_URI)
     .then(() => console.log('connected to MongoDb'))

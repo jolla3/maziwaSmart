@@ -14,7 +14,7 @@ const {
 const { verifyToken } = require("../middleware/authMiddleware");
 
 // ⬇️ Import upload utility
-const makeUploader = require('../utils/upload');
+const makeUploader = require('../middleware/upload');
 const listingUpload = makeUploader('listings'); // will save under /uploads/listings/
 
 // ---------------------------
@@ -25,7 +25,7 @@ const listingUpload = makeUploader('listings'); // will save under /uploads/list
 router.get('/', getListings);
 
 // Protected: get your own listings
-router.get('/my/listings', verifyToken, getUserListings);
+router.get('/mylistings', verifyToken, getUserListings);
 
 // Public: get a single listing (increments views)
 router.get('/:id', getListingById);
