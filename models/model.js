@@ -15,15 +15,12 @@ const userSchema = new Schema({
   phone: { type: Number },
   password: { type: String, required: true },
   role: {
-  type: String,
-  enum: ['admin', 'broker', 'buyer', 'seller', 'manager'], // ❌ no superadmin here
-  required: true
-},
-
-  photo: { type: String }, // profile picture
+    type: String,
+    enum: ['superadmin', 'admin', 'broker', 'buyer', 'seller', 'manager'], // ✅ fixed
+    required: true
+  },
+  photo: { type: String },
   created_by: { type: Schema.Types.ObjectId, ref: 'User' },
-
-  // 🚨 new field for external sellers
   is_approved_seller: { type: Boolean, default: false }
 }, { timestamps: true });
 
