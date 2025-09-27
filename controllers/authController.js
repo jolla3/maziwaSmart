@@ -127,18 +127,21 @@ exports.login = async (req, res) => {
 // ----------------------------
 exports.registerSeller = async (req, res) => {
   try {
-    const { fullname, phone, email, password, location } = req.body;
+    const { username, phone, email, password } = req.body;
+
+    if (!username || !email || !password) {
+      return res.status(400).json({ message: "username, email, and password are required" });
+    }
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const seller = new User({
-      fullname,
+      username,
       phone,
       email,
       password: hashedPassword,
       role: "seller",
-      approved: false, // superadmin must approve
-      location,
+      is_approved_seller: false // ✅ matches schema
     });
 
     await seller.save();
@@ -147,13 +150,14 @@ exports.registerSeller = async (req, res) => {
       message: "✅ Seller registered. Awaiting approval by admin.",
       seller: {
         id: seller._id,
-        fullname: seller.fullname,
-        approved: seller.approved,
+        username: seller.username,
+        email: seller.email,
+        is_approved_seller: seller.is_approved_seller,
       },
     });
   } catch (err) {
     console.error("❌ Register seller error:", err);
-    res.status(500).json({ message: "Server error" });
+    res.status(500).json({ message: "Server error", error: err.message });
   }
 };
 
