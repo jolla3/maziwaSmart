@@ -1,33 +1,36 @@
 // controllers/adminController.js
 const { User } = require("../models/model");
 
-// ✅ Approve or revoke external seller
+// ✅ Approve/Revoke Seller
 exports.toggleSellerApproval = async (req, res) => {
   try {
-    // only superadmin can do this
-    if (req.user.role !== "admin") {
-      return res.status(403).json({ message: "❌ Only SuperAdmin can approve sellers" });
+    // Only admin or superadmin can do this
+    if (!["admin", "superadmin"].includes(req.user.role)) {
+      return res.status(403).json({ message: "❌ Not authorized" });
     }
 
     const { sellerId } = req.params;
-    const { approve } = req.body; // true = approve, false = revoke
 
-    const seller = await User.findByIdAndUpdate(
-      sellerId,
-      { is_approved_seller: approve },
-      { new: true }
-    );
-
+    // Ensure the user is a seller
+    const seller = await User.findOne({ _id: sellerId, role: "seller" });
     if (!seller) {
       return res.status(404).json({ message: "❌ Seller not found" });
     }
 
+    // Toggle approval instead of relying on client value
+    seller.is_approved_seller = !seller.is_approved_seller;
+    await seller.save();
+
     res.status(200).json({
-      message: approve ? "✅ Seller approved" : "🚫 Seller revoked",
-      seller,
+      message: seller.is_approved_seller ? "✅ Seller approved" : "🚫 Seller revoked",
+      seller: {
+        id: seller._id,
+        username: seller.username,
+        email: seller.email,
+        is_approved_seller: seller.is_approved_seller,
+      },
     });
   } catch (err) {
-    console.error("❌ Toggle seller approval error:", err);
-    res.status(500).json({ message: "Server error" });
+    res.status(500).json({ message: "Server error", error: err.message });
   }
 };

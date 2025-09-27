@@ -69,7 +69,7 @@ router.post("/login", login);                // Login (admin, farmer, porter, et
 router.post("/seller/register", registerSeller); // Register seller (pending approval)
 
 // Only superadmin should access
-router.put("/approve-seller/:sellerId", verifyToken, toggleSellerApproval)
+router.patch("/:id", verifyToken, toggleSellerApproval);
 
 
 // ----------------------------
