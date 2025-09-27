@@ -15,10 +15,11 @@ const userSchema = new Schema({
   phone: { type: Number },
   password: { type: String, required: true },
   role: {
-    type: String,
-    enum: ['admin', 'broker', 'buyer', 'seller', 'manager'],
-    required: true
-  },
+  type: String,
+  enum: ['admin', 'broker', 'buyer', 'seller', 'manager'], // ❌ no superadmin here
+  required: true
+},
+
   photo: { type: String }, // profile picture
   created_by: { type: Schema.Types.ObjectId, ref: 'User' },
 
