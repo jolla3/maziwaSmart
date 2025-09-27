@@ -58,6 +58,8 @@ const {
   registerSeller,
   googleCallback,
 } = require("../controllers/authController");
+const { toggleSellerApproval } = require("../controllers/adminController");
+const { verifyToken } = require("../middleware/authMiddleware");
 
 // ----------------------------
 // NORMAL AUTH ROUTES
@@ -65,6 +67,10 @@ const {
 router.post("/register", registerAdmin);     // Admin register
 router.post("/login", login);                // Login (admin, farmer, porter, etc.)
 router.post("/seller/register", registerSeller); // Register seller (pending approval)
+
+// Only superadmin should access
+router.put("/approve-seller/:sellerId", verifyToken, toggleSellerApproval)
+
 
 // ----------------------------
 // GOOGLE AUTH ROUTES
