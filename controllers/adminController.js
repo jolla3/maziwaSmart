@@ -1,7 +1,7 @@
 // controllers/adminController.js
 const { User } = require("../models/model");
 
-// ✅ Approve/Revoke Seller
+// ✅ Approve/Revoke Seller (toggle-only, no req.body)
 exports.toggleSellerApproval = async (req, res) => {
   try {
     // Only admin or superadmin can do this
@@ -9,15 +9,15 @@ exports.toggleSellerApproval = async (req, res) => {
       return res.status(403).json({ message: "❌ Not authorized" });
     }
 
-    const { sellerId } = req.params;
+    const { id } = req.params; // ✅ comes from router.patch("/:id")
 
-    // Ensure the user is a seller
-    const seller = await User.findOne({ _id: sellerId, role: "seller" });
+    // Ensure the user exists and is a seller
+    const seller = await User.findOne({ _id: id, role: "seller" });
     if (!seller) {
       return res.status(404).json({ message: "❌ Seller not found" });
     }
 
-    // Toggle approval instead of relying on client value
+    // ✅ Toggle the flag on every request
     seller.is_approved_seller = !seller.is_approved_seller;
     await seller.save();
 
@@ -31,6 +31,7 @@ exports.toggleSellerApproval = async (req, res) => {
       },
     });
   } catch (err) {
+    console.error("❌ Toggle seller approval error:", err);
     res.status(500).json({ message: "Server error", error: err.message });
   }
 };
