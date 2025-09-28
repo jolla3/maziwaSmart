@@ -10,6 +10,7 @@ exports.createCow = async (req, res) => {
 
     const newCow = new Cow({
       cow_name,
+      farmer: farmer_id,
       breed_id,
       gender,
       birth_date,
@@ -144,9 +145,11 @@ exports.addCowLitres = async (req, res) => {
     else time_slot = "night";
 
     // Ensure cow exists & belongs to farmer
-    const cow = await Cow.findOne({ _id: id, farmer_id: farmerId });
+    // const cow = await Cow.findOne({ _id: id, farmer_id: farmerId });
+    const cow = await Cow.findOne({ _id: id, farmer_code: req.user.farmer_code });
+
     if (!cow) {
-      return res.status(404).json({ message: "🐄 Cow not found or unauthorized" });
+      return res.status(404).json({ message: "🐄 Cow not found or unauthorized" })
     }
 
     // Prevent duplicate entry for same cow+slot+day
