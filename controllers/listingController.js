@@ -17,19 +17,7 @@ exports.createListing = async (req, res) => {
       photos = [],
       location,
       farmer_id,
-
-      // seller-provided fields
-      age,
-      breed_name,
-      bull_code,
-      bull_name,
-      status,
-      stage,
-      lifetime_milk,
-      daily_average,
-      total_offspring,
-      is_pregnant,
-      expected_due_date
+      animal_details // 🐄 keep nested for sellers
     } = req.body;
 
     if (!title || !animal_type || !price) {
@@ -72,7 +60,6 @@ exports.createListing = async (req, res) => {
         listingData.animal_id = cow._id; // only store ref
       }
 
-      // fallback to farmer’s location
       if (!listingData.location) listingData.location = farmerDoc.location;
     }
 
@@ -93,29 +80,33 @@ exports.createListing = async (req, res) => {
         });
       }
 
-     const { animal_details } = req.body;
-
-if (!animal_details || !animal_details.age || !animal_details.breed_name) {
-  return res.status(400).json({
-    success: false,
-    message: "Sellers must provide at least age and breed_name"
-  });
-}
+      // 🐄 Validate seller-provided animal details
+      if (!animal_details || !animal_details.age || !animal_details.breed_name) {
+        return res.status(400).json({
+          success: false,
+          message: "Sellers must provide at least age and breed_name"
+        });
+      }
 
       listingData.farmer = farmer_id || null;
+
+      // only include provided fields — no "" overwrites
       listingData.animal_details = {
-        age,
-        breed_name,
-        bull_code: bull_code || "",
-        bull_name: bull_name || "",
-        status: status || "active",
-        stage: stage || "",
-        lifetime_milk: lifetime_milk || 0,
-        daily_average: daily_average || 0,
-        total_offspring: total_offspring || 0,
+        age: animal_details.age,
+        breed_name: animal_details.breed_name,
+        ...(animal_details.gender && { gender: animal_details.gender }),
+        ...(animal_details.bull_code && { bull_code: animal_details.bull_code }),
+        ...(animal_details.bull_name && { bull_name: animal_details.bull_name }),
+        ...(animal_details.bull_breed && { bull_breed: animal_details.bull_breed }),
+        status: animal_details.status || "active",
+        ...(animal_details.stage && { stage: animal_details.stage }),
+        lifetime_milk: animal_details.lifetime_milk || 0,
+        daily_average: animal_details.daily_average || 0,
+        total_offspring: animal_details.total_offspring || 0,
         pregnancy: {
-          is_pregnant: is_pregnant || false,
-          expected_due_date: expected_due_date || null
+          is_pregnant: animal_details.is_pregnant || false,
+          expected_due_date: animal_details.expected_due_date || null,
+          ...(animal_details.insemination_id && { insemination_id: animal_details.insemination_id })
         }
       };
     }
