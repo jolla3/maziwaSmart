@@ -15,5 +15,5 @@ router.get("/", verifyToken, AnimalController.getMyAnimals);
 router.get("/:id", verifyToken, AnimalController.getAnimalById);
 router.put("/:id", verifyToken, AnimalController.updateAnimal);
 router.delete("/:id", verifyToken, AnimalController.deleteAnimal);
-router.put("/bulk", verifyToken, bulkUpdateAnimals);
+router.put("/bulk", verifyToken, AnimalController.bulkUpdateAnimals);
 module.exports = router;
