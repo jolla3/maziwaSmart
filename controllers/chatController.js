@@ -71,11 +71,11 @@ exports.sendMessage = async (req, res) => {
 
 exports.getConversation = async (req, res) => {
   try {
-    const counterpartId = req.params.id;   // matches router.get('/:id')
+    const counterpartId = req.params.id;   // the other person
     const { listingId } = req.query;       // optional filter
-    const currentUserId = req.user._id;    // always from token
+    const currentUserId = req.user._id;    // logged-in user from token
 
-    // 🔎 Build filter: all messages between me and them
+    // 🔎 Find all messages between me and counterpart
     const filter = {
       $or: [
         { sender: currentUserId, receiver: counterpartId },
@@ -84,13 +84,13 @@ exports.getConversation = async (req, res) => {
     };
     if (listingId) filter.listing = listingId;
 
-    // 1️⃣ Fetch all messages in order
+    // 1️⃣ Fetch messages sorted by time
     const messages = await ChatMessage.find(filter)
       .sort({ created_at: 1 })
       .populate("listing", "title price location status")
       .lean();
 
-    // 2️⃣ Get counterpart profile (Farmer OR User)
+    // 2️⃣ Fetch counterpart details (Farmer OR User)
     let counterpart = await Farmer.findById(counterpartId).lean();
     if (!counterpart) counterpart = await User.findById(counterpartId).lean();
 
@@ -111,7 +111,7 @@ exports.getConversation = async (req, res) => {
       createdAt: m.created_at
     }));
 
-    // 4️⃣ Listing info (only once, not repeated per message)
+    // 4️⃣ Listing info (only once, if available)
     let listingInfo = null;
     if (listingId && messages.length && messages[0].listing) {
       listingInfo = {
@@ -123,9 +123,10 @@ exports.getConversation = async (req, res) => {
       };
     }
 
+    // ✅ Final response
     res.json({
       success: true,
-      me: currentUserId,        // so frontend knows who is "me"
+      me: currentUserId,
       counterpart: counterpartInfo,
       listing: listingInfo,
       messages: chatHistory
