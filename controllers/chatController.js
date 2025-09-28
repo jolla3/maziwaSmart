@@ -13,44 +13,50 @@ function maskEmail(email) {
   return name[0] + "***@" + domain;
 }
 
+function getDisplayName(user) {
+  return user.username || user.fullname || user.name || "Unknown User";
+}
+
 // ---------------------------
 // Send a message (global or tied to a listing)
 // ---------------------------
 exports.sendMessage = async (req, res) => {
   try {
     const { receiver, message, listingId } = req.body;
-    const sender = req.user.id;
+    const senderId = req.user._id; // ensure middleware sets _id
 
+    if (!receiver || !message) {
+      return res.status(400).json({ success: false, message: "Receiver and message are required" });
+    }
 
-    const chatMessage = new ChatMessage({
-      sender,
+    // 1️⃣ Save the chat message
+    const chatMessage = await ChatMessage.create({
+      sender: senderId,
       receiver,
       message,
-      listing: listingId || null, // ✅ optional link to listing
+      listing: listingId || null
     });
 
-    await chatMessage.save();
-
-    // Notify receiver
+    // 2️⃣ Create notification for the receiver
     await Notification.create({
-      farmer_code: 0, // keep as 0 since receiver could be farmer or user
-      cow: null,
+      user: receiver, // any system user
+      cow: null,      // optional for chat
       type: "chat_message",
-      message: `💬 New message from ${req.user.username}${
-        listingId ? " about a listing" : ""
-      }`,
+      message: `💬 New message from ${getDisplayName(req.user)}${listingId ? " about a listing" : ""}`
     });
 
-    // Emit via socket.io
+    // 3️⃣ Emit via socket.io
     const io = req.app.get("io");
-    io.to(receiver.toString()).emit("new_message", chatMessage);
+    if (io) io.to(receiver.toString()).emit("new_message", chatMessage);
 
+    // 4️⃣ Return success
     res.status(201).json({ success: true, chatMessage });
   } catch (err) {
     console.error("❌ Chat send error:", err);
     res.status(500).json({ success: false, message: "Failed to send message" });
   }
 };
+
 
 // ---------------------------
 // Get conversation (optionally filtered by listingId)
