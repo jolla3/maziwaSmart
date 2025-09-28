@@ -14,9 +14,22 @@ exports.createListing = async (req, res) => {
       animal_id,
       price,
       description,
-      photos,
+      photos = [],
       location,
-      farmer_id
+      farmer_id,
+
+      // seller-provided fields
+      age,
+      breed_name,
+      bull_code,
+      bull_name,
+      status,
+      stage,
+      lifetime_milk,
+      daily_average,
+      total_offspring,
+      is_pregnant,
+      expected_due_date
     } = req.body;
 
     if (!title || !animal_type || !price) {
@@ -26,36 +39,46 @@ exports.createListing = async (req, res) => {
       });
     }
 
+    const sellerRef = req.user.id;
     let farmerRef = null;
-    let sellerRef = req.user.id;
 
-    // ✅ Farmer case
+    let listingData = {
+      title,
+      animal_type,
+      animal_id: null,
+      farmer: null,
+      seller: sellerRef,
+      price,
+      description: description || "",
+      photos: photos.filter(p => p.trim() !== ""),
+      location: location || ""
+    };
+
+    // ✅ FARMER FLOW
     if (req.user.role === "farmer") {
       const farmerDoc = await Farmer.findById(req.user.id);
       if (!farmerDoc) {
-        return res
-          .status(404)
-          .json({ success: false, message: "Farmer not found" });
-      }
-
-      // Validate animal if provided
-      if (animal_id) {
-        const linkedAnimal = await Cow.findById(animal_id);
-        if (!linkedAnimal) {
-          return res
-            .status(404)
-            .json({ success: false, message: "Animal not found" });
-        }
+        return res.status(404).json({ success: false, message: "Farmer not found" });
       }
 
       farmerRef = farmerDoc._id;
-      // keep location from farmer if not provided
-      if (!location) location = farmerDoc.location;
+      listingData.farmer = farmerRef;
+
+      if (animal_id) {
+        const cow = await Cow.findById(animal_id);
+        if (!cow) {
+          return res.status(404).json({ success: false, message: "Animal not found" });
+        }
+        listingData.animal_id = cow._id; // only store ref
+      }
+
+      // fallback to farmer’s location
+      if (!listingData.location) listingData.location = farmerDoc.location;
     }
 
-    // ✅ Seller case
+    // ✅ SELLER FLOW
     else if (req.user.role === "seller") {
-      const sellerDoc = await User.findById(req.user.id);
+      const sellerDoc = await User.findById(sellerRef);
       if (!sellerDoc || !sellerDoc.is_approved_seller) {
         return res.status(403).json({
           success: false,
@@ -63,10 +86,40 @@ exports.createListing = async (req, res) => {
         });
       }
 
-      farmerRef = farmer_id || null; // external sellers may optionally link a farmer
+      if (animal_id) {
+        return res.status(400).json({
+          success: false,
+          message: "External sellers cannot use animal_id, provide details manually"
+        });
+      }
+
+      // Ensure essential seller fields are present
+      if (!age || !breed_name) {
+        return res.status(400).json({
+          success: false,
+          message: "Sellers must provide at least age and breed_name"
+        });
+      }
+
+      listingData.farmer = farmer_id || null;
+      listingData.animal_details = {
+        age,
+        breed_name,
+        bull_code: bull_code || "",
+        bull_name: bull_name || "",
+        status: status || "active",
+        stage: stage || "",
+        lifetime_milk: lifetime_milk || 0,
+        daily_average: daily_average || 0,
+        total_offspring: total_offspring || 0,
+        pregnancy: {
+          is_pregnant: is_pregnant || false,
+          expected_due_date: expected_due_date || null
+        }
+      };
     }
 
-    // ❌ Other roles cannot list
+    // ❌ OTHER ROLES
     else {
       return res.status(403).json({
         success: false,
@@ -74,31 +127,17 @@ exports.createListing = async (req, res) => {
       });
     }
 
-    // ✅ Shared listing creation
-    const listing = new Listing({
-      title,
-      animal_type,
-      animal_id: req.user.role === "farmer" ? animal_id : null,
-      farmer: farmerRef,
-      seller: sellerRef,
-      price,
-      description: description || "",
-      photos: photos || [],
-      location: location || ""
-    });
-
+    const listing = new Listing(listingData);
     await listing.save();
 
-    return res.status(201).json({
+    res.status(201).json({
       success: true,
       message: "Listing created successfully",
       listing
     });
   } catch (err) {
     console.error("Create listing error:", err);
-    res
-      .status(500)
-      .json({ success: false, message: "Server error", error: err.message });
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
   }
 };
 // ---------------------------
@@ -107,62 +146,290 @@ exports.createListing = async (req, res) => {
 exports.getListings = async (req, res) => {
   try {
     const listings = await Listing.find({ status: 'available' })
-      .populate("animal_id", "cow_name species breed_id")
-      .populate("farmer", "fullname phone email")
-      .populate("seller", "username email role");
+      .populate({
+        path: 'animal_id',
+        select: 'cow_name species breed_id mother_id lifetime_milk daily_average total_offspring status stage photos pregnancy offspring_ids birth_date gender',
+        populate: [
+          { path: 'breed_id', select: 'breed_name' },
+          {
+            path: 'mother_id',
+            select: 'cow_name breed_id lifetime_milk daily_average total_offspring birth_date gender',
+            populate: { path: 'breed_id', select: 'breed_name' }
+          },
+          {
+            path: 'offspring_ids',
+            select: 'cow_name birth_date stage gender'
+          },
+          {
+            // nested populate the insemination referenced inside pregnancy
+            path: 'pregnancy.insemination_id',
+            model: 'Insemination',
+            select: 'insemination_date method bull_code bull_name bull_breed outcome expected_due_date'
+          }
+        ]
+      })
+      .populate('farmer', 'fullname phone email location farmer_code')
+      .populate('seller', 'username email role is_approved_seller');
 
-    res.status(200).json({ success: true, count: listings.length, listings });
+    // convert & normalize: single animal_info field
+    const refined = listings.map(l => {
+      const obj = l.toObject({ virtuals: true });
+
+      if (obj.animal_id) {
+        const cow = obj.animal_id;
+        obj.animal_info = {
+          id: cow._id,
+          name: cow.cow_name || null,
+          species: cow.species || null,
+          breed: cow.breed_id ? { id: cow.breed_id._id, name: cow.breed_id.breed_name } : null,
+          birth_date: cow.birth_date || null,
+          gender: cow.gender || null,
+          status: cow.status || null,
+          stage: cow.stage || null,
+          photos: cow.photos || [],
+          lifetime_milk: cow.lifetime_milk || 0,
+          daily_average: cow.daily_average || 0,
+          total_offspring: cow.total_offspring || 0,
+          offspring: Array.isArray(cow.offspring_ids) ? cow.offspring_ids.map(o => ({
+            id: o._id,
+            name: o.cow_name,
+            birth_date: o.birth_date,
+            stage: o.stage,
+            gender: o.gender
+          })) : [],
+          mother: cow.mother_id ? {
+            id: cow.mother_id._id,
+            name: cow.mother_id.cow_name || null,
+            breed: cow.mother_id.breed_id ? { id: cow.mother_id.breed_id._id, name: cow.mother_id.breed_id.breed_name } : null,
+            lifetime_milk: cow.mother_id.lifetime_milk || 0,
+            daily_average: cow.mother_id.daily_average || 0,
+            total_offspring: cow.mother_id.total_offspring || 0,
+            birth_date: cow.mother_id.birth_date || null,
+            gender: cow.mother_id.gender || null
+          } : null,
+          pregnancy: cow.pregnancy ? {
+            is_pregnant: !!cow.pregnancy.is_pregnant,
+            expected_due_date: cow.pregnancy.expected_due_date || null,
+            insemination: cow.pregnancy.insemination_id ? {
+              id: cow.pregnancy.insemination_id._id,
+              insemination_date: cow.pregnancy.insemination_id.insemination_date,
+              method: cow.pregnancy.insemination_id.method,
+              bull_code: cow.pregnancy.insemination_id.bull_code,
+              bull_name: cow.pregnancy.insemination_id.bull_name,
+              bull_breed: cow.pregnancy.insemination_id.bull_breed,
+              outcome: cow.pregnancy.insemination_id.outcome,
+              expected_due_date: cow.pregnancy.insemination_id.expected_due_date
+            } : null
+          } : null
+        };
+      } else if (obj.animal_details) {
+        // seller-provided details (already stored on listing)
+        obj.animal_info = obj.animal_details;
+      } else {
+        obj.animal_info = null;
+      }
+
+      // cleanup: hide raw fields to reduce frontend branching
+      delete obj.animal_details;
+      delete obj.animal_id;
+      return obj;
+    });
+
+    res.status(200).json({ success: true, count: refined.length, listings: refined });
   } catch (err) {
-    console.error("Get listings error:", err);
-    res.status(500).json({ success: false, message: "Failed to fetch listings" });
+    console.error('Get listings error:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch listings', error: err.message });
   }
 };
 
-// ---------------------------
 // GET listings for the logged-in user (farmer or seller)
-// ---------------------------
 exports.getUserListings = async (req, res) => {
   try {
-    const listings = await Listing.find({ seller: req.user._id })
-      .populate("animal_id", "cow_name species breed_id")
-      .populate("farmer", "fullname phone email");
+    const sellerId = req.user && (req.user.id || req.user._id);
+    if (!sellerId) return res.status(401).json({ success: false, message: 'Unauthorized' });
 
-    res.status(200).json({ success: true, count: listings.length, listings });
+    const listings = await Listing.find({ seller: sellerId })
+      .populate({
+        path: 'animal_id',
+        select: 'cow_name species breed_id mother_id lifetime_milk daily_average total_offspring status stage photos pregnancy offspring_ids birth_date gender',
+        populate: [
+          { path: 'breed_id', select: 'breed_name' },
+          {
+            path: 'mother_id',
+            select: 'cow_name breed_id lifetime_milk daily_average total_offspring birth_date gender',
+            populate: { path: 'breed_id', select: 'breed_name' }
+          },
+          { path: 'offspring_ids', select: 'cow_name birth_date stage gender' },
+          {
+            path: 'pregnancy.insemination_id',
+            model: 'Insemination',
+            select: 'insemination_date method bull_code bull_name bull_breed outcome expected_due_date'
+          }
+        ]
+      })
+      .populate('farmer', 'fullname phone email location farmer_code');
+
+    const refined = listings.map(l => {
+      const obj = l.toObject({ virtuals: true });
+
+      if (obj.animal_id) {
+        const cow = obj.animal_id;
+        obj.animal_info = {
+          id: cow._id,
+          name: cow.cow_name || null,
+          species: cow.species || null,
+          breed: cow.breed_id ? { id: cow.breed_id._id, name: cow.breed_id.breed_name } : null,
+          birth_date: cow.birth_date || null,
+          gender: cow.gender || null,
+          status: cow.status || null,
+          stage: cow.stage || null,
+          photos: cow.photos || [],
+          lifetime_milk: cow.lifetime_milk || 0,
+          daily_average: cow.daily_average || 0,
+          total_offspring: cow.total_offspring || 0,
+          offspring: Array.isArray(cow.offspring_ids) ? cow.offspring_ids.map(o => ({
+            id: o._id,
+            name: o.cow_name,
+            birth_date: o.birth_date,
+            stage: o.stage,
+            gender: o.gender
+          })) : [],
+          mother: cow.mother_id ? {
+            id: cow.mother_id._id,
+            name: cow.mother_id.cow_name || null,
+            breed: cow.mother_id.breed_id ? { id: cow.mother_id.breed_id._id, name: cow.mother_id.breed_id.breed_name } : null,
+            lifetime_milk: cow.mother_id.lifetime_milk || 0,
+            daily_average: cow.mother_id.daily_average || 0,
+            total_offspring: cow.mother_id.total_offspring || 0,
+            birth_date: cow.mother_id.birth_date || null,
+            gender: cow.mother_id.gender || null
+          } : null,
+          pregnancy: cow.pregnancy ? {
+            is_pregnant: !!cow.pregnancy.is_pregnant,
+            expected_due_date: cow.pregnancy.expected_due_date || null,
+            insemination: cow.pregnancy.insemination_id ? {
+              id: cow.pregnancy.insemination_id._id,
+              insemination_date: cow.pregnancy.insemination_id.insemination_date,
+              method: cow.pregnancy.insemination_id.method,
+              bull_code: cow.pregnancy.insemination_id.bull_code,
+              bull_name: cow.pregnancy.insemination_id.bull_name,
+              bull_breed: cow.pregnancy.insemination_id.bull_breed,
+              outcome: cow.pregnancy.insemination_id.outcome,
+              expected_due_date: cow.pregnancy.insemination_id.expected_due_date
+            } : null
+          } : null
+        };
+      } else if (obj.animal_details) {
+        obj.animal_info = obj.animal_details;
+      } else {
+        obj.animal_info = null;
+      }
+
+      delete obj.animal_details;
+      delete obj.animal_id;
+      return obj;
+    });
+
+    res.status(200).json({ success: true, count: refined.length, listings: refined });
   } catch (err) {
-    console.error("Get user listings error:", err);
-    res.status(500).json({ success: false, message: "Failed to fetch your listings" });
+    console.error('Get user listings error:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch your listings', error: err.message });
   }
 };
 
-// ---------------------------
-// GET single listing by ID + increment views
-// ---------------------------
+// GET single listing by id (same enrichment rules)
 exports.getListingById = async (req, res) => {
   try {
     const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ success: false, message: 'Invalid id' });
 
-    const listing = await Listing.findByIdAndUpdate(
-      id,
-      { $inc: { views: 1 } }, // increment views
-      { new: true }
-    )
-      .populate("animal_id", "cow_name species breed_id")
-      .populate("farmer", "fullname phone email")
-      .populate("seller", "username email role");
+    const l = await Listing.findById(id)
+      .populate({
+        path: 'animal_id',
+        select: 'cow_name species breed_id mother_id lifetime_milk daily_average total_offspring status stage photos pregnancy offspring_ids birth_date gender',
+        populate: [
+          { path: 'breed_id', select: 'breed_name' },
+          {
+            path: 'mother_id',
+            select: 'cow_name breed_id lifetime_milk daily_average total_offspring birth_date gender',
+            populate: { path: 'breed_id', select: 'breed_name' }
+          },
+          { path: 'offspring_ids', select: 'cow_name birth_date stage gender' },
+          {
+            path: 'pregnancy.insemination_id',
+            model: 'Insemination',
+            select: 'insemination_date method bull_code bull_name bull_breed outcome expected_due_date'
+          }
+        ]
+      })
+      .populate('farmer', 'fullname phone email location farmer_code')
+      .populate('seller', 'username email role is_approved_seller');
 
-    if (!listing) {
-      return res.status(404).json({ success: false, message: "Listing not found" });
+    if (!l) return res.status(404).json({ success: false, message: 'Listing not found' });
+
+    const obj = l.toObject({ virtuals: true });
+    if (obj.animal_id) {
+      const cow = obj.animal_id;
+      obj.animal_info = {
+        id: cow._id,
+        name: cow.cow_name || null,
+        species: cow.species || null,
+        breed: cow.breed_id ? { id: cow.breed_id._id, name: cow.breed_id.breed_name } : null,
+        birth_date: cow.birth_date || null,
+        gender: cow.gender || null,
+        status: cow.status || null,
+        stage: cow.stage || null,
+        photos: cow.photos || [],
+        lifetime_milk: cow.lifetime_milk || 0,
+        daily_average: cow.daily_average || 0,
+        total_offspring: cow.total_offspring || 0,
+        offspring: Array.isArray(cow.offspring_ids) ? cow.offspring_ids.map(o => ({
+          id: o._id,
+          name: o.cow_name,
+          birth_date: o.birth_date,
+          stage: o.stage,
+          gender: o.gender
+        })) : [],
+        mother: cow.mother_id ? {
+          id: cow.mother_id._id,
+          name: cow.mother_id.cow_name || null,
+          breed: cow.mother_id.breed_id ? { id: cow.mother_id.breed_id._id, name: cow.mother_id.breed_id.breed_name } : null,
+          lifetime_milk: cow.mother_id.lifetime_milk || 0,
+          daily_average: cow.mother_id.daily_average || 0,
+          total_offspring: cow.mother_id.total_offspring || 0,
+          birth_date: cow.mother_id.birth_date || null,
+          gender: cow.mother_id.gender || null
+        } : null,
+        pregnancy: cow.pregnancy ? {
+          is_pregnant: !!cow.pregnancy.is_pregnant,
+          expected_due_date: cow.pregnancy.expected_due_date || null,
+          insemination: cow.pregnancy.insemination_id ? {
+            id: cow.pregnancy.insemination_id._id,
+            insemination_date: cow.pregnancy.insemination_id.insemination_date,
+            method: cow.pregnancy.insemination_id.method,
+            bull_code: cow.pregnancy.insemination_id.bull_code,
+            bull_name: cow.pregnancy.insemination_id.bull_name,
+            bull_breed: cow.pregnancy.insemination_id.bull_breed,
+            outcome: cow.pregnancy.insemination_id.outcome,
+            expected_due_date: cow.pregnancy.insemination_id.expected_due_date
+          } : null
+        } : null
+      };
+    } else if (obj.animal_details) {
+      obj.animal_info = obj.animal_details;
+    } else {
+      obj.animal_info = null;
     }
 
-    res.status(200).json({ success: true, listing });
-  } catch (err) {
-    console.error("Get listing error:", err);
-    res.status(500).json({ success: false, message: "Failed to fetch listing" });
-  }
-};
+    delete obj.animal_details;
+    delete obj.animal_id;
 
-// ---------------------------
-// UPDATE listing (only seller can update)
+    res.status(200).json({ success: true, listing: obj });
+  } catch (err) {
+    console.error('Get listing by id error:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch listing', error: err.message });
+  }
+};// UPDATE listing (only seller can update)
 // ---------------------------
 exports.updateListing = async (req, res) => {
   try {
