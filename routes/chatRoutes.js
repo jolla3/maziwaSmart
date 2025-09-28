@@ -7,6 +7,6 @@ const { verifyToken } = require('../middleware/authMiddleware');
 router.post('/', verifyToken, sendMessage);
 
 // Get conversation (optionally tied to a listing)
-router.get('/:userId', verifyToken, getConversation);
+router.get('/:id', verifyToken, getConversation);
 
 module.exports = router;
