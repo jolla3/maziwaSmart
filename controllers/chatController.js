@@ -1,4 +1,4 @@
-const { ChatMessage, Farmer, User, Notification } = require('../models/model');
+const { ChatMessage, Farmer, User, Notification, Listing } = require('../models/model');
 
 // Utility: mask phone number (show last 2 digits only)
 function maskPhone(phone) {
