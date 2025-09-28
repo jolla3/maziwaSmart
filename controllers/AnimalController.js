@@ -100,3 +100,180 @@ exports.createAnimal = async (req, res) => {
     res.status(500).json({ message: "Failed to register animal", error: error.message });
   }
 };
+
+// GET /api/farmer/animals
+exports.getMyAnimals = async (req, res) => {
+  try {
+    const farmer_code = req.user.code;
+    const { species, gender, stage, page = 1, limit = 20, sortBy = "created_at", order = "desc" } = req.query;
+
+    // ✅ Build dynamic filter
+    const filter = { farmer_code };
+    if (species) filter.species = species;
+    if (gender) filter.gender = gender;
+    if (stage) filter.stage = Array.isArray(stage) ? { $in: stage } : stage;
+
+    // ✅ Sorting
+    const sort = {};
+    sort[sortBy] = order === "asc" ? 1 : -1;
+
+    // ✅ Pagination
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    // 🔎 Query animals
+    const animals = await Cow.find(filter)
+      .populate("breed_id", "breed_name")
+      .populate("mother_id", "cow_name species")
+      .populate({ path: "offspring_ids", select: "cow_name species birth_date" })
+      .sort(sort)
+      .skip(skip)
+      .limit(parseInt(limit))
+      .lean();
+
+    // ✅ Total count for pagination
+    const total = await Cow.countDocuments(filter);
+
+    // ✅ Stats breakdown (optional but powerful)
+    const stats = await Cow.aggregate([
+      { $match: filter },
+      { $group: { _id: "$species", count: { $sum: 1 } } }
+    ]);
+
+    res.status(200).json({
+      success: true,
+      meta: {
+        total,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        totalPages: Math.ceil(total / limit),
+        stats, // e.g. [{ _id: "cow", count: 12 }, { _id: "goat", count: 5 }]
+      },
+      animals: animals.map(a => ({
+        id: a._id,
+        name: a.cow_name,
+        species: a.species,
+        gender: a.gender,
+        stage: a.stage || null,
+        birth_date: a.birth_date,
+        breed: a.breed_id?.breed_name || null,
+        mother: a.mother_id ? { id: a.mother_id._id, name: a.mother_id.cow_name } : null,
+        offspring: a.offspring_ids?.map(o => ({
+          id: o._id,
+          name: o.cow_name,
+          species: o.species,
+          birth_date: o.birth_date
+        })),
+        created_at: a.created_at
+      }))
+    });
+  } catch (error) {
+    console.error("❌ Error fetching animals:", error);
+    res.status(500).json({ success: false, message: "Failed to fetch animals", error: error.message });
+  }
+};
+
+
+// GET /api/farmer/animals/:id
+exports.getAnimalById = async (req, res) => {
+  try {
+    const farmer_code = req.user.code;
+    const { id } = req.params;
+
+    const animal = await Cow.findOne({ _id: id, farmer_code })
+      .populate("breed_id", "breed_name")
+      .populate("mother_id", "cow_name species")
+      .populate({ path: "offspring_ids", select: "cow_name species birth_date" });
+
+    if (!animal) {
+      return res.status(404).json({ success: false, message: "Animal not found" });
+    }
+
+    res.status(200).json({ success: true, animal });
+  } catch (error) {
+    console.error("❌ Error fetching animal:", error);
+    res.status(500).json({ success: false, message: "Failed to fetch animal", error: error.message });
+  }
+};
+
+
+
+// PUT /api/farmer/animals/:id
+exports.updateAnimal = async (req, res) => {
+  try {
+    const farmer_code = req.user.code;
+    const { id } = req.params;
+
+    const updatedAnimal = await Cow.findOneAndUpdate(
+      { _id: id, farmer_code },  // ✅ Ensure farmer only updates their own animals
+      { $set: req.body },
+      { new: true, runValidators: true }
+    );
+
+    if (!updatedAnimal) {
+      return res.status(404).json({ success: false, message: "Animal not found or not yours" });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "✅ Animal updated successfully",
+      animal: updatedAnimal
+    });
+  } catch (error) {
+    console.error("❌ Error updating animal:", error);
+    res.status(500).json({ success: false, message: "Failed to update animal", error: error.message });
+  }
+};
+
+
+// DELETE /api/farmer/animals/:id
+exports.deleteAnimal = async (req, res) => {
+  try {
+    const farmer_code = req.user.code;
+    const { id } = req.params;
+
+    const deletedAnimal = await Cow.findOneAndDelete({ _id: id, farmer_code });
+
+    if (!deletedAnimal) {
+      return res.status(404).json({ success: false, message: "Animal not found or not yours" });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "🗑️ Animal deleted successfully",
+      animal: deletedAnimal
+    });
+  } catch (error) {
+    console.error("❌ Error deleting animal:", error);
+    res.status(500).json({ success: false, message: "Failed to delete animal", error: error.message });
+  }
+};
+
+// PUT /api/farmer/animals/bulk
+// body: { ids: ["id1", "id2"], update: { gender: "female", stage: "heifer" } }
+exports.bulkUpdateAnimals = async (req, res) => {
+  try {
+    const farmer_code = req.user.code;
+    const { ids, update } = req.body;
+
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ success: false, message: "No animal IDs provided" });
+    }
+    if (!update || typeof update !== "object") {
+      return res.status(400).json({ success: false, message: "No update object provided" });
+    }
+
+    const result = await Cow.updateMany(
+      { _id: { $in: ids }, farmer_code },
+      { $set: update }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: `✅ Updated ${result.modifiedCount} animals successfully`,
+      modifiedCount: result.modifiedCount
+    });
+  } catch (error) {
+    console.error("❌ Bulk update error:", error);
+    res.status(500).json({ success: false, message: "Failed to update animals", error: error.message });
+  }
+};

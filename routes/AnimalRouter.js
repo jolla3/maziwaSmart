@@ -11,9 +11,9 @@ const animalUpload = makeUploader('animals'); // files will go to uploads/animal
 // Create new animal with optional photo
 router.post('/', verifyToken, animalUpload.single('photo'), AnimalController.createAnimal);
 
-// Example commented routes
-// router.get("/", verifyToken, milkAnomaliesController.addMilkRecord)
-// router.get("/:id", verifyToken, addCalfController.getCowFamilyTree)
-// router.get('/', verifyToken, milkAnomaliesController.getDailyMilkSummaryForAdmin )
-
+router.get("/", verifyToken, AnimalController.getMyAnimals);
+router.get("/:id", verifyToken, AnimalController.getAnimalById);
+router.put("/:id", verifyToken, AnimalController.updateAnimal);
+router.delete("/:id", verifyToken, AnimalController.deleteAnimal);
+router.put("/bulk", verifyToken, bulkUpdateAnimals);
 module.exports = router;
