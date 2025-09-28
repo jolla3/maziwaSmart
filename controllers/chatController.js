@@ -23,7 +23,7 @@ function getDisplayName(user) {
 exports.sendMessage = async (req, res) => {
   try {
     const { receiver, message, listingId } = req.body;
-    const senderId = req.user._id; // ensure middleware sets _id
+    const senderId = req.user.id; // ensure middleware sets _id
 
     if (!receiver || !message) {
       return res.status(400).json({ success: false, message: "Receiver and message are required" });
