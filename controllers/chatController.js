@@ -71,15 +71,15 @@ exports.sendMessage = async (req, res) => {
 
 exports.getConversation = async (req, res) => {
   try {
-    const { userId } = req.params;    // the other person
-    const { listingId } = req.query;  // optional filter
-    const currentUser = req.user.id;
+    const counterpartId = req.params.id;   // matches router.get('/:id')
+    const { listingId } = req.query;       // optional filter
+    const currentUserId = req.user._id;    // always from token
 
-    // 🔎 Build filter
+    // 🔎 Build filter: all messages between me and them
     const filter = {
       $or: [
-        { sender: currentUser, receiver: userId },
-        { sender: userId, receiver: currentUser }
+        { sender: currentUserId, receiver: counterpartId },
+        { sender: counterpartId, receiver: currentUserId }
       ]
     };
     if (listingId) filter.listing = listingId;
@@ -90,11 +90,10 @@ exports.getConversation = async (req, res) => {
       .populate("listing", "title price location status")
       .lean();
 
-    // 2️⃣ Get counterpart profile (Farmer or User)
-    let counterpart = await Farmer.findById(userId).lean();
-    if (!counterpart) counterpart = await User.findById(userId).lean();
+    // 2️⃣ Get counterpart profile (Farmer OR User)
+    let counterpart = await Farmer.findById(counterpartId).lean();
+    if (!counterpart) counterpart = await User.findById(counterpartId).lean();
 
-    // Standardize counterpart
     const counterpartInfo = counterpart
       ? {
           displayName: getDisplayName(counterpart),
@@ -104,15 +103,15 @@ exports.getConversation = async (req, res) => {
         }
       : null;
 
-    // 3️⃣ Standardize messages (so frontend doesn’t have to guess)
+    // 3️⃣ Normalize messages for frontend
     const chatHistory = messages.map(m => ({
       id: m._id,
-      from: m.sender.toString() === currentUser.toString() ? "me" : "them",
+      from: m.sender.toString() === currentUserId.toString() ? "me" : "them",
       text: m.message,
       createdAt: m.created_at
     }));
 
-    // 4️⃣ If listing exists, attach once
+    // 4️⃣ Listing info (only once, not repeated per message)
     let listingInfo = null;
     if (listingId && messages.length && messages[0].listing) {
       listingInfo = {
@@ -124,9 +123,9 @@ exports.getConversation = async (req, res) => {
       };
     }
 
-    // Final payload
     res.json({
       success: true,
+      me: currentUserId,        // so frontend knows who is "me"
       counterpart: counterpartInfo,
       listing: listingInfo,
       messages: chatHistory
