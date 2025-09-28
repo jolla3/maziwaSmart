@@ -255,10 +255,18 @@ const cowMilkRecordSchema = new mongoose.Schema({
   litres: { type: Number, required: true },
   collection_date: { type: Date, default: Date.now },
   time_slot: {
-    type: String,
-    enum: ['morning', 'midmorning', 'afternoon', 'evening'],
-    required: true
-  },
+  type: String,
+  enum: [
+    "early_morning",
+    "morning",
+    "midday",
+    "afternoon",
+    "evening",
+    "night"
+  ],
+  required: true
+}
+,
 
   update_count: { type: Number, default: 0 },
   created_at: { type: Date, default: Date.now }

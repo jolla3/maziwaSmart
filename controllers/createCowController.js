@@ -124,22 +124,27 @@ exports.addCowLitres = async (req, res) => {
   try {
     const { id } = req.params; // cow ID
     const { litres } = req.body;
-    const farmer_code = Number(req.user.code);
 
     if (!litres || isNaN(litres)) {
       return res.status(400).json({ message: "❌ Please provide valid litres" });
     }
 
-    // Auto-detect time_slot
+    // Detect farmer
+    const farmerId = req.user.id;
+
+    // Expanded timeslots (6)
     const currentHour = new Date().getHours();
     let time_slot = "";
-    if (currentHour >= 4 && currentHour < 10) time_slot = "morning";
-    else if (currentHour >= 10 && currentHour < 14) time_slot = "midmorning";
-    else if (currentHour >= 14 && currentHour < 18) time_slot = "afternoon";
-    else time_slot = "evening";
+
+    if (currentHour >= 4 && currentHour < 8) time_slot = "early_morning";
+    else if (currentHour >= 8 && currentHour < 11) time_slot = "morning";
+    else if (currentHour >= 11 && currentHour < 14) time_slot = "midday";
+    else if (currentHour >= 14 && currentHour < 17) time_slot = "afternoon";
+    else if (currentHour >= 17 && currentHour < 20) time_slot = "evening";
+    else time_slot = "night";
 
     // Ensure cow exists & belongs to farmer
-    const cow = await Cow.findOne({ _id: id, farmer_code, is_active: true });
+    const cow = await Cow.findOne({ _id: id, farmer_id: farmerId });
     if (!cow) {
       return res.status(404).json({ message: "🐄 Cow not found or unauthorized" });
     }
@@ -147,12 +152,14 @@ exports.addCowLitres = async (req, res) => {
     // Prevent duplicate entry for same cow+slot+day
     const todayStart = moment().startOf("day").toDate();
     const todayEnd = moment().endOf("day").toDate();
+
     const exists = await CowMilkRecord.findOne({
       animal_id: cow._id,
-      farmer_code,
+      farmer: farmerId,
       time_slot,
       collection_date: { $gte: todayStart, $lte: todayEnd }
     });
+
     if (exists) {
       return res.status(400).json({
         message: `⛔ Milk already recorded for the ${time_slot} slot today`
@@ -162,7 +169,10 @@ exports.addCowLitres = async (req, res) => {
     // Save record
     const record = await CowMilkRecord.create({
       animal_id: cow._id,
-      farmer_code,
+      farmer: farmerId,
+      farmer_code: cow.farmer_code,
+      cow_name: cow.cow_name,
+      cow_code: cow.cow_code,
       litres,
       time_slot,
       collection_date: new Date()
