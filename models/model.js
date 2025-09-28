@@ -589,30 +589,41 @@ const MilkAnomaly = mongoose.model('MilkAnomaly', milkAnomalySchema);
 const listingSchema = new Schema({
   title: { type: String, required: true },
   animal_type: { type: String, required: true },
-  animal_id: { type: Schema.Types.ObjectId, ref: "Cow", default: null }, // only for farmers
+  animal_id: { type: Schema.Types.ObjectId, ref: "Cow", default: null },
   farmer: { type: Schema.Types.ObjectId, ref: "Farmer", default: null },
   seller: { type: Schema.Types.ObjectId, ref: "User", required: true },
   price: { type: Number, required: true },
-  description: String,
-  photos: [String],
-  location: String,
+  description: { type: String },
+  photos: [{ type: String }],
+  location: { type: String },
 
-  // 👇 seller-provided details when no cow exists in DB
+  // 🐄 Flexible details for seller-provided animals
   animal_details: {
-    age: Number, // seller must provide if no birth_date
-    breed_name: String,
-    bull_code: String,
-    bull_name: String,
-    status: { type: String, enum: ["active", "pregnant", "deceased", ""] },
-    stage: { type: String, enum: ["calf", "heifer", "cow", ""] },
-    lifetime_milk: Number,
-    daily_average: Number,
-    total_offspring: Number,
+    age: { type: Number },
+    breed_name: { type: String },
+    gender: { type: String, enum: ["male", "female"] },
+    bull_code: { type: String },
+    bull_name: { type: String },
+    bull_breed: { type: String },
+
+    // stats
+    lifetime_milk: { type: Number, default: 0 },
+    daily_average: { type: Number, default: 0 },
+    total_offspring: { type: Number, default: 0 },
+
+    // lifecycle
+    status: { type: String, enum: ["active", "pregnant", "deceased"], default: "active" },
+    stage: { type: String, enum: ["calf", "heifer", "cow"], default: "" },
+
+    // pregnancy info
     pregnancy: {
       is_pregnant: { type: Boolean, default: false },
-      expected_due_date: Date
+      expected_due_date: { type: Date, default: null },
+      insemination_id: { type: Schema.Types.ObjectId, ref: "Insemination" }
     }
-  }
+  },
+
+  status: { type: String, enum: ["available", "sold"], default: "available" }
 }, { timestamps: true });
 const Listing = mongoose.model('Listing', listingSchema);
 
