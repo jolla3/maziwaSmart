@@ -121,22 +121,27 @@ exports.deleteCow = async (req, res) => {
 
 
 // Add cow litres (creates a CowMilkRecord)
+
 exports.addCowLitres = async (req, res) => {
   try {
     const { id } = req.params; // cow ID
     const { litres } = req.body;
 
-    if (!litres || isNaN(litres)) {
+    if (!litres || isNaN(litres) || litres <= 0) {
       return res.status(400).json({ message: "❌ Please provide valid litres" });
     }
 
-    // Detect farmer
-    const farmerId = req.user.id;
+    // Get farmer info from logged-in user
+    const farmerId = req.user.id;           // MongoDB _id of farmer
+    const farmerCode = req.user.code;       // Unique farmer code
 
-    // Expanded timeslots (6)
+    if (!farmerId || !farmerCode) {
+      return res.status(401).json({ message: "❌ Unauthorized: farmer info missing" });
+    }
+
+    // Determine current time slot (6 slots)
     const currentHour = new Date().getHours();
     let time_slot = "";
-
     if (currentHour >= 4 && currentHour < 8) time_slot = "early_morning";
     else if (currentHour >= 8 && currentHour < 11) time_slot = "morning";
     else if (currentHour >= 11 && currentHour < 14) time_slot = "midday";
@@ -144,58 +149,55 @@ exports.addCowLitres = async (req, res) => {
     else if (currentHour >= 17 && currentHour < 20) time_slot = "evening";
     else time_slot = "night";
 
-    // Ensure cow exists & belongs to farmer
-    // const cow = await Cow.findOne({ _id: id, farmer_id: farmerId });
-    const cow = await Cow.findOne({ _id: id, farmer_code: req.user.farmer_code });
-
+    // Ensure cow exists and belongs to this farmer
+    const cow = await Cow.findOne({ _id: id, farmer_code: farmerCode });
     if (!cow) {
-      return res.status(404).json({ message: "🐄 Cow not found or unauthorized" })
+      return res.status(404).json({ message: "🐄 Cow not found or unauthorized" });
     }
 
-    // Prevent duplicate entry for same cow+slot+day
+    // Prevent duplicate milk entry for the same cow+slot+day
     const todayStart = moment().startOf("day").toDate();
     const todayEnd = moment().endOf("day").toDate();
 
-    const exists = await CowMilkRecord.findOne({
+    const existingRecord = await CowMilkRecord.findOne({
       animal_id: cow._id,
-      farmer: farmerId,
+      farmer: farmerId,          // Mongo _id of farmer for bulletproof
       time_slot,
-      collection_date: { $gte: todayStart, $lte: todayEnd }
+      collection_date: { $gte: todayStart, $lte: todayEnd },
     });
 
-    if (exists) {
+    if (existingRecord) {
       return res.status(400).json({
-        message: `⛔ Milk already recorded for the ${time_slot} slot today`
+        message: `⛔ Milk already recorded for the ${time_slot} slot today`,
       });
     }
 
-    // Save record
+    // Create milk record
     const record = await CowMilkRecord.create({
       animal_id: cow._id,
-      farmer: farmerId,
-      farmer_code: cow.farmer_code,
+      farmer: farmerId,         // store farmer _id
+      farmer_code: farmerCode,  // also store farmer code for reference
       cow_name: cow.cow_name,
       cow_code: cow.cow_code,
       litres,
       time_slot,
-      collection_date: new Date()
+      collection_date: new Date(),
     });
 
-    res.status(200).json({
+    return res.status(200).json({
       message: `✅ Milk recorded successfully for ${time_slot} slot`,
       cow_id: cow._id,
       cow_name: cow.cow_name,
       litres: record.litres,
       time_slot: record.time_slot,
-      recorded_at: moment(record.collection_date).format("YYYY-MM-DD HH:mm:ss")
+      recorded_at: moment(record.collection_date).format("YYYY-MM-DD HH:mm:ss"),
     });
 
   } catch (err) {
     console.error("Error in addCowLitres:", err);
-    res.status(500).json({ message: "❌ Failed to record milk", error: err.message });
+    return res.status(500).json({ message: "❌ Failed to record milk", error: err.message });
   }
 };
-
 // Get cow daily summary (group by date)
 exports.getCowLitresSummary = async (req, res) => {
   try {
