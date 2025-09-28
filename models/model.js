@@ -614,7 +614,7 @@ const listingSchema = new Schema({
     }
   }
 }, { timestamps: true });
-
+const Listing = mongoose.model('Listing', listingSchema);
 
 const chatSchema = new Schema({
   participants: [{ type: Schema.Types.ObjectId, ref: 'User' }], // buyer + seller
