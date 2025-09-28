@@ -19,7 +19,8 @@ function maskEmail(email) {
 exports.sendMessage = async (req, res) => {
   try {
     const { receiver, message, listingId } = req.body;
-    const sender = req.user._id;
+    const sender = req.user.id;
+
 
     const chatMessage = new ChatMessage({
       sender,
@@ -58,7 +59,7 @@ exports.getConversation = async (req, res) => {
   try {
     const { userId } = req.params;   // counterpart
     const { listingId } = req.query; // optional filter
-    const currentUser = req.user._id;
+    const currentUser = req.user.id;
 
     // 🔎 Messages filter
     const filter = {
