@@ -73,7 +73,7 @@ exports.getConversation = async (req, res) => {
   try {
     const counterpartId = req.params.id;   // the other person
     const { listingId } = req.query;       // optional filter
-    const currentUserId = req.user._id;    // logged-in user from token
+    const currentUserId = req.user.id;    // logged-in user from token
 
     // 🔎 Find all messages between me and counterpart
     const filter = {
