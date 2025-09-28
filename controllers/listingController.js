@@ -5,6 +5,7 @@ const { Listing, Farmer, User, Cow } = require('../models/model');
 // CREATE a new listing
 // ---------------------------
 // CREATE a new listing
+// CREATE a new listing
 exports.createListing = async (req, res) => {
   try {
     const {
@@ -19,66 +20,85 @@ exports.createListing = async (req, res) => {
     } = req.body;
 
     if (!title || !animal_type || !price) {
-      return res.status(400).json({ success: false, message: "Title, animal type, and price are required" });
+      return res.status(400).json({
+        success: false,
+        message: "Title, animal type, and price are required"
+      });
     }
 
-    // ✅ Farmers can always list
-    if (req.user.role === 'farmer') {
+    let farmerRef = null;
+    let sellerRef = req.user.id;
+
+    // ✅ Farmer case
+    if (req.user.role === "farmer") {
       const farmerDoc = await Farmer.findById(req.user.id);
-      if (!farmerDoc) return res.status(404).json({ success: false, message: "Farmer not found" });
+      if (!farmerDoc) {
+        return res
+          .status(404)
+          .json({ success: false, message: "Farmer not found" });
+      }
 
       // Validate animal if provided
-      let linkedAnimal = null;
       if (animal_id) {
-        linkedAnimal = await Cow.findById(animal_id);
-        if (!linkedAnimal) return res.status(404).json({ success: false, message: "Animal not found" });
+        const linkedAnimal = await Cow.findById(animal_id);
+        if (!linkedAnimal) {
+          return res
+            .status(404)
+            .json({ success: false, message: "Animal not found" });
+        }
       }
 
-      const listing = new Listing({
-        title,
-        animal_type,
-        animal_id: linkedAnimal ? linkedAnimal._id : null,
-        farmer: farmerDoc._id,
-        seller: req.user._id,
-        price,
-        description: description || '',
-        photos: photos || [],
-        location: location || farmerDoc.location
-      });
-
-      await listing.save();
-      return res.status(201).json({ success: true, message: "Listing created successfully", listing });
+      farmerRef = farmerDoc._id;
+      // keep location from farmer if not provided
+      if (!location) location = farmerDoc.location;
     }
 
-    // ✅ Non-farmers must be approved sellers
-    if (req.user.role === 'seller') {
-      const farmerDoc = await Farmer.findById(req.user.id);
-
+    // ✅ Seller case
+    else if (req.user.role === "seller") {
+      const sellerDoc = await User.findById(req.user.id);
       if (!sellerDoc || !sellerDoc.is_approved_seller) {
-        return res.status(403).json({ success: false, message: "Seller not approved by SuperAdmin" });
+        return res.status(403).json({
+          success: false,
+          message: "Seller not approved by SuperAdmin"
+        });
       }
 
-      const listing = new Listing({
-        title,
-        animal_type,
-        animal_id: null, // external sellers may not link animals
-        farmer: farmer_id || null,
-        seller: req.user._id,
-        price,
-        description: description || '',
-        photos: photos || [],
-        location: location || ''
-      });
-
-      await listing.save();
-      return res.status(201).json({ success: true, message: "Listing created successfully", listing });
+      farmerRef = farmer_id || null; // external sellers may optionally link a farmer
     }
 
-    return res.status(403).json({ success: false, message: "You are not allowed to create listings" });
+    // ❌ Other roles cannot list
+    else {
+      return res.status(403).json({
+        success: false,
+        message: "You are not allowed to create listings"
+      });
+    }
 
+    // ✅ Shared listing creation
+    const listing = new Listing({
+      title,
+      animal_type,
+      animal_id: req.user.role === "farmer" ? animal_id : null,
+      farmer: farmerRef,
+      seller: sellerRef,
+      price,
+      description: description || "",
+      photos: photos || [],
+      location: location || ""
+    });
+
+    await listing.save();
+
+    return res.status(201).json({
+      success: true,
+      message: "Listing created successfully",
+      listing
+    });
   } catch (err) {
     console.error("Create listing error:", err);
-    res.status(500).json({ success: false, message: "Server error" });
+    res
+      .status(500)
+      .json({ success: false, message: "Server error", error: err.message });
   }
 };
 // ---------------------------
