@@ -24,7 +24,7 @@ exports.createListing = async (req, res) => {
 
     // ✅ Farmers can always list
     if (req.user.role === 'farmer') {
-      const farmerDoc = await Farmer.findById(req.user._id);
+      const farmerDoc = await Farmer.findById(req.user.id);
       if (!farmerDoc) return res.status(404).json({ success: false, message: "Farmer not found" });
 
       // Validate animal if provided
@@ -52,7 +52,8 @@ exports.createListing = async (req, res) => {
 
     // ✅ Non-farmers must be approved sellers
     if (req.user.role === 'seller') {
-      const sellerDoc = await User.findById(req.user._id);
+      const farmerDoc = await Farmer.findById(req.user.id);
+
       if (!sellerDoc || !sellerDoc.is_approved_seller) {
         return res.status(403).json({ success: false, message: "Seller not approved by SuperAdmin" });
       }

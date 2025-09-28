@@ -590,16 +590,14 @@ const listingSchema = new Schema({
   title: { type: String, required: true },
   animal_type: { type: String, enum: ['cow','bull','goat','sheep','pig','chicken'], required: true },
   animal_id: { type: Schema.Types.ObjectId, ref: 'Cow' }, // null if non-farmer
-    farmer: { type: Schema.Types.ObjectId, ref: 'Farmer', required: true },
+    farmer: { type: Schema.Types.ObjectId, ref: 'Farmer', },
 
-  seller: { type: Schema.Types.ObjectId, ref: 'User', required: true }, // ✅ farmer OR seller
+  seller: { type: Schema.Types.ObjectId, ref: 'User',  }, // ✅ farmer OR seller
   price: { type: Number, required: true },
   description: String,
   photos: [String],
   location: String,
   status: { type: String, enum: ['available','reserved','sold'], default: 'available' },
-  flagged_for_anomaly: { type: Boolean, default: false },
-  anomaly_count: { type: Number, default: 0 },
   views: { type: Number, default: 0 },
   created_at: { type: Date, default: Date.now }
 });

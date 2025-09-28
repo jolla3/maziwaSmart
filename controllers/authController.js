@@ -50,6 +50,7 @@ exports.registerAdmin = async (req, res) => {
 // ----------------------------
 // NORMAL LOGIN
 // ----------------------------
+// controllers/authController.js
 exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -58,40 +59,50 @@ exports.login = async (req, res) => {
     let role = "";
     let code = "";
 
-    // 1. Check in Admin Users
+    // 1️⃣ Check if it's a system user (admin, superadmin, broker, buyer, seller, manager)
     user = await User.findOne({ email });
     if (user) {
-      role = user.role;
-      code = "";
-    } else {
-      // 2. Farmers
+      role = user.role; // use directly from schema
+      code = ""; // system users don’t have a farmer/porter code
+    }
+
+    // 2️⃣ Farmer
+    if (!user) {
       user = await Farmer.findOne({ email });
       if (user) {
         role = "farmer";
         code = user.farmer_code;
-      } else {
-        // 3. Porters
-        user = await Porter.findOne({ email });
-        if (user) {
-          role = "porter";
-          code = user.porter_code || "";
-        }
       }
     }
 
+    // 3️⃣ Porter
     if (!user) {
-      return res.json({ message: "Account not found" });
+      user = await Porter.findOne({ email });
+      if (user) {
+        role = "porter";
+        code = user.porter_code || "";
+      }
     }
 
+    // 🚨 Account not found
+    if (!user) {
+      return res.status(404).json({ message: "❌ Account not found" });
+    }
+
+    // 🚨 No password set
     if (!user.password) {
-      return res.json({ message: `This ${role} has no login credentials` });
+      return res
+        .status(400)
+        .json({ message: `❌ This ${role} has no login credentials` });
     }
 
+    // ✅ Validate password
     const validPass = await bcrypt.compare(password, user.password);
     if (!validPass) {
-      return res.json({ message: "Invalid password" });
+      return res.status(400).json({ message: "❌ Invalid password" });
     }
 
+    // ✅ JWT Payload
     const payload = {
       id: user._id,
       name: user.name || user.fullname || user.username || "",
@@ -104,8 +115,9 @@ exports.login = async (req, res) => {
       expiresIn: "7d",
     });
 
+    // ✅ Success response
     res.status(200).json({
-      message: "Login successful",
+      message: "✅ Login successful",
       token,
       role,
       user: {
@@ -117,10 +129,11 @@ exports.login = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error(error);
+    console.error("❌ Login error:", error);
     res.status(500).json({ message: "Login failed", error: error.message });
   }
 };
+
 
 // ----------------------------
 // REGISTER SELLER
@@ -160,7 +173,6 @@ exports.registerSeller = async (req, res) => {
     res.status(500).json({ message: "Server error", error: err.message });
   }
 };
-
 // ----------------------------
 // GOOGLE LOGIN / REGISTER
 // ----------------------------
@@ -170,19 +182,19 @@ exports.googleCallback = async (req, res) => {
     const email = emails[0].value;
 
     let user = await User.findOne({ email });
-    let role = "buyer"; // default fallback
+    let role = "buyer";
     let code = "";
 
     if (!user) {
-      // ✅ If no user found, check if this email belongs to a farmer
-      let farmer = await Farmer.findOne({ email });
+      // If not in Users, check Farmer
+      const farmer = await Farmer.findOne({ email });
 
       if (farmer) {
         user = farmer;
         role = "farmer";
         code = farmer.farmer_code;
       } else {
-        // ✅ New Google user → default create as buyer in User
+        // Otherwise → create new Buyer
         user = new User({
           username: displayName,
           email,
@@ -193,10 +205,10 @@ exports.googleCallback = async (req, res) => {
         await user.save();
       }
     } else {
-      role = user.role;
+      role = user.role; // existing user's role
     }
 
-    // Build token payload
+    // Build JWT payload
     const payload = {
       id: user._id,
       name: user.username || user.fullname || displayName,
@@ -205,11 +217,10 @@ exports.googleCallback = async (req, res) => {
       code,
     };
 
-    // Create JWT
+    // Sign JWT
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "7d" });
 
-    // No frontend yet? Just return JSON
-    res.json({
+    res.status(200).json({
       success: true,
       message: "✅ Google login successful",
       token,
@@ -223,7 +234,7 @@ exports.googleCallback = async (req, res) => {
       },
     });
   } catch (err) {
-    console.error("Google callback error:", err);
-    res.status(500).json({ success: false, message: "Google login failed" });
+    console.error("❌ Google callback error:", err);
+    res.status(500).json({ success: false, message: "Google login failed", error: err.message });
   }
 };

@@ -26,32 +26,35 @@
 //     res.status(403).json({ message: 'Invalid token' });
 //   }
 // }
-
-const jwt = require('jsonwebtoken');
+const jwt = require("jsonwebtoken");
 
 exports.verifyToken = (req, res, next) => {
-  const token = req.headers.authorization?.split(' ')[1];
+  const authHeader = req.headers.authorization;
+  const token = authHeader && authHeader.split(" ")[1]; // "Bearer <token>"
 
   if (!token) {
-    return res.status(401).json({ message: 'Access denied. No token provided.' });
+    return res.status(401).json({ message: "Access denied. No token provided." });
   }
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded; // Contains { id, email, role }
+    req.user = decoded; // { id, email, role, code, ... }
     next();
   } catch (err) {
-    res.status(403).json({ message: 'Invalid token', error: err.message });
+    if (err.name === "TokenExpiredError") {
+      return res.status(401).json({ message: "Token expired. Please log in again." });
+    }
+    return res.status(401).json({ message: "Invalid token", error: err.message });
   }
 };
 
-exports.authorizeRoles=(...allowedRoles)=>{
-    return(req,res,next)=>{
-        if(!req.user|| !allowedRoles.includes(req.user.role)){
-            return res.status(403).json({message:"Access denied: Insuficient Permissions"})
-        }
-        next()
+exports.authorizeRoles = (...allowedRoles) => {
+  return (req, res, next) => {
+    if (!req.user || !allowedRoles.includes(req.user.role)) {
+      return res.status(403).json({ message: "Access denied: Insufficient permissions" });
     }
-}
+    next();
+  };
+};
 
 
