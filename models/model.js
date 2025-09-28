@@ -537,8 +537,8 @@ const Payment = mongoose.model('Payment', paymentSchema);
 // ---------------------------
 const notificationSchema = new mongoose.Schema({
   farmer_code: { type: Number, required: true },
-  cow: { type: mongoose.Schema.Types.ObjectId, ref: 'Cow', required: true },
-  type: { type: String, enum: ['gestation_alert', 'calving_reminder', 'milk_anomaly', 'general'], required: true },
+  cow: { type: mongoose.Schema.Types.ObjectId, ref: 'Cow', required: false }, // <--- make optional
+  type: { type: String, enum: ['gestation_alert', 'calving_reminder', 'milk_anomaly', 'general', 'chat_message'], required: true },
   message: { type: String, required: true },
   is_read: { type: Boolean, default: false },
   created_at: { type: Date, default: Date.now }
