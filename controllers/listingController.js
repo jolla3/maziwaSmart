@@ -93,13 +93,14 @@ exports.createListing = async (req, res) => {
         });
       }
 
-      // Ensure essential seller fields are present
-      if (!age || !breed_name) {
-        return res.status(400).json({
-          success: false,
-          message: "Sellers must provide at least age and breed_name"
-        });
-      }
+     const { animal_details } = req.body;
+
+if (!animal_details || !animal_details.age || !animal_details.breed_name) {
+  return res.status(400).json({
+    success: false,
+    message: "Sellers must provide at least age and breed_name"
+  });
+}
 
       listingData.farmer = farmer_id || null;
       listingData.animal_details = {
