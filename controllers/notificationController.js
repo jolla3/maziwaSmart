@@ -1,111 +1,139 @@
 // controllers/notificationController.js
-const { Notification } = require('../models/model');
+const { Notification } = require("../models/model");
 
-// 🟢 Get all notifications (optionally filter by farmer or type)
+// 🛠 Helper: decide filter based on logged-in role
+function buildUserFilter(req) {
+  if (req.user.role === "farmer") {
+    return { farmer: req.user.id };
+  }
+  return { user: req.user.id }; // all other roles
+}
+
+// 🟢 Get all notifications (filter by type/read state)
 exports.getNotifications = async (req, res) => {
   try {
-    const { farmer_code, type, is_read } = req.query;
-    const filter = {};
+    const { type, is_read } = req.query;
+    const filter = buildUserFilter(req);
 
-
-    if (farmer_code) filter.farmer_code = farmer_code;
     if (type) filter.type = type;
-    if (is_read !== undefined) filter.is_read = is_read === 'true';
+    if (is_read !== undefined) filter.is_read = is_read === "true";
 
     const notifications = await Notification.find(filter)
-      .populate('cow', 'cow_name animal_code')
+      .populate("cow", "cow_name animal_code")
       .sort({ created_at: -1 });
 
-    res.json({ success: true, count: notifications.length, data: notifications });
+    res.json({
+      success: true,
+      count: notifications.length,
+      data: notifications,
+    });
   } catch (err) {
-    console.error('Error fetching notifications:', err);
-    res.status(500).json({ success: false, message: 'Server Error' });
+    console.error("❌ Error fetching notifications:", err);
+    res.status(500).json({ success: false, message: "Server Error" });
   }
 };
 
 // 🟢 Create a notification + emit to socket
 exports.createNotification = async (req, res) => {
   try {
-    const { farmer_code, type, message, role_target } = req.body;
+    const { type, message, cow, targetUserId, targetFarmerId } = req.body;
 
     const notification = await Notification.create({
-      farmer_code,
+      user: targetUserId || null,
+      farmer: targetFarmerId || null,
+      cow: cow || null,
       type,
       message,
-      role_target
     });
 
-    const io = req.app.get('io');
-    if (farmer_code) {
-      io.to(`farmer_${farmer_code}`).emit('new_notification', notification);
+    const io = req.app.get("io");
+
+    if (targetUserId) {
+      io.to(`user_${targetUserId}`).emit("new_notification", notification);
     }
-    if (role_target) {
-      io.to(role_target).emit('new_notification', notification);
+    if (targetFarmerId) {
+      io.to(`farmer_${targetFarmerId}`).emit("new_notification", notification);
     }
 
     res.status(201).json({ success: true, data: notification });
   } catch (err) {
-    console.error('Error creating notification:', err);
-    res.status(500).json({ success: false, message: 'Server Error' });
+    console.error("❌ Error creating notification:", err);
+    res.status(500).json({ success: false, message: "Server Error" });
   }
 };
 
-// 🟢 Mark a single notification as read + emit
+// 🟢 Mark a single notification as read
 exports.markAsRead = async (req, res) => {
   try {
     const { id } = req.params;
-    const updated = await Notification.findByIdAndUpdate(
-      id,
+    const filter = buildUserFilter(req);
+
+    const updated = await Notification.findOneAndUpdate(
+      { _id: id, ...filter },
       { is_read: true },
       { new: true }
     );
 
     if (!updated) {
-      return res.status(404).json({ success: false, message: 'Notification not found' });
+      return res
+        .status(404)
+        .json({ success: false, message: "Notification not found" });
     }
 
-    const io = req.app.get('io');
-    if (updated.farmer_code) {
-      io.to(`farmer_${updated.farmer_code}`).emit('notification_read', updated);
-    }
+    const io = req.app.get("io");
+    if (updated.user) io.to(`user_${updated.user}`).emit("notification_read", updated);
+    if (updated.farmer)
+      io.to(`farmer_${updated.farmer}`).emit("notification_read", updated);
 
     res.json({ success: true, data: updated });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'Server Error' });
+    console.error("❌ Error marking as read:", err);
+    res.status(500).json({ success: false, message: "Server Error" });
   }
 };
 
-// 🟢 Mark all as read for a farmer + emit
+// 🟢 Mark all as read for current user
 exports.markAllAsRead = async (req, res) => {
   try {
-    const { farmer_code } = req.body;
-    await Notification.updateMany({ farmer_code, is_read: false }, { is_read: true });
+    const filter = buildUserFilter(req);
 
-    const io = req.app.get('io');
-    io.to(`farmer_${farmer_code}`).emit('all_notifications_read', { farmer_code });
+    await Notification.updateMany(filter, { is_read: true });
 
-    res.json({ success: true, message: 'All notifications marked as read' });
+    const io = req.app.get("io");
+    if (filter.user)
+      io.to(`user_${filter.user}`).emit("all_notifications_read", filter);
+    if (filter.farmer)
+      io.to(`farmer_${filter.farmer}`).emit("all_notifications_read", filter);
+
+    res.json({ success: true, message: "All notifications marked as read" });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'Server Error' });
+    console.error("❌ Error marking all as read:", err);
+    res.status(500).json({ success: false, message: "Server Error" });
   }
 };
 
-// 🟢 Delete a notification + emit
+// 🟢 Delete a notification
 exports.deleteNotification = async (req, res) => {
   try {
     const { id } = req.params;
-    const deleted = await Notification.findByIdAndDelete(id);
+    const filter = buildUserFilter(req);
+
+    const deleted = await Notification.findOneAndDelete({ _id: id, ...filter });
     if (!deleted) {
-      return res.status(404).json({ success: false, message: 'Notification not found' });
+      return res
+        .status(404)
+        .json({ success: false, message: "Notification not found" });
     }
 
-    const io = req.app.get('io');
-    if (deleted.farmer_code) {
-      io.to(`farmer_${deleted.farmer_code}`).emit('notification_deleted', { id: deleted._id });
-    }
+    const io = req.app.get("io");
+    if (deleted.user)
+      io.to(`user_${deleted.user}`).emit("notification_deleted", { id });
+    if (deleted.farmer)
+      io.to(`farmer_${deleted.farmer}`).emit("notification_deleted", { id });
 
-    res.json({ success: true, message: 'Notification deleted' });
+    res.json({ success: true, message: "Notification deleted" });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'Server Error' });
+    console.error("❌ Error deleting notification:", err);
+    res.status(500).json({ success: false, message: "Server Error" });
   }
 };

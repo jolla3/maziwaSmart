@@ -4,15 +4,15 @@ const router = express.Router();
 const notificationController = require('../controllers/notificationController');
 const { verifyToken, authorizeRoles } = require('../middleware/authMiddleware');
 // GET notifications (with filters)
-router.get('/',verifyToken,authorizeRoles('farmer'), notificationController.getNotifications);
+router.get('/',verifyToken, notificationController.getNotifications);
 
 // Mark single notification as read
-router.put('/:id/read',verifyToken,authorizeRoles('farmer'), notificationController.markAsRead);
+router.put('/read/:id',verifyToken, notificationController.markAsRead);
 
 // Mark all notifications as read for a farmer
-router.put('/mark-all',verifyToken,authorizeRoles('farmer'), notificationController.markAllAsRead);
+router.put('/mark-all',verifyToken, notificationController.markAllAsRead);
 
 // Delete notification
-router.delete('/:id',verifyToken,authorizeRoles('farmer'), notificationController.deleteNotification);
+router.delete('/:id',verifyToken, notificationController.deleteNotification);
 
 module.exports = router;
