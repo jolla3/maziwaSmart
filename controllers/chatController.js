@@ -45,19 +45,26 @@ exports.sendMessage = async (req, res) => {
       }
     }
 
-    // 3️⃣ Notify receiver
-    await Notification.create({
-      user: receiver,
-      cow: null,
-      type: "chat_message",
-      message: notifMsg
-    });
+    /// 3️⃣ Save notification
+const notification = await Notification.create({
+  user: receiver,
+  cow: null,
+  type: "chat_message",
+  message: notifMsg
+});
 
-    // 4️⃣ Emit via socket.io
-    const io = req.app.get("io");
-    if (io) io.to(receiver.toString()).emit("new_message", chatMessage);
+// 4️⃣ Emit via socket.io
+const io = req.app.get("io");
+if (io) {
+  // 🔹 Emit the chat message (real-time chat UI)
+  io.to(receiver.toString()).emit("new_message", chatMessage);
 
-    res.status(201).json({ success: true, chatMessage });
+  // 🔹 Emit the notification (notifications center)
+  io.to(receiver.toString()).emit("new_notification", notification);
+}
+
+res.status(201).json({ success: true, chatMessage, notification });
+
   } catch (err) {
     console.error("❌ Chat send error:", err);
     res.status(500).json({ success: false, message: "Failed to send message" });

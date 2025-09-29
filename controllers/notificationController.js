@@ -5,18 +5,45 @@ const { Notification } = require("../models/model");
 function buildUserFilter(req) {
   if (req.user.role === "farmer") {
     return { farmer: req.user.id };
+  } else {
+    return { user: req.user.id };
   }
-  return { user: req.user.id }; // all other roles
 }
 
-// 🟢 Get all notifications (filter by type/read state)
+// 🟢 Get all notifications (filter by role, farmer_code, user)
+// controllers/notificationController.js
+
 exports.getNotifications = async (req, res) => {
   try {
     const { type, is_read } = req.query;
-    const filter = buildUserFilter(req);
 
-    if (type) filter.type = type;
-    if (is_read !== undefined) filter.is_read = is_read === "true";
+    let filter = {};
+
+    if (req.user.role === "farmer") {
+      // ✅ Farmers: support BOTH farmer (ObjectId) and farmer_code (legacy)
+      filter.$and = [
+        {
+          $or: [
+            { farmer: req.user.id },
+            { farmer_code: req.user.code }
+          ]
+        }
+      ];
+    } else {
+      // ✅ Non-farmers (buyers, sellers, admins)
+      filter.user = req.user.id;
+    }
+
+    // ✅ Add optional filters
+    if (type) {
+      filter.$and = filter.$and || [];
+      filter.$and.push({ type });
+    }
+
+    if (is_read !== undefined) {
+      filter.$and = filter.$and || [];
+      filter.$and.push({ is_read: is_read === "true" });
+    }
 
     const notifications = await Notification.find(filter)
       .populate("cow", "cow_name animal_code")
@@ -33,6 +60,7 @@ exports.getNotifications = async (req, res) => {
   }
 };
 
+
 // 🟢 Create a notification + emit to socket
 exports.createNotification = async (req, res) => {
   try {
@@ -47,7 +75,6 @@ exports.createNotification = async (req, res) => {
     });
 
     const io = req.app.get("io");
-
     if (targetUserId) {
       io.to(`user_${targetUserId}`).emit("new_notification", notification);
     }
