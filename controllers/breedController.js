@@ -6,7 +6,7 @@ const {Breed,Cow} = require('../models/model');
 // ✅ Create a new breed
 exports.createBreed = async (req, res) => {
   try {
-    const farmerId = req.user._id;
+    const farmerId = req.user.id;
 
     if (!farmerId) {
       return res.status(401).json({ message: "Farmer ID not found in token" });
