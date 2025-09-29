@@ -133,10 +133,17 @@ exports.getMyAnimals = async (req, res) => {
     // ✅ Total count for pagination
     const total = await Cow.countDocuments(filter);
 
-    // ✅ Stats breakdown (optional but powerful)
+    // ✅ Stats breakdown per species + stage
     const stats = await Cow.aggregate([
       { $match: filter },
-      { $group: { _id: "$species", count: { $sum: 1 } } }
+      { $group: { _id: { species: "$species", stage: "$stage" }, count: { $sum: 1 } } },
+      {
+        $group: {
+          _id: "$_id.species",
+          breakdown: { $push: { stage: "$_id.stage", count: "$count" } },
+          total: { $sum: "$count" }
+        }
+      }
     ]);
 
     res.status(200).json({
@@ -146,7 +153,7 @@ exports.getMyAnimals = async (req, res) => {
         page: parseInt(page),
         limit: parseInt(limit),
         totalPages: Math.ceil(total / limit),
-        stats, // e.g. [{ _id: "cow", count: 12 }, { _id: "goat", count: 5 }]
+        stats // e.g. [{ _id: "cow", breakdown: [...], total: 12 }]
       },
       animals: animals.map(a => ({
         id: a._id,

@@ -6,7 +6,7 @@ const { Cow, Breed, Insemination } = require('../models/model');
  */
 exports.addCalf = async (req, res) => {
   try {
-    const { insemination_id, cow_name, gender, birth_date, cow_code } = req.body;
+    const { insemination_id, animal_name, gender, birth_date, animal_code } = req.body;
     const farmer_id = req.user.id;
     const farmer_code = Number(req.user.code);
 
@@ -16,10 +16,10 @@ exports.addCalf = async (req, res) => {
       return res.status(404).json({ success: false, message: "Insemination record not found" });
     }
 
-    // 2️⃣ Verify mother cow
+    // 2️⃣ Verify mother animal
     const mother = await Cow.findOne({ _id: insemination.cow_id, farmer_code });
     if (!mother) {
-      return res.status(404).json({ success: false, message: "Mother cow not found" });
+      return res.status(404).json({ success: false, message: "Mother animal not found" });
     }
 
     // 3️⃣ Ensure bull breed exists in farmer's breeds
@@ -31,10 +31,21 @@ exports.addCalf = async (req, res) => {
       }
     }
 
-    // 4️⃣ Register calf
-    const calf = await new Cow({
-      cow_name,
-      cow_code: cow_code || null,
+    // 4️⃣ Determine newborn stage based on species
+    const stageMap = {
+      cow: "calf",
+      bull: "calf",      // bull calves
+      goat: "kid",
+      sheep: "lamb",
+      pig: "piglet"
+    };
+    const newbornStage = stageMap[mother.species] || "calf";
+
+    // 5️⃣ Register offspring
+    const offspring = await new Cow({
+      cow_name: animal_name,
+      cow_code: animal_code || null,
+      species: mother.species,             // inherit species
       gender,
       breed_id: breedDoc?._id || null,
       bull_code: insemination.bull_code || null,
@@ -42,29 +53,37 @@ exports.addCalf = async (req, res) => {
       birth_date,
       mother_id: mother._id,
       insemination_id: insemination._id,
-      stage: 'calf',
-      is_calf: true,
+      stage: newbornStage,
+      is_calf: newbornStage === "calf",    // only true for cattle
       from_birth: true,
       farmer_id,
       farmer_code,
-      status: 'active'
+      status: "active"
     }).save();
 
-    // 5️⃣ Update mother’s offspring list + count
+    // 6️⃣ Update mother’s offspring list + count
     await Cow.findByIdAndUpdate(mother._id, {
-      $push: { offspring_ids: calf._id },
+      $push: { offspring_ids: offspring._id },
       $inc: { total_offspring: 1 }
     });
 
-    // 6️⃣ Mark insemination as calved
+    // 7️⃣ Mark insemination as calved
     insemination.has_calved = true;
-    insemination.calf_id = calf._id;
+    insemination.calf_id = offspring._id;
     await insemination.save();
 
-    res.status(201).json({ success: true, message: "Calf registered successfully", data: calf });
+    res.status(201).json({
+      success: true,
+      message: `${mother.species} offspring registered successfully`,
+      data: offspring
+    });
 
   } catch (err) {
-    res.status(500).json({ success: false, message: "Failed to register calf", error: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Failed to register offspring",
+      error: err.message
+    });
   }
 };
 
@@ -139,25 +158,51 @@ exports.getAwaitingCalves = async (req, res) => {
     const farmer_id = req.user.id;
     const farmer_code = Number(req.user.code);
 
-    const pregnantCows = await Cow.find({
+    // 🔎 Fetch pregnant animals of ANY species
+    const pregnantAnimals = await Cow.find({
       farmer_id,
       farmer_code,
       'pregnancy.is_pregnant': true,
       status: 'pregnant'
     })
-    .populate('pregnancy.insemination_id', 'insemination_date expected_due_date bull_breed bull_code bull_name')
-    .lean();
+      .populate('pregnancy.insemination_id', 'insemination_date expected_due_date bull_breed bull_code bull_name')
+      .populate('offspring_ids', 'cow_name species birth_date gender stage') // ✅ include children
+      .lean();
 
     res.status(200).json({
       success: true,
-      message: "Pregnant cows awaiting calves",
-      data: pregnantCows
+      message: "Pregnant animals awaiting offspring",
+      count: pregnantAnimals.length,
+      data: pregnantAnimals.map(animal => ({
+        id: animal._id,
+        name: animal.cow_name,
+        species: animal.species,
+        gender: animal.gender,
+        stage: animal.stage,
+        status: animal.status,
+        pregnancy: animal.pregnancy,
+        insemination: animal.pregnancy?.insemination_id || null,
+        offspring: animal.offspring_ids?.map(child => ({
+          id: child._id,
+          name: child.cow_name,
+          species: child.species,
+          birth_date: child.birth_date,
+          gender: child.gender,
+          stage: child.stage
+        })) || []
+      }))
     });
 
   } catch (err) {
-    res.status(500).json({ success: false, message: "Failed to fetch awaiting calves", error: err.message });
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch awaiting offspring",
+      error: err.message
+    });
   }
 };
+
+
 
 /**
  * ➕ Register calf when pregnancy ends

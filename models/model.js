@@ -151,9 +151,13 @@ const Breed = mongoose.model('Breed', breedSchema);
 const cowSchema = new Schema({
   // General identification
   animal_code: { type: String }, // e.g., COW-2025-0001
-  species: { type: String, enum: ['cow', 'bull', 'goat', 'pig'], required: true },
-  cow_name: { type: String }, // optional name/tag
-  cow_code: { type: Number }, // numeric code if used
+  species: { 
+    type: String, 
+    enum: ['cow', 'bull', 'goat', 'sheep', 'pig'], 
+    required: true 
+  },
+  cow_name: { type: String }, 
+  cow_code: { type: Number },
   farmer_code: { type: Number, required: true },
   breed_id: { type: Schema.Types.ObjectId, ref: 'Breed' },
   cow_id: { type: Schema.Types.ObjectId, ref: 'Cow' },
@@ -162,16 +166,35 @@ const cowSchema = new Schema({
   birth_date: { type: Date },
 
   // status / stage
-  status: { type: String, enum: ['active', 'pregnant', 'for_sale', 'sold', 'deceased'], default: 'active' },
-  stage: { type: String, enum: ['calf', 'heifer', 'cow']  },
+  status: { 
+    type: String, 
+    enum: ['active', 'pregnant', 'for_sale', 'sold', 'deceased'], 
+    default: 'active' 
+  },
+  stage: { 
+    type: String,
+    enum: [
+      // Cows
+      'calf', 'heifer', 'cow',
+      // Bulls
+      'bull_calf', 'young_bull', 'mature_bull',
+      // Goats
+      'kid', 'doeling', 'buckling', 'nanny', 'buck',
+      // Sheep
+      'lamb', 'ewe', 'ram',
+      // Pigs
+      'piglet', 'gilt', 'sow', 'boar'
+    ],
+    default: null
+  },
   is_calf: { type: Boolean, default: false },
   from_birth: { type: Boolean, default: false },
 
   // lineage
   mother_id: { type: Schema.Types.ObjectId, ref: 'Cow', default: null },
   father_id: { type: Schema.Types.ObjectId, ref: 'Cow', default: null },
- bull_code: { type: String }, // traceable sire code when known
-bull_name: { type: String }, // traceable sire name when known
+  bull_code: { type: String },
+  bull_name: { type: String },
   offspring_ids: [{ type: Schema.Types.ObjectId, ref: 'Cow' }],
   total_offspring: { type: Number, default: 0 },
 
@@ -184,7 +207,7 @@ bull_name: { type: String }, // traceable sire name when known
   lifetime_milk: { type: Number, default: 0 },
   daily_average: { type: Number, default: 0 },
 
-  // pregnancy meta (updated by insemination logic)
+  // pregnancy meta
   pregnancy: {
     is_pregnant: { type: Boolean, default: false },
     insemination_id: { type: Schema.Types.ObjectId, ref: 'Insemination' },
@@ -193,7 +216,6 @@ bull_name: { type: String }, // traceable sire name when known
 
   created_at: { type: Date, default: Date.now }
 }, { timestamps: true });
-
 // indexes
 cowSchema.index({ animal_code: 1 });
 cowSchema.index({ species: 1, farmer_id: 1 });
@@ -204,24 +226,31 @@ cowSchema.index({ farmer_code: 1 });
 cowSchema.post('save', async function (doc, next) {
   try {
     const Cow = mongoose.model('Cow');
+
+    // 🔥 Enforce calves to always default properly
+    if (doc.is_calf && !doc.stage) {
+      doc.stage = 'calf';
+      await doc.save(); // one-time correction
+    }
+
     if (doc.mother_id) {
       await Cow.findByIdAndUpdate(doc.mother_id, {
         $addToSet: { offspring_ids: doc._id },
         $inc: { total_offspring: 1 }
-      }).exec();
+      });
     }
+
     if (doc.father_id) {
       await Cow.findByIdAndUpdate(doc.father_id, {
         $addToSet: { offspring_ids: doc._id },
         $inc: { total_offspring: 1 }
-      }).exec();
+      });
     }
   } catch (err) {
     console.error('Cow post-save parent update error:', err);
   }
   next();
 });
-
 const Cow = mongoose.model('Cow', cowSchema);
 
 // ---------------------------
@@ -443,20 +472,16 @@ inseminationSchema.post('save', async function (doc, next) {
     const cow = await Cow.findById(doc.cow_id);
     if (!cow) return next();
 
-    // Only act on explicit outcomes
     if (doc.outcome === 'pregnant') {
-      // species-aware gestation map
       const gestationDaysMap = { cow: 283, goat: 150, sheep: 152, pig: 114 };
       const gestationDays = gestationDaysMap[cow.species] || 283;
 
-      // ensure an expected_due_date in the record
       let dueDate = doc.expected_due_date ? new Date(doc.expected_due_date) : new Date(doc.insemination_date);
       if (!doc.expected_due_date) {
         dueDate.setDate(dueDate.getDate() + gestationDays);
-        await Insemination.findByIdAndUpdate(doc._id, { $set: { expected_due_date: dueDate } }).exec();
+        await Insemination.findByIdAndUpdate(doc._id, { $set: { expected_due_date: dueDate } });
       }
 
-      // update cow pregnancy pointer (only when this attempt succeeded)
       await Cow.findByIdAndUpdate(cow._id, {
         $set: {
           'pregnancy.is_pregnant': true,
@@ -464,18 +489,16 @@ inseminationSchema.post('save', async function (doc, next) {
           'pregnancy.expected_due_date': dueDate,
           status: 'pregnant'
         }
-      }).exec();
+      });
 
-      // immediate notification to farmer (onset)
       await Notification.create({
+        user: cow.farmer_id,   // 🔥 support user-based
         farmer_code: cow.farmer_code,
         cow: cow._id,
         type: 'gestation_alert',
-        message: `${cow.species} ${cow.cow_name || cow.name || 'animal'} confirmed pregnant. Expected due: ${dueDate.toDateString()}`,
-        sent_at: new Date()
+        message: `${cow.species} ${cow.cow_name || cow.name || 'animal'} confirmed pregnant. Expected due: ${dueDate.toDateString()}`
       });
 
-      // mark earlier attempts (<= this attempt date) as not_pregnant/resolved
       await Insemination.updateMany(
         {
           cow_id: cow._id,
@@ -484,12 +507,10 @@ inseminationSchema.post('save', async function (doc, next) {
           outcome: { $ne: 'pregnant' }
         },
         { $set: { outcome: 'not_pregnant', resolved_by: doc._id, resolved_at: new Date() } }
-      ).exec();
+      );
 
     } else if (doc.outcome === 'not_pregnant') {
-      // if the cow was pointing to this attempt as pregnant and now it's marked not_pregnant,
-      // clear the cow pregnancy pointer (safety)
-      if (cow.pregnancy && cow.pregnancy.insemination_id && cow.pregnancy.insemination_id.toString() === doc._id.toString()) {
+      if (cow.pregnancy?.insemination_id?.toString() === doc._id.toString()) {
         await Cow.findByIdAndUpdate(cow._id, {
           $set: {
             'pregnancy.is_pregnant': false,
@@ -497,11 +518,9 @@ inseminationSchema.post('save', async function (doc, next) {
             'pregnancy.expected_due_date': null,
             status: 'active'
           }
-        }).exec();
+        });
       }
     }
-
-    // NOTE: we intentionally do NOT insert bull/breed here — that remains controller responsibility.
   } catch (err) {
     console.error('Insemination post-save error:', err);
   }
@@ -537,6 +556,8 @@ const Payment = mongoose.model('Payment', paymentSchema);
 // ---------------------------
 const notificationSchema = new mongoose.Schema({
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // the recipient
+    farmer_code: { type: Number, required: true },
+
   cow: { type: mongoose.Schema.Types.ObjectId, ref: 'Cow' }, // optional, only for animal-specific events
   type: { 
     type: String, 
