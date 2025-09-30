@@ -1,4 +1,3 @@
-const {Breed,Cow} = require('../models/model');
 
 // Create a new breed
 // controllers/breedController.js
