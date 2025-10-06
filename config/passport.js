@@ -2,11 +2,11 @@ const passport = require("passport");
 const GoogleStrategy = require("passport-google-oauth20").Strategy;
 const { User } = require("../models/model");
 
-// Decide callback URL dynamically
+// ✅ FIXED: Match your actual route structure
 const callbackURL =
   process.env.NODE_ENV === "production"
-    ? "https://maziwasmart.onrender.com/api/auth/google/callback"
-    : "http://localhost:5000/api/auth/google/callback"; // 👈 adjust if your local port is different
+    ? "https://maziwasmart.onrender.com/api/userAuth/google/callback"  // ✅ Changed to /api/userAuth/
+    : "http://localhost:5000/api/userAuth/google/callback";
 
 passport.use(
   new GoogleStrategy(
@@ -24,7 +24,7 @@ passport.use(
           user = new User({
             username: profile.displayName,
             email,
-            role: "buyer", // default role, superadmin can upgrade to seller later
+            role: "buyer", // ✅ Correct default role
             photo: profile.photos?.[0]?.value,
             email_verified: true,
           });
