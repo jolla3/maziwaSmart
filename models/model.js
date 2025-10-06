@@ -710,8 +710,7 @@ const chatMessageSchema = new Schema({
   created_at: { type: Date, default: Date.now },
 });
 
-module.exports = mongoose.model("ChatMessage", chatMessageSchema);
-
+const ChatMessage = mongoose.model('ChatMessage', chatMessageSchema);
 // const dealSchema = new Schema({
 //   listing: { type: Schema.Types.ObjectId, ref: 'Listing', required: true },
 //   buyer: { type: Schema.Types.ObjectId, ref: 'User', required: true },
