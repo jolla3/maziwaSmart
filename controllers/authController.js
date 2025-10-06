@@ -71,8 +71,8 @@ exports.login = async (req, res) => {
     const { email, password } = req.body;
 
     let user = null;
-    let role = "";
-    let code = "";
+    let role = ""
+    let code = ""
 
     // 1️⃣ Check if it's a system user (admin, superadmin, broker, buyer, seller, manager)
     user = await User.findOne({ email });
@@ -85,7 +85,7 @@ exports.login = async (req, res) => {
     if (!user) {
       user = await Farmer.findOne({ email });
       if (user) {
-        role = "farmer";
+        role = "farmer"
         code = user.farmer_code;
       }
     }
@@ -200,6 +200,7 @@ exports.googleCallback = async (req, res) => {
     let user = await User.findOne({ email });
     let role = "buyer";
     let code = "";
+    let isNewUser = false; // 👈 Track new Google users
 
     if (!user) {
       // If not in Users, check Farmer
@@ -210,7 +211,7 @@ exports.googleCallback = async (req, res) => {
         role = "farmer";
         code = farmer.farmer_code;
       } else {
-        // Otherwise → create new Buyer
+        // Otherwise → create new Buyer without password
         user = new User({
           username: displayName,
           email,
@@ -219,6 +220,7 @@ exports.googleCallback = async (req, res) => {
           email_verified: true,
         });
         await user.save();
+        isNewUser = true; // 👈 Mark as new
       }
     } else {
       role = user.role; // existing user's role
@@ -236,17 +238,58 @@ exports.googleCallback = async (req, res) => {
     // Sign JWT
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "7d" });
 
-    // ✅ UPDATED: Redirect to frontend with token in URL
-    const frontendURL = process.env.FRONTEND_URL || "http://localhost:3000" || "https://maziwa-smart.vercel.app"
-    
-    // Redirect to Google login page with token and role as query params
-    res.redirect(`${frontendURL}/google-login?token=${token}&role=${role}&name=${encodeURIComponent(payload.name)}`);
-    
+    // ✅ Base frontend URL
+    const frontendURL =
+      process.env.FRONTEND_URL ||
+      "https://maziwa-smart.vercel.app" ||
+      "http://localhost:3000";
+
+    // ✅ Redirect logic
+    if (isNewUser) {
+      // 👇 New Google users → go to password setup
+      return res.redirect(`${frontendURL}/set-password?token=${token}`);
+    } else {
+      // 👇 Existing users → go to Google login callback
+      return res.redirect(
+        `${frontendURL}/google-login?token=${token}&role=${role}&name=${encodeURIComponent(payload.name)}`
+      );
+    }
   } catch (err) {
     console.error("❌ Google callback error:", err);
-    
-    // Redirect to frontend with error
-    const frontendURL = process.env.FRONTEND_URL || "http://localhost:3000" || "https://maziwa-smart.vercel.app"
-    res.redirect(`${frontendURL}/google-login?error=${encodeURIComponent('Google login failed')}`);
+
+    const frontendURL =
+      process.env.FRONTEND_URL ||
+      "https://maziwa-smart.vercel.app" ||
+      "http://localhost:3000";
+
+    res.redirect(
+      `${frontendURL}/google-login?error=${encodeURIComponent("Google login failed")}`
+    );
+  }
+};
+
+
+// ✅ Controller to set password after Google signup
+exports.setPassword = async (req, res) => {
+  try {
+    const { token, password } = req.body;
+    if (!token || !password)
+      return res.status(400).json({ message: "Missing token or password." });
+
+    // Verify token
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.id);
+    if (!user)
+      return res.status(404).json({ message: "User not found." });
+
+    // Hash and update password
+    const hashedPassword = await bcrypt.hash(password, 10);
+    user.password = hashedPassword;
+    await user.save();
+
+    res.status(200).json({ message: "Password set successfully. You can now log in." });
+  } catch (err) {
+    console.error("❌ Error in setPassword:", err);
+    res.status(500).json({ message: "Server error while setting password." });
   }
 };

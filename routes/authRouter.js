@@ -67,6 +67,7 @@ const { verifyToken } = require("../middleware/authMiddleware");
 router.post("/register", registerAdmin);     // Admin register
 router.post("/login", login);                // Login (admin, farmer, porter, etc.)
 router.post("/seller/register", registerSeller); // Register seller (pending approval)
+router.post("/set-password", require("../controllers/authController").setPassword);
 
 // Only superadmin should access
 router.patch("/:id", verifyToken, toggleSellerApproval);
