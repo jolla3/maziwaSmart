@@ -5,45 +5,60 @@ const bcrypt = require("bcrypt");
 const { User, Porter, Farmer } = require("../models/model");
 const jwt = require("jsonwebtoken");
 
-// ----------------------------
-// REGISTER ADMIN
-// ----------------------------
+
+// ============================
+// UNIVERSAL REGISTER (Default: buyer)
+// ============================
 exports.registerAdmin = async (req, res) => {
   try {
-    const { username, email, password } = req.body;
+    const { username, email, password, phone } = req.body;
 
-    const existingEmail = await User.findOne({ email });
-    if (existingEmail) {
-      return res.status(400).json({ message: "Email already exists" });
+    if (!username || !email || !password) {
+      return res.status(400).json({
+        message: "Username, email, and password are required.",
+      });
     }
 
-    const existingUsername = await User.findOne({ username });
-    if (existingUsername) {
-      return res.status(400).json({ message: "Username already exists" });
+    // 🔍 Check duplicates
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ message: "Email already exists." });
     }
 
+    // 🔐 Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
+
+    // 🧠 Create new user (default role = buyer)
     const newUser = new User({
       username,
       email,
+      phone,
       password: hashedPassword,
-      role,
+      role: "buyer",         // 👈 Default role
+      is_approved_seller: false,
     });
 
     await newUser.save();
 
+    // ✅ Return success
     res.status(201).json({
-      message: `User ${newUser.username} registered successfully, You can now login`,
+      success: true,
+      message: `Welcome ${newUser.username}! Your account has been created.`,
       user: {
         id: newUser._id,
         username: newUser.username,
         email: newUser.email,
+        phone: newUser.phone,
         role: newUser.role,
       },
     });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Registration failed", error: err });
+    console.error("❌ Registration error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Registration failed.",
+      error: err.message,
+    });
   }
 };
 
@@ -176,6 +191,7 @@ exports.registerSeller = async (req, res) => {
 // ----------------------------
 // GOOGLE LOGIN / REGISTER
 // ----------------------------
+
 exports.googleCallback = async (req, res) => {
   try {
     const { displayName, emails, photos } = req.user;
@@ -220,21 +236,17 @@ exports.googleCallback = async (req, res) => {
     // Sign JWT
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "7d" });
 
-    res.status(200).json({
-      success: true,
-      message: "✅ Google login successful",
-      token,
-      role,
-      user: {
-        id: user._id,
-        name: payload.name,
-        email: user.email,
-        role,
-        code,
-      },
-    });
+    // ✅ UPDATED: Redirect to frontend with token in URL
+    const frontendURL = process.env.FRONTEND_URL || "http://localhost:3000";
+    
+    // Redirect to Google login page with token and role as query params
+    res.redirect(`${frontendURL}/google-login?token=${token}&role=${role}&name=${encodeURIComponent(payload.name)}`);
+    
   } catch (err) {
     console.error("❌ Google callback error:", err);
-    res.status(500).json({ success: false, message: "Google login failed", error: err.message });
+    
+    // Redirect to frontend with error
+    const frontendURL = process.env.FRONTEND_URL || "http://localhost:3000";
+    res.redirect(`${frontendURL}/google-login?error=${encodeURIComponent('Google login failed')}`);
   }
 };

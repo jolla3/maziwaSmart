@@ -9,7 +9,7 @@ const makeUploader = require('../middleware/upload'); // your upload factory
 const animalUpload = makeUploader('animals'); // files will go to uploads/animals
 
 // Create new animal with optional photo
-router.post('/', verifyToken, animalUpload.single('photo'), AnimalController.createAnimal);
+router.post('/', verifyToken, animalUpload.any('photo'), AnimalController.createAnimal);
 
 router.get("/", verifyToken, AnimalController.getMyAnimals);
 router.get("/:id", verifyToken, AnimalController.getAnimalById);

@@ -4,12 +4,14 @@ const {Cow} = require("../models/model");
 exports.createAnimal = async (req, res) => {
   try {
     const { species } = req.body;
-    const farmer_id = req.user._id;
+    const farmer_id = req.user.id;
     const farmer_code = req.user.code;
 
     if (!species) {
       return res.status(400).json({ message: "Species is required" });
     }
+    const photos = req.files?.map(file => `/uploads/animals/${file.filename}`) || [];
+
 
     let newAnimal;
 
@@ -25,6 +27,7 @@ exports.createAnimal = async (req, res) => {
         farmer_id,
         farmer_code,
         mother_id,
+        photos,
         is_calf: false
       });
     }
@@ -39,7 +42,8 @@ exports.createAnimal = async (req, res) => {
         gender,
         birth_date,
         farmer_id,
-        farmer_code
+        farmer_code,
+        photos
       });
     }
 
@@ -53,7 +57,9 @@ exports.createAnimal = async (req, res) => {
         gender,
         birth_date,
         farmer_id,
-        farmer_code
+        farmer_code,
+        photos
+
       });
     }
 
@@ -67,7 +73,8 @@ exports.createAnimal = async (req, res) => {
         gender,
         birth_date,
         farmer_id,
-        farmer_code
+        farmer_code,
+        photos
       });
     }
 
@@ -81,7 +88,8 @@ exports.createAnimal = async (req, res) => {
         gender: "male", // fixed
         birth_date,
         farmer_id,
-        farmer_code
+        farmer_code,
+        photos
       });
     }
 
@@ -210,24 +218,51 @@ exports.updateAnimal = async (req, res) => {
     const farmer_code = req.user.code;
     const { id } = req.params;
 
-    const updatedAnimal = await Cow.findOneAndUpdate(
-      { _id: id, farmer_code },  // ✅ Ensure farmer only updates their own animals
-      { $set: req.body },
-      { new: true, runValidators: true }
-    );
+    // 🧠 1️⃣ Prepare update object
+    const updates = { ...req.body };
 
-    if (!updatedAnimal) {
-      return res.status(404).json({ success: false, message: "Animal not found or not yours" });
+    // 🧠 2️⃣ Map uploaded photos (from multer)
+    const uploadedPhotos = req.files?.map(file => `/uploads/animals/${file.filename}`) || [];
+
+    // 🧠 3️⃣ Get current animal to merge photos safely
+    const existing = await Cow.findOne({ _id: id, farmer_code });
+    if (!existing) {
+      return res.status(404).json({
+        success: false,
+        message: "Animal not found or not yours"
+      });
     }
+
+    const existingPhotos = existing.photos || [];
+    const bodyPhotos = Array.isArray(req.body.photos)
+      ? req.body.photos.filter(p => p && p.trim() !== "")
+      : [];
+
+    // 🧠 4️⃣ Combine and deduplicate
+    const mergedPhotos = [...new Set([...existingPhotos, ...bodyPhotos, ...uploadedPhotos])];
+    updates.photos = mergedPhotos;
+
+    // 🧠 5️⃣ Run update
+    const updatedAnimal = await Cow.findByIdAndUpdate(id, updates, {
+      new: true,
+      runValidators: true
+    });
 
     res.status(200).json({
       success: true,
-      message: "✅ Animal updated successfully",
+      message: uploadedPhotos.length
+        ? "✅ Animal updated successfully (new photos added)"
+        : "✅ Animal updated successfully",
       animal: updatedAnimal
     });
+
   } catch (error) {
     console.error("❌ Error updating animal:", error);
-    res.status(500).json({ success: false, message: "Failed to update animal", error: error.message });
+    res.status(500).json({
+      success: false,
+      message: "Failed to update animal",
+      error: error.message
+    });
   }
 };
 

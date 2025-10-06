@@ -8,17 +8,23 @@ const { Listing, Farmer, User, Cow } = require('../models/model');
 // CREATE a new listing
 exports.createListing = async (req, res) => {
   try {
+    
     const {
-      title,
-      animal_type,
-      animal_id,
-      price,
-      description,
-      photos = [],
-      location,
-      farmer_id,
-      animal_details // 🐄 keep nested for sellers
-    } = req.body;
+  title,
+  animal_type,
+  animal_id,
+  price,
+  description,
+  location,
+  farmer_id,
+  animal_details
+} = req.body;
+
+// 🧠 Combine uploaded + text-sent photos
+const uploadedPhotos = req.files?.map(file => `/uploads/animals/${file.filename}`) || [];
+const bodyPhotos = Array.isArray(req.body.photos) ? req.body.photos : [];
+const photos = [...bodyPhotos, ...uploadedPhotos].filter(p => p && p.trim() !== "");
+
 
     if (!title || !animal_type || !price) {
       return res.status(400).json({
@@ -26,6 +32,7 @@ exports.createListing = async (req, res) => {
         message: "Title, animal type, and price are required"
       });
     }
+    
 
     const sellerRef = req.user.id;
     let farmerRef = null;
@@ -426,20 +433,69 @@ exports.getListingById = async (req, res) => {
 exports.updateListing = async (req, res) => {
   try {
     const { id } = req.params;
-    const updates = req.body;
 
+    // 🔹 Parse incoming update body (JSON fields)
+    const updates = { ...req.body };
+
+    // 🔹 Handle new uploaded photos (if any)
+    const uploadedPhotos = req.files?.map(file => `/uploads/animals/${file.filename}`) || [];
+
+    // 🔹 If there are new photos, merge them with existing ones
+    if (uploadedPhotos.length > 0) {
+      // Fetch existing listing first to merge
+      const existing = await Listing.findOne({ _id: id, seller: req.user._id });
+      if (!existing) {
+        return res.status(404).json({
+          success: false,
+          message: "Listing not found or not yours"
+        });
+      }
+
+      // Combine old + new
+      const existingPhotos = existing.photos || [];
+      const bodyPhotos = Array.isArray(req.body.photos)
+        ? req.body.photos.filter(p => p && p.trim() !== "")
+        : [];
+
+      // Merge and deduplicate
+      updates.photos = [...new Set([...existingPhotos, ...bodyPhotos, ...uploadedPhotos])];
+
+      // Then apply update
+      const listing = await Listing.findByIdAndUpdate(id, updates, { new: true });
+
+      return res.status(200).json({
+        success: true,
+        message: "Listing updated (with new photos)",
+        listing
+      });
+    }
+
+    // 🔹 No new files → standard update
     const listing = await Listing.findOneAndUpdate(
       { _id: id, seller: req.user._id },
       updates,
       { new: true }
     );
 
-    if (!listing) return res.status(404).json({ success: false, message: "Listing not found or not yours" });
+    if (!listing) {
+      return res.status(404).json({
+        success: false,
+        message: "Listing not found or not yours"
+      });
+    }
 
-    res.status(200).json({ success: true, message: "Listing updated", listing });
+    return res.status(200).json({
+      success: true,
+      message: "Listing updated",
+      listing
+    });
   } catch (err) {
     console.error("Update listing error:", err);
-    res.status(500).json({ success: false, message: "Failed to update listing" });
+    res.status(500).json({
+      success: false,
+      message: "Failed to update listing",
+      error: err.message
+    });
   }
 };
 

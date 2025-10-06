@@ -6,80 +6,134 @@ const { Cow, Breed, Insemination } = require('../models/model');
  */
 exports.addCalf = async (req, res) => {
   try {
-    const { insemination_id, animal_name, gender, birth_date, animal_code } = req.body;
+    const {
+      breed_id,
+      species,
+      animal_name,
+      gender,
+      birth_date,
+      animal_code,
+      breed_name,
+      mother_id,
+      bull_code,
+      bull_name
+    } = req.body;
+
     const farmer_id = req.user.id;
-    const farmer_code = Number(req.user.code);
+    const farmer_code = req.user.code;
 
-    // 1️⃣ Verify insemination record
-    const insemination = await Insemination.findOne({ _id: insemination_id, farmer_code });
-    if (!insemination) {
-      return res.status(404).json({ success: false, message: "Insemination record not found" });
-    }
-
-    // 2️⃣ Verify mother animal
-    const mother = await Cow.findOne({ _id: insemination.cow_id, farmer_code });
-    if (!mother) {
-      return res.status(404).json({ success: false, message: "Mother animal not found" });
-    }
-
-    // 3️⃣ Ensure bull breed exists in farmer's breeds
-    let breedDoc = null;
-    if (insemination.bull_breed) {
-      breedDoc = await Breed.findOne({ farmer_id, breed_name: insemination.bull_breed });
-      if (!breedDoc) {
-        breedDoc = await new Breed({ breed_name: insemination.bull_breed, farmer_id }).save();
+    let mother = null;
+    if (mother_id) {
+      mother = await Cow.findById(mother_id);
+      if (!mother) {
+        return res.status(404).json({
+          success: false,
+          message: "Mother animal not found"
+        });
       }
     }
 
-    // 4️⃣ Determine newborn stage based on species
-    const stageMap = {
-      cow: "calf",
-      bull: "calf",      // bull calves
-      goat: "kid",
-      sheep: "lamb",
-      pig: "piglet"
-    };
-    const newbornStage = stageMap[mother.species] || "calf";
+    // 🧬 Determine breedDoc
+    let breedDoc = null;
+    if (breed_id) {
+      breedDoc = await Breed.findOne({ _id: breed_id, farmer_id });
 
-    // 5️⃣ Register offspring
+      if (!breedDoc) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid breed_id — no matching breed found for this farmer"
+        });
+      }
+
+      // Auto-patch missing bull data
+      let updated = false;
+      if (!breedDoc.bull_code && bull_code) {
+        breedDoc.bull_code = bull_code;
+        updated = true;
+      }
+      if (!breedDoc.bull_name && bull_name) {
+        breedDoc.bull_name = bull_name;
+        updated = true;
+      }
+      if (updated) await breedDoc.save();
+
+    } else {
+      if (!species || !breed_name) {
+        return res.status(400).json({
+          success: false,
+          message: "species and breed_name are required when breed_id is not provided"
+        });
+      }
+
+      breedDoc = await new Breed({
+        breed_name,
+        species,
+        bull_code,
+        bull_name,
+        farmer_id
+      }).save();
+    }
+
+    // 🧠 Determine species source
+    const actualSpecies = species || breedDoc.species || (mother ? mother.species : "cow");
+
+    // 🍼 Intelligent stage determination
+    const stageMap = {
+      cow: { female: "heifer", male: "bull", default: "calf" },
+      bull: { female: "heifer", male: "bull", default: "calf" },
+      goat: { female: "doe", male: "buck", default: "kid" },
+      sheep: { female: "ewe", male: "ram", default: "lamb" },
+      pig: { female: "sow", male: "boar", default: "piglet" }
+    };
+
+    let stage;
+    if (mother) {
+      // If from mother, use newborn stage
+      const newbornMap = { cow: "calf", bull: "calf", goat: "kid", sheep: "lamb", pig: "piglet" };
+      stage = newbornMap[mother.species] || "calf";
+    } else {
+      // No mother: use gendered adult stage
+      const map = stageMap[actualSpecies] || {};
+      stage = gender ? map[gender] || map.default : map.default || "unknown";
+    }
+
+    // 🧾 Create animal/offspring record
     const offspring = await new Cow({
       cow_name: animal_name,
       cow_code: animal_code || null,
-      species: mother.species,             // inherit species
+      species: actualSpecies,
       gender,
-      breed_id: breedDoc?._id || null,
-      bull_code: insemination.bull_code || null,
-      bull_name: insemination.bull_name || null,
-      birth_date,
-      mother_id: mother._id,
-      insemination_id: insemination._id,
-      stage: newbornStage,
-      is_calf: newbornStage === "calf",    // only true for cattle
-      from_birth: true,
+      breed_id: breedDoc._id,
+      breed_name: breedDoc.breed_name,
+      bull_code: breedDoc.bull_code || bull_code || null,
+      bull_name: breedDoc.bull_name || bull_name || null,
+      birth_date: birth_date || new Date(),
+      mother_id: mother?._id || null,
+      stage,
+      is_calf: stage === "calf",
+      from_birth: !!mother,
       farmer_id,
       farmer_code,
       status: "active"
     }).save();
 
-    // 6️⃣ Update mother’s offspring list + count
-    await Cow.findByIdAndUpdate(mother._id, {
-      $push: { offspring_ids: offspring._id },
-      $inc: { total_offspring: 1 }
-    });
+    // 👩‍👧 Update mother's offspring count (if mother exists)
+    if (mother) {
+      await Cow.findByIdAndUpdate(mother._id, {
+        $addToSet: { offspring_ids: offspring._id },
+        $inc: { total_offspring: 1 }
+      });
+    }
 
-    // 7️⃣ Mark insemination as calved
-    insemination.has_calved = true;
-    insemination.calf_id = offspring._id;
-    await insemination.save();
-
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
-      message: `${mother.species} offspring registered successfully`,
+      message: `${offspring.species} registered successfully.`,
       data: offspring
     });
 
   } catch (err) {
-    res.status(500).json({
+    console.error("🐄 addCalf error:", err);
+    return res.status(500).json({
       success: false,
       message: "Failed to register offspring",
       error: err.message
