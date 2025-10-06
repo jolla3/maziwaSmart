@@ -237,7 +237,7 @@ exports.googleCallback = async (req, res) => {
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "7d" });
 
     // ✅ UPDATED: Redirect to frontend with token in URL
-    const frontendURL = process.env.FRONTEND_URL || "http://localhost:3000";
+    const frontendURL = process.env.FRONTEND_URL || "http://localhost:3000" || "https://maziwa-smart.vercel.app"
     
     // Redirect to Google login page with token and role as query params
     res.redirect(`${frontendURL}/google-login?token=${token}&role=${role}&name=${encodeURIComponent(payload.name)}`);
@@ -246,7 +246,7 @@ exports.googleCallback = async (req, res) => {
     console.error("❌ Google callback error:", err);
     
     // Redirect to frontend with error
-    const frontendURL = process.env.FRONTEND_URL || "http://localhost:3000";
+    const frontendURL = process.env.FRONTEND_URL || "http://localhost:3000" || "https://maziwa-smart.vercel.app"
     res.redirect(`${frontendURL}/google-login?error=${encodeURIComponent('Google login failed')}`);
   }
 };
