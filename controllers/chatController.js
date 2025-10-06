@@ -72,8 +72,18 @@ exports.getConversation = async (req, res) => {
   try {
     const counterpartId = req.params.id;
     const { listingId } = req.query;
-    const currentUserId = req.user.id;
+    
+    // ✅ Get current user from JWT token (set by auth middleware)
+    const currentUserId = req.user.id || req.user._id;
     const currentUserType = req.user.role === "farmer" ? "Farmer" : "User";
+
+    // ✅ Validate that we have a user ID
+    if (!currentUserId) {
+      return res.status(401).json({ 
+        success: false, 
+        message: "Authentication required" 
+      });
+    }
 
     const filter = {
       $or: [
@@ -87,6 +97,7 @@ exports.getConversation = async (req, res) => {
         },
       ],
     };
+    
     if (listingId) filter.listing = listingId;
 
     const messages = await ChatMessage.find(filter)
@@ -94,20 +105,24 @@ exports.getConversation = async (req, res) => {
       .populate("listing", "title price location status")
       .lean();
 
-    // 🟢 Mark messages as read
+    // Mark messages as read
     await ChatMessage.updateMany(
-      { "receiver.id": currentUserId, "sender.id": counterpartId, isRead: false },
+      { 
+        "receiver.id": currentUserId, 
+        "sender.id": counterpartId, 
+        isRead: false 
+      },
       { $set: { isRead: true, readAt: new Date() } }
     );
 
-    // 🧠 Fetch user info
+    // Fetch counterpart info
     let counterpart =
       (await Farmer.findById(counterpartId).lean()) ||
       (await User.findById(counterpartId).lean());
 
     const chatHistory = messages.map((m) => ({
       id: m._id,
-      from: m.sender.id.toString() === currentUserId ? "me" : "them",
+      from: m.sender.id.toString() === currentUserId.toString() ? "me" : "them",
       text: m.message,
       isRead: m.isRead,
       createdAt: m.created_at,
@@ -115,7 +130,7 @@ exports.getConversation = async (req, res) => {
 
     res.json({
       success: true,
-      me: currentUserId,
+      me: currentUserId.toString(),
       counterpart: counterpart
         ? {
             displayName: counterpart.username || counterpart.fullname,
@@ -127,10 +142,12 @@ exports.getConversation = async (req, res) => {
     });
   } catch (err) {
     console.error("❌ Chat fetch error:", err);
-    res.status(500).json({ success: false, message: "Failed to fetch conversation" });
+    res.status(500).json({ 
+      success: false, 
+      message: "Failed to fetch conversation" 
+    });
   }
-}
-
+};
 
 exports.getUnreadCount = async (req, res) => {
   try {
