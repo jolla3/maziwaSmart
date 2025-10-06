@@ -13,7 +13,7 @@ const userSchema = new Schema({
   username: { type: String, required: true, unique: true },
   email: { type: String, required: true, unique: true },
   phone: { type: Number },
-  password: { type: String, required: true },
+  password: { type: String },
   role: {
     type: String,
     enum: ['superadmin', 'admin', 'broker', 'buyer', 'seller', 'manager'], // ✅ fixed
@@ -34,7 +34,7 @@ const farmerSchema = new Schema({
   farmer_code: { type: Number, required: true, unique: true },
   phone: { type: Number, required: true },
   email: { type: String },
-  password: { type: String, required: true },
+  password: { type: String },
   photo: { type: String },
 
   role: { type: String, enum: ['farmer'], default: 'farmer' },
@@ -53,9 +53,9 @@ const Farmer = mongoose.model('Farmer', farmerSchema);
 // ---------------------------
 const porterSchema = new Schema({
   name: { type: String, required: true },
-  phone: { type: Number, required: true, unique: true },
+  phone: { type: Number, unique: true },
   email: { type: String },
-  password: { type: String, required: true },
+  password: { type: String },
   photo: { type: String },
   assigned_route: { type: String },
 
