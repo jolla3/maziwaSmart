@@ -79,13 +79,13 @@ router.patch("/:id", verifyToken, toggleSellerApproval);
 // Step 1: Redirect user to Google
 router.get(
   "/google",
-  passport.authenticate("google", { scope: ["profile", "email"] })
+  passport.authenticate("google", { scope: ["profile", "email"] , session: false })
 );
 
 // Step 2: Callback after Google login
 router.get(
   "/google/callback",
-  passport.authenticate("google", { failureRedirect: "/login" }),
+  passport.authenticate("google", { failureRedirect: "/login" , session: false }),
   googleCallback   // Controller handles JWT + response
 );
 
