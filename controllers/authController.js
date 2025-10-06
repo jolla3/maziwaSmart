@@ -194,16 +194,29 @@ exports.registerSeller = async (req, res) => {
 
 exports.googleCallback = async (req, res) => {
   try {
-    const { displayName, emails, photos } = req.user;
-    const email = emails[0].value;
+    const { displayName, emails, photos } = req.user || {};
+
+    // ✅ Safely extract email
+    const email = Array.isArray(emails) && emails.length > 0 ? emails[0].value : null;
+
+    // 🚨 Stop if no email
+    if (!email) {
+      console.error("❌ Google login failed: No email returned from Google.");
+      const frontendURL =
+        process.env.FRONTEND_URL ||
+        "https://maziwa-smart.vercel.app" ||
+        "http://localhost:3000";
+      return res.redirect(
+        `${frontendURL}/google-login?error=${encodeURIComponent("No email found from Google account. Please use a valid Google account.")}`
+      );
+    }
 
     let user = await User.findOne({ email });
     let role = "buyer";
     let code = "";
-    let isNewUser = false; // 👈 Track new Google users
+    let isNewUser = false;
 
     if (!user) {
-      // If not in Users, check Farmer
       const farmer = await Farmer.findOne({ email });
 
       if (farmer) {
@@ -211,19 +224,19 @@ exports.googleCallback = async (req, res) => {
         role = "farmer";
         code = farmer.farmer_code;
       } else {
-        // Otherwise → create new Buyer without password
+        // ✅ Create a new Google buyer user
         user = new User({
-          username: displayName,
+          username: displayName || "Unnamed User",
           email,
           role: "buyer",
-          photo: photos?.[0]?.value,
+          photo: Array.isArray(photos) && photos.length > 0 ? photos[0].value : null,
           email_verified: true,
         });
         await user.save();
-        isNewUser = true; // 👈 Mark as new
+        isNewUser = true;
       }
     } else {
-      role = user.role; // existing user's role
+      role = user.role;
     }
 
     // Build JWT payload
@@ -238,18 +251,16 @@ exports.googleCallback = async (req, res) => {
     // Sign JWT
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "7d" });
 
-    // ✅ Base frontend URL
+    // Base frontend URL
     const frontendURL =
       process.env.FRONTEND_URL ||
       "https://maziwa-smart.vercel.app" ||
       "http://localhost:3000";
 
-    // ✅ Redirect logic
+    // Redirect logic
     if (isNewUser) {
-      // 👇 New Google users → go to password setup
       return res.redirect(`${frontendURL}/set-password?token=${token}`);
     } else {
-      // 👇 Existing users → go to Google login callback
       return res.redirect(
         `${frontendURL}/google-login?token=${token}&role=${role}&name=${encodeURIComponent(payload.name)}`
       );
