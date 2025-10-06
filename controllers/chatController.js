@@ -19,22 +19,23 @@ function getDisplayName(user) {
 
 exports.sendMessage = async (req, res) => {
   try {
-    const { receiver, message, listingId } = req.body;
+    const { receiverId, receiverType, message, listingId } = req.body;
     const senderId = req.user.id;
+    const senderType = req.user.role === "farmer" ? "Farmer" : "User";
 
-    if (!receiver || !message) {
-      return res.status(400).json({ success: false, message: "Receiver and message are required" });
+    if (!receiverId || !receiverType || !message) {
+      return res.status(400).json({ success: false, message: "Receiver info and message are required" });
     }
 
-    // 1️⃣ Save chat message
     const chatMessage = await ChatMessage.create({
-      sender: senderId,
-      receiver,
+      sender: { id: senderId, type: senderType },
+      receiver: { id: receiverId, type: receiverType },
+      listing: listingId || null,
       message,
-      listing: listingId || null
+      deliveredAt: new Date(),
     });
 
-    // 2️⃣ Build notification message
+    // Notification text
     let notifMsg = `💬 New message from ${getDisplayName(req.user)}`;
     if (listingId) {
       const listing = await Listing.findById(listingId).select("title price").lean();
@@ -44,27 +45,18 @@ exports.sendMessage = async (req, res) => {
         notifMsg += " about a listing"; // fallback
       }
     }
+    await Notification.create({
+      user: receiverId,
+      type: "chat_message",
+      message: notifMsg,
+    });
 
-    /// 3️⃣ Save notification
-const notification = await Notification.create({
-  user: receiver,
-  cow: null,
-  type: "chat_message",
-  message: notifMsg
-});
+    const io = req.app.get("io");
+    if (io) {
+      io.to(receiverId.toString()).emit("new_message", chatMessage);
+    }
 
-// 4️⃣ Emit via socket.io
-const io = req.app.get("io");
-if (io) {
-  // 🔹 Emit the chat message (real-time chat UI)
-  io.to(receiver.toString()).emit("new_message", chatMessage);
-
-  // 🔹 Emit the notification (notifications center)
-  io.to(receiver.toString()).emit("new_notification", notification);
-}
-
-res.status(201).json({ success: true, chatMessage, notification });
-
+    res.status(201).json({ success: true, chatMessage });
   } catch (err) {
     console.error("❌ Chat send error:", err);
     res.status(500).json({ success: false, message: "Failed to send message" });
@@ -78,68 +70,76 @@ res.status(201).json({ success: true, chatMessage, notification });
 
 exports.getConversation = async (req, res) => {
   try {
-    const counterpartId = req.params.id;   // the other person
-    const { listingId } = req.query;       // optional filter
-    const currentUserId = req.user.id;    // logged-in user from token
+    const counterpartId = req.params.id;
+    const { listingId } = req.query;
+    const currentUserId = req.user.id;
+    const currentUserType = req.user.role === "farmer" ? "Farmer" : "User";
 
-    // 🔎 Find all messages between me and counterpart
     const filter = {
       $or: [
-        { sender: currentUserId, receiver: counterpartId },
-        { sender: counterpartId, receiver: currentUserId }
-      ]
+        {
+          "sender.id": currentUserId,
+          "receiver.id": counterpartId,
+        },
+        {
+          "sender.id": counterpartId,
+          "receiver.id": currentUserId,
+        },
+      ],
     };
     if (listingId) filter.listing = listingId;
 
-    // 1️⃣ Fetch messages sorted by time
     const messages = await ChatMessage.find(filter)
       .sort({ created_at: 1 })
       .populate("listing", "title price location status")
       .lean();
 
-    // 2️⃣ Fetch counterpart details (Farmer OR User)
-    let counterpart = await Farmer.findById(counterpartId).lean();
-    if (!counterpart) counterpart = await User.findById(counterpartId).lean();
+    // 🟢 Mark messages as read
+    await ChatMessage.updateMany(
+      { "receiver.id": currentUserId, "sender.id": counterpartId, isRead: false },
+      { $set: { isRead: true, readAt: new Date() } }
+    );
 
-    const counterpartInfo = counterpart
-      ? {
-          displayName: getDisplayName(counterpart),
-          phone: maskPhone(counterpart.phone),
-          email: maskEmail(counterpart.email),
-          location: counterpart.location || null
-        }
-      : null;
+    // 🧠 Fetch user info
+    let counterpart =
+      (await Farmer.findById(counterpartId).lean()) ||
+      (await User.findById(counterpartId).lean());
 
-    // 3️⃣ Normalize messages for frontend
-    const chatHistory = messages.map(m => ({
+    const chatHistory = messages.map((m) => ({
       id: m._id,
-      from: m.sender.toString() === currentUserId.toString() ? "me" : "them",
+      from: m.sender.id.toString() === currentUserId ? "me" : "them",
       text: m.message,
-      createdAt: m.created_at
+      isRead: m.isRead,
+      createdAt: m.created_at,
     }));
 
-    // 4️⃣ Listing info (only once, if available)
-    let listingInfo = null;
-    if (listingId && messages.length && messages[0].listing) {
-      listingInfo = {
-        id: messages[0].listing._id,
-        title: messages[0].listing.title,
-        price: messages[0].listing.price,
-        location: messages[0].listing.location,
-        status: messages[0].listing.status
-      };
-    }
-
-    // ✅ Final response
     res.json({
       success: true,
       me: currentUserId,
-      counterpart: counterpartInfo,
-      listing: listingInfo,
-      messages: chatHistory
+      counterpart: counterpart
+        ? {
+            displayName: counterpart.username || counterpart.fullname,
+            phone: counterpart.phone || null,
+            email: counterpart.email || null,
+          }
+        : null,
+      messages: chatHistory,
     });
   } catch (err) {
     console.error("❌ Chat fetch error:", err);
     res.status(500).json({ success: false, message: "Failed to fetch conversation" });
+  }
+}
+
+
+exports.getUnreadCount = async (req, res) => {
+  try {
+    const count = await ChatMessage.countDocuments({
+      "receiver.id": req.user.id,
+      isRead: false,
+    });
+    res.json({ success: true, unread: count });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Failed to fetch unread count" });
   }
 };

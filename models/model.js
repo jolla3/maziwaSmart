@@ -691,14 +691,26 @@ const ChatRoom = mongoose.model("ChatRoom", chatRoomSchema);
 
 
 const chatMessageSchema = new Schema({
-  sender: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-  receiver: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-  listing: { type: Schema.Types.ObjectId, ref: 'Listing', required: true }, // 👈 link to listing
+  sender: {
+    id: { type: Schema.Types.ObjectId, required: true },
+    type: { type: String, enum: ["User", "Farmer", "Porter"], required: true },
+  },
+  receiver: {
+    id: { type: Schema.Types.ObjectId, required: true },
+    type: { type: String, enum: ["User", "Farmer", "Porter"], required: true },
+  },
+  listing: { type: Schema.Types.ObjectId, ref: "Listing", default: null },
   message: { type: String, required: true },
-  created_at: { type: Date, default: Date.now }
+
+  // 💬 new fields
+  isRead: { type: Boolean, default: false },
+  readAt: { type: Date },
+  deliveredAt: { type: Date },
+
+  created_at: { type: Date, default: Date.now },
 });
 
-const ChatMessage = mongoose.model('ChatMessage', chatMessageSchema);
+module.exports = mongoose.model("ChatMessage", chatMessageSchema);
 
 // const dealSchema = new Schema({
 //   listing: { type: Schema.Types.ObjectId, ref: 'Listing', required: true },
