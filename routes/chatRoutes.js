@@ -1,14 +1,19 @@
 const express = require('express');
 const router = express.Router();
-const { sendMessage, getConversation, getRecentChats } = require('../controllers/chatController');
+const {
+  sendMessage,
+  getConversation,
+  getRecentChats, // make sure it's imported
+} = require('../controllers/chatController');
 const { verifyToken } = require('../middleware/authMiddleware');
 
-// Send a message (global or about a listing)
+// ✅ Important: place this FIRST
+router.get('/recent', verifyToken, getRecentChats);
+
+// Send message
 router.post('/', verifyToken, sendMessage);
 
-// Get conversation (optionally tied to a listing)
+// Get conversation (by counterpart)
 router.get('/:id', verifyToken, getConversation);
-// in routes/chatRoutes.js
-router.get("/recent", verifyToken, getRecentChats);
 
 module.exports = router;
