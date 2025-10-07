@@ -19,15 +19,36 @@ function getDisplayName(user) {
 
 exports.sendMessage = async (req, res) => {
   try {
-    const { receiverId, receiverType, message, listingId } = req.body;
+    const { receiverId, message, listingId } = req.body;
     const senderId = req.user.id;
-    
-    const senderType = req.user.role === "farmer" ? "Farmer" : "User";
 
-    if (!receiverId || !receiverType || !message) {
-      return res.status(400).json({ success: false, message: "Receiver info and message are required" });
+    // 🔹 Step 1: Validate input
+    if (!receiverId || !message) {
+      return res.status(400).json({
+        success: false,
+        message: "Receiver ID and message are required",
+      });
     }
 
+    // 🔹 Step 2: Dynamically detect both sender and receiver roles
+    let senderType = "User";
+    let receiverType = "User";
+
+    if (req.user.role === "farmer") senderType = "Farmer";
+    else if (["superadmin", "admin", "broker", "buyer", "seller"].includes(req.user.role))
+      senderType = "User";
+
+    // Fetch receiver's role dynamically
+    let receiver = await User.findById(receiverId).select("role farmer_code").lean();
+    if (!receiver) {
+      return res.status(404).json({ success: false, message: "Receiver not found" });
+    }
+
+    if (receiver.role === "farmer") receiverType = "Farmer";
+    else if (["superadmin", "admin", "broker", "buyer", "seller"].includes(receiver.role))
+      receiverType = "User";
+
+    // 🔹 Step 3: Create chat message
     const chatMessage = await ChatMessage.create({
       sender: { id: senderId, type: senderType },
       receiver: { id: receiverId, type: receiverType },
@@ -36,28 +57,41 @@ exports.sendMessage = async (req, res) => {
       deliveredAt: new Date(),
     });
 
-    // Notification text
+    // 🔹 Step 4: Build Notification Message
     let notifMsg = `💬 New message from ${getDisplayName(req.user)}`;
     if (listingId) {
       const listing = await Listing.findById(listingId).select("title price").lean();
       if (listing) {
         notifMsg += ` about "${listing.title}" (Ksh ${listing.price})`;
       } else {
-        notifMsg += " about a listing"; // fallback
+        notifMsg += " about a listing";
       }
     }
+
+    // 🔹 Step 5: Send notification (fills both farmer_code + user when possible)
     await Notification.create({
-      user: receiverId,
+      user: receiverId || null,
+      farmer_code:
+        receiverType === "Farmer"
+          ? receiver.farmer_code || req.user.farmer_code || null
+          : req.user.role === "farmer"
+          ? req.user.farmer_code
+          : null,
       type: "chat_message",
       message: notifMsg,
     });
 
+    // 🔹 Step 6: Emit real-time event
     const io = req.app.get("io");
-if (io) {
-  io.to(receiverId ? `user_${receiverId}` : `farmer_${receiverId}`.toString()).emit("new_message", chatMessage);
-}
+    if (io) {
+      const room =
+        receiverType === "Farmer"
+          ? `farmer_${receiverId}`
+          : `user_${receiverId}`;
+      io.to(room.toString()).emit("new_message", chatMessage);
+    }
 
-
+    // 🔹 Step 7: Respond
     res.status(201).json({ success: true, chatMessage });
   } catch (err) {
     console.error("❌ Chat send error:", err);
