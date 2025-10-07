@@ -18,12 +18,6 @@ function getDisplayName(user) {
   return user.username || user.fullname || user.name || "Unknown User";
 }
 
-const mongoose = require("mongoose");
-const { User, Farmer, ChatMessage, Listing, Notification } = require("../models/model");
-
-function getDisplayName(user) {
-  return user.username || user.fullname || user.name || "Unknown User";
-}
 
 exports.sendMessage = async (req, res) => {
   try {
