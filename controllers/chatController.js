@@ -201,9 +201,10 @@ exports.getUnreadCount = async (req, res) => {
 
 exports.getRecentChats = async (req, res) => {
   try {
-    const userId = new mongoose.Types.ObjectId(req.user.id); // 👈 Ensure ObjectId type
+    const userId = new mongoose.Types.ObjectId(req.user.id);
 
-    const chats = await ChatMessage.aggregate([
+    // 🔹 Find all messages where this user was involved
+    const messages = await ChatMessage.aggregate([
       {
         $match: {
           $or: [
@@ -214,59 +215,70 @@ exports.getRecentChats = async (req, res) => {
       },
       { $sort: { created_at: -1 } },
       {
+        // ✅ Extract only the other participant's ID
         $addFields: {
-          // 👇 add a new field 'counterpartId' for clarity
-          counterpartId: {
+          otherUserId: {
             $cond: [
               { $eq: ["$sender.id", userId] },
               "$receiver.id",
               "$sender.id"
-            ],
-          },
-        },
+            ]
+          }
+        }
       },
       {
+        // ✅ Group by that user — get the last message
         $group: {
-          _id: "$counterpartId",
-          lastMessage: { $first: "$$ROOT" },
-        },
+          _id: "$otherUserId",
+          lastMessage: { $first: "$message" },
+          createdAt: { $first: "$created_at" }
+        }
       },
-      { $limit: 30 },
+      { $sort: { createdAt: -1 } },
+      { $limit: 30 }
     ]);
 
-    // ✅ Enrich each conversation with user/farmer details
+    if (!messages.length) {
+      return res.json({ success: true, recent: [] });
+    }
+
+    // 🔹 Enrich with user/farmer info
     const enriched = await Promise.all(
-      chats.map(async (chat) => {
-        const cid = chat._id;
-        let counterpart =
-          (await Farmer.findById(cid).select("fullname phone farmer_code").lean()) ||
-          (await User.findById(cid).select("username fullname role").lean());
+      messages.map(async (m) => {
+        const uid = m._id;
+
+        let participant =
+          (await Farmer.findById(uid)
+            .select("fullname farmer_code")
+            .lean()) ||
+          (await User.findById(uid)
+            .select("fullname username role")
+            .lean());
+
+        if (!participant) {
+          return null; // skip invalid references
+        }
 
         return {
-          counterpart: {
-            _id: cid,
-            displayName:
-              counterpart?.fullname ||
-              counterpart?.username ||
-              `Unknown (${cid})`,
-            role: counterpart?.role || (counterpart?.farmer_code ? "Farmer" : "User"),
-          },
-          lastMessage: {
-            text: chat.lastMessage.message || "",
-            audio: chat.lastMessage.audio || null,
-            createdAt: chat.lastMessage.created_at,
-          },
-          listing: chat.lastMessage.listing || null,
+          _id: uid,
+          name: participant.fullname || participant.username || "Unknown",
+          role: participant.role || (participant.farmer_code ? "Farmer" : "User"),
+          farmer_code: participant.farmer_code || null,
+          lastMessage: m.lastMessage,
+          lastActive: m.createdAt,
         };
       })
     );
 
-    res.json({ success: true, conversations: enriched });
+    // Filter out nulls
+    const cleaned = enriched.filter(Boolean);
+
+    res.json({ success: true, recent: cleaned });
   } catch (err) {
     console.error("❌ Recent chats error:", err);
-    res
-      .status(500)
-      .json({ success: false, message: "Failed to load recent chats" });
+    res.status(500).json({
+      success: false,
+      message: "Failed to load recent chat list",
+    });
   }
 };
-
