@@ -18,10 +18,18 @@ function getDisplayName(user) {
   return user.username || user.fullname || user.name || "Unknown User";
 }
 
+const mongoose = require("mongoose");
+const { User, Farmer, ChatMessage, Listing, Notification } = require("../models/model");
+
+function getDisplayName(user) {
+  return user.username || user.fullname || user.name || "Unknown User";
+}
+
 exports.sendMessage = async (req, res) => {
   try {
     const { receiverId, message, listingId } = req.body;
     const senderId = req.user.id;
+    const senderRole = req.user.role;
 
     // 🔹 Validate
     if (!receiverId || !message) {
@@ -31,19 +39,16 @@ exports.sendMessage = async (req, res) => {
       });
     }
 
-    // 🔹 Detect sender role/type
-    let senderType = req.user.role === "farmer" ? "Farmer" : "User";
-    let receiverType = "User";
+    // 🔹 Sender type from token
+    const senderType = senderRole === "farmer" ? "Farmer" : "User";
+
+    // 🔹 Find receiver in both collections
     let receiver = null;
+    let receiverType = "User";
 
-    // 🔹 Step 1: Try to detect receiver by ObjectId or farmer_code
-    const isObjectId = mongoose.Types.ObjectId.isValid(receiverId);
-
-    if (isObjectId) {
-      receiver = await User.findById(receiverId).select("role farmer_code").lean();
-      if (receiver?.role === "farmer") receiverType = "Farmer";
-    } else {
-      receiver = await Farmer.findOne({ farmer_code: receiverId }).select("farmer_code fullname").lean();
+    receiver = await User.findById(receiverId).select("role").lean();
+    if (!receiver) {
+      receiver = await Farmer.findById(receiverId).select("farmer_code fullname").lean();
       if (receiver) receiverType = "Farmer";
     }
 
@@ -51,7 +56,7 @@ exports.sendMessage = async (req, res) => {
       return res.status(404).json({ success: false, message: "Receiver not found" });
     }
 
-    // 🔹 Step 2: Create chat message
+    // 🔹 Create chat message
     const chatMessage = await ChatMessage.create({
       sender: { id: senderId, type: senderType },
       receiver: { id: receiverId, type: receiverType },
@@ -60,7 +65,7 @@ exports.sendMessage = async (req, res) => {
       deliveredAt: new Date(),
     });
 
-    // 🔹 Step 3: Build notification message
+    // 🔹 Build notification message
     let notifMsg = `💬 New message from ${getDisplayName(req.user)}`;
     if (listingId) {
       const listing = await Listing.findById(listingId).select("title price").lean();
@@ -71,17 +76,21 @@ exports.sendMessage = async (req, res) => {
       }
     }
 
-    // 🔹 Step 4: Create notification (works for both users & farmers)
+    // 🔹 Create notification
     await Notification.create({
-      user: isObjectId ? receiverId : null,
-      farmer_code: !isObjectId
-        ? receiverId
-        : receiver?.farmer_code || req.user.farmer_code || null,
+      user: receiverType === "User" ? receiverId : null,
+      farmer: receiverType === "Farmer" ? receiverId : null,
+      farmer_code:
+        receiverType === "Farmer"
+          ? receiver.farmer_code
+          : senderRole === "farmer"
+          ? req.user.farmer_code
+          : null,
       type: "chat_message",
       message: notifMsg,
     });
 
-    // 🔹 Step 5: Emit via socket
+    // 🔹 Emit real-time message
     const io = req.app.get("io");
     if (io) {
       const room =
