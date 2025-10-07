@@ -201,42 +201,58 @@ exports.getUnreadCount = async (req, res) => {
 
 exports.getRecentChats = async (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId = new mongoose.Types.ObjectId(req.user.id); // 👈 Ensure ObjectId type
+
     const chats = await ChatMessage.aggregate([
       {
         $match: {
-          $or: [{ "sender.id": userId }, { "receiver.id": userId }],
+          $or: [
+            { "sender.id": userId },
+            { "receiver.id": userId }
+          ],
         },
       },
       { $sort: { created_at: -1 } },
       {
-        $group: {
-          _id: {
+        $addFields: {
+          // 👇 add a new field 'counterpartId' for clarity
+          counterpartId: {
             $cond: [
               { $eq: ["$sender.id", userId] },
               "$receiver.id",
-              "$sender.id",
+              "$sender.id"
             ],
           },
+        },
+      },
+      {
+        $group: {
+          _id: "$counterpartId",
           lastMessage: { $first: "$$ROOT" },
         },
       },
       { $limit: 30 },
     ]);
 
-    // populate counterpart info
+    // ✅ Enrich each conversation with user/farmer details
     const enriched = await Promise.all(
       chats.map(async (chat) => {
         const cid = chat._id;
-        const farmer = await Farmer.findById(cid).lean();
-        const user = farmer || (await User.findById(cid).lean());
+        let counterpart =
+          (await Farmer.findById(cid).select("fullname phone farmer_code").lean()) ||
+          (await User.findById(cid).select("username fullname role").lean());
+
         return {
           counterpart: {
             _id: cid,
-            displayName: user?.fullname || user?.username || "Unknown",
+            displayName:
+              counterpart?.fullname ||
+              counterpart?.username ||
+              `Unknown (${cid})`,
+            role: counterpart?.role || (counterpart?.farmer_code ? "Farmer" : "User"),
           },
           lastMessage: {
-            text: chat.lastMessage.message,
+            text: chat.lastMessage.message || "",
             audio: chat.lastMessage.audio || null,
             createdAt: chat.lastMessage.created_at,
           },
