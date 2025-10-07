@@ -1,12 +1,13 @@
-const { ChatMessage, Farmer, User, Notification, Listing } = require('../models/model');
 
 // Utility: mask phone number (show last 2 digits only)
+const mongoose = require("mongoose");
+const { User, Farmer, ChatMessage, Listing, Notification } = require("../models/model");
+
 function maskPhone(phone) {
   if (!phone) return null;
   return phone.toString().replace(/\d(?=\d{2})/g, "*");
 }
 
-// Utility: mask email
 function maskEmail(email) {
   if (!email) return null;
   const [name, domain] = email.split("@");
@@ -22,7 +23,7 @@ exports.sendMessage = async (req, res) => {
     const { receiverId, message, listingId } = req.body;
     const senderId = req.user.id;
 
-    // 🔹 Step 1: Validate input
+    // 🔹 Validate
     if (!receiverId || !message) {
       return res.status(400).json({
         success: false,
@@ -30,25 +31,27 @@ exports.sendMessage = async (req, res) => {
       });
     }
 
-    // 🔹 Step 2: Dynamically detect both sender and receiver roles
-    let senderType = "User";
+    // 🔹 Detect sender role/type
+    let senderType = req.user.role === "farmer" ? "Farmer" : "User";
     let receiverType = "User";
+    let receiver = null;
 
-    if (req.user.role === "farmer") senderType = "Farmer";
-    else if (["superadmin", "admin", "broker", "buyer", "seller"].includes(req.user.role))
-      senderType = "User";
+    // 🔹 Step 1: Try to detect receiver by ObjectId or farmer_code
+    const isObjectId = mongoose.Types.ObjectId.isValid(receiverId);
 
-    // Fetch receiver's role dynamically
-    let receiver = await User.findById(receiverId).select("role farmer_code").lean();
+    if (isObjectId) {
+      receiver = await User.findById(receiverId).select("role farmer_code").lean();
+      if (receiver?.role === "farmer") receiverType = "Farmer";
+    } else {
+      receiver = await Farmer.findOne({ farmer_code: receiverId }).select("farmer_code fullname").lean();
+      if (receiver) receiverType = "Farmer";
+    }
+
     if (!receiver) {
       return res.status(404).json({ success: false, message: "Receiver not found" });
     }
 
-    if (receiver.role === "farmer") receiverType = "Farmer";
-    else if (["superadmin", "admin", "broker", "buyer", "seller"].includes(receiver.role))
-      receiverType = "User";
-
-    // 🔹 Step 3: Create chat message
+    // 🔹 Step 2: Create chat message
     const chatMessage = await ChatMessage.create({
       sender: { id: senderId, type: senderType },
       receiver: { id: receiverId, type: receiverType },
@@ -57,7 +60,7 @@ exports.sendMessage = async (req, res) => {
       deliveredAt: new Date(),
     });
 
-    // 🔹 Step 4: Build Notification Message
+    // 🔹 Step 3: Build notification message
     let notifMsg = `💬 New message from ${getDisplayName(req.user)}`;
     if (listingId) {
       const listing = await Listing.findById(listingId).select("title price").lean();
@@ -68,20 +71,17 @@ exports.sendMessage = async (req, res) => {
       }
     }
 
-    // 🔹 Step 5: Send notification (fills both farmer_code + user when possible)
+    // 🔹 Step 4: Create notification (works for both users & farmers)
     await Notification.create({
-      user: receiverId || null,
-      farmer_code:
-        receiverType === "Farmer"
-          ? receiver.farmer_code || req.user.farmer_code || null
-          : req.user.role === "farmer"
-          ? req.user.farmer_code
-          : null,
+      user: isObjectId ? receiverId : null,
+      farmer_code: !isObjectId
+        ? receiverId
+        : receiver?.farmer_code || req.user.farmer_code || null,
       type: "chat_message",
       message: notifMsg,
     });
 
-    // 🔹 Step 6: Emit real-time event
+    // 🔹 Step 5: Emit via socket
     const io = req.app.get("io");
     if (io) {
       const room =
@@ -91,7 +91,6 @@ exports.sendMessage = async (req, res) => {
       io.to(room.toString()).emit("new_message", chatMessage);
     }
 
-    // 🔹 Step 7: Respond
     res.status(201).json({ success: true, chatMessage });
   } catch (err) {
     console.error("❌ Chat send error:", err);
