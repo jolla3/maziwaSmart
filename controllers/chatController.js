@@ -161,3 +161,59 @@ exports.getUnreadCount = async (req, res) => {
     res.status(500).json({ success: false, message: "Failed to fetch unread count" });
   }
 };
+
+exports.getRecentChats = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const chats = await ChatMessage.aggregate([
+      {
+        $match: {
+          $or: [{ "sender.id": userId }, { "receiver.id": userId }],
+        },
+      },
+      { $sort: { created_at: -1 } },
+      {
+        $group: {
+          _id: {
+            $cond: [
+              { $eq: ["$sender.id", userId] },
+              "$receiver.id",
+              "$sender.id",
+            ],
+          },
+          lastMessage: { $first: "$$ROOT" },
+        },
+      },
+      { $limit: 30 },
+    ]);
+
+    // populate counterpart info
+    const enriched = await Promise.all(
+      chats.map(async (chat) => {
+        const cid = chat._id;
+        const farmer = await Farmer.findById(cid).lean();
+        const user = farmer || (await User.findById(cid).lean());
+        return {
+          counterpart: {
+            _id: cid,
+            displayName: user?.fullname || user?.username || "Unknown",
+          },
+          lastMessage: {
+            text: chat.lastMessage.message,
+            audio: chat.lastMessage.audio || null,
+            createdAt: chat.lastMessage.created_at,
+          },
+          listing: chat.lastMessage.listing || null,
+        };
+      })
+    );
+
+    res.json({ success: true, conversations: enriched });
+  } catch (err) {
+    console.error("❌ Recent chats error:", err);
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to load recent chats" });
+  }
+};
+

@@ -8,5 +8,7 @@ router.post('/', verifyToken, sendMessage);
 
 // Get conversation (optionally tied to a listing)
 router.get('/:id', verifyToken, getConversation);
+// in routes/chatRoutes.js
+router.get("/recent", verifyToken, getRecentChats);
 
 module.exports = router;
