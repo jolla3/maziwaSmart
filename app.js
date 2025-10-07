@@ -92,39 +92,52 @@ mongoose.connect(process.env.MONGO_URI)
     .then(() => console.log('connected to MongoDb'))
     .catch(err => console.log("MongoDB connection error", err));
 
+
+const { verifySocketAuth } = require("./middleware/authMiddleware");
 // ✅ Create HTTP server + socket.io here
 const server = http.createServer(app);
 
 const io = socketIo(server, {
   cors: {
-    origin: "*", // set to frontend domain in production
-    methods: ["GET", "POST"]
-  }
+    origin: ["https://maziwa-smart.vercel.app", "http://localhost:3000"], // update for your frontend
+    methods: ["GET", "POST"],
+    credentials: true,
+  },
 });
 
-// Store io inside app (so controllers can use req.app.get('io'))
-app.set('io', io);
+// Attach io globally so controllers can use it
+app.set("io", io);
 
-// Handle socket connections
-io.on('connection', (socket) => {
-  console.log(`🔌 New client connected: ${socket.id}`);
+// ✅ Authenticate each socket connection
+io.use(verifySocketAuth);
 
-  // Join private room (userId)
-  socket.on('join_room', (room) => {
-    socket.join(room);
-    console.log(`📡 Socket ${socket.id} joined room: ${room}`);
+// ✅ Handle socket connections
+io.on("connection", (socket) => {
+  const userId = socket.user?.id;
+  console.log(`✅ User connected: ${userId} (socket: ${socket.id})`);
+
+  // Join private room
+  if (userId) {
+    socket.join(userId.toString());
+    console.log(`📡 Joined room: ${userId}`);
+  }
+
+  // Handle sending messages
+  socket.on("send_message", (data) => {
+    console.log("💬 Message received:", data);
+
+    // Emit to receiver
+    if (data.receiver) {
+      io.to(data.receiver.toString()).emit("new_message", {
+        ...data,
+        fromSocket: userId,
+        timestamp: new Date(),
+      });
+    }
   });
 
-  // Listen for chat messages
-  socket.on('send_message', (data) => {
-    console.log('💬 New message:', data);
-
-    // Emit to receiver's room
-    io.to(data.receiver).emit('receive_message', data);
-  });
-
-  socket.on('disconnect', () => {
-    console.log(`❌ Client disconnected: ${socket.id}`);
+  socket.on("disconnect", () => {
+    console.log(`❌ Disconnected: ${socket.id} (User: ${userId})`);
   });
 });
 

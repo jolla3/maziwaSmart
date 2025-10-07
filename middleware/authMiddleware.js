@@ -26,8 +26,10 @@
 //     res.status(403).json({ message: 'Invalid token' });
 //   }
 // }
+// middleware/authMiddleware.js
 const jwt = require("jsonwebtoken");
 
+// ✅ Middleware for Express routes
 exports.verifyToken = (req, res, next) => {
   const authHeader = req.headers.authorization;
   const token = authHeader && authHeader.split(" ")[1]; // "Bearer <token>"
@@ -38,13 +40,28 @@ exports.verifyToken = (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded; // { id, email, role, code, ... }
+    req.user = decoded; // attach user payload
     next();
   } catch (err) {
     if (err.name === "TokenExpiredError") {
       return res.status(401).json({ message: "Token expired. Please log in again." });
     }
     return res.status(401).json({ message: "Invalid token", error: err.message });
+  }
+};
+
+// ✅ Middleware for Socket.io connections
+exports.verifySocketAuth = (socket, next) => {
+  try {
+    const token = socket.handshake.auth?.token || socket.handshake.headers?.authorization?.split(" ")[1];
+    if (!token) return next(new Error("Authentication error: No token provided"));
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    socket.user = decoded; // attach user data
+    next();
+  } catch (err) {
+    console.error("❌ Socket auth failed:", err.message);
+    next(new Error("Authentication error"));
   }
 };
 

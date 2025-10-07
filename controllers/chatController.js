@@ -52,9 +52,10 @@ exports.sendMessage = async (req, res) => {
     });
 
     const io = req.app.get("io");
-    if (io) {
-      io.to(receiverId.toString()).emit("new_message", chatMessage);
-    }
+if (io) {
+  io.to(receiver.toString()).emit("new_message", chatMessage);
+}
+
 
     res.status(201).json({ success: true, chatMessage });
   } catch (err) {
