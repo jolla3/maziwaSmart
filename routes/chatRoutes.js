@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { sendMessage, getConversation } = require('../controllers/chatController');
+const { sendMessage, getConversation, getRecentChats } = require('../controllers/chatController');
 const { verifyToken } = require('../middleware/authMiddleware');
 
 // Send a message (global or about a listing)
