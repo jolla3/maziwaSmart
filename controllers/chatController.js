@@ -21,6 +21,7 @@ exports.sendMessage = async (req, res) => {
   try {
     const { receiverId, receiverType, message, listingId } = req.body;
     const senderId = req.user.id;
+    
     const senderType = req.user.role === "farmer" ? "Farmer" : "User";
 
     if (!receiverId || !receiverType || !message) {
@@ -53,7 +54,7 @@ exports.sendMessage = async (req, res) => {
 
     const io = req.app.get("io");
 if (io) {
-  io.to(receiver.toString()).emit("new_message", chatMessage);
+  io.to(receiverId ? `user_${receiverId}` : `farmer_${receiverId}`.toString()).emit("new_message", chatMessage);
 }
 
 

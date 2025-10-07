@@ -556,7 +556,8 @@ const Payment = mongoose.model('Payment', paymentSchema);
 // ---------------------------
 const notificationSchema = new mongoose.Schema({
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // the recipient
-    farmer_code: { type: Number, required: true },
+  user: { type: mongoose.Schema.Types.ObjectId, ref: 'Farmer' }, // the recipient
+    farmer_code: { type: Number },
 
   cow: { type: mongoose.Schema.Types.ObjectId, ref: 'Cow' }, // optional, only for animal-specific events
   type: { 
