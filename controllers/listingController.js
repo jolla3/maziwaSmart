@@ -4,39 +4,39 @@ const { Listing, Farmer, User, Cow } = require('../models/model');
 // ---------------------------
 // CREATE a new listing
 // ---------------------------
-// CREATE a new listing
-// CREATE a new listing
+
+// controllers/listingController.js
+
 exports.createListing = async (req, res) => {
   try {
-    
     const {
-  title,
-  animal_type,
-  animal_id,
-  price,
-  description,
-  location,
-  farmer_id,
-  animal_details
-} = req.body;
+      title,
+      animal_type,
+      animal_id,
+      price,
+      description,
+      location,
+      farmer_id,
+      animal_details = {}
+    } = req.body;
 
-// 🧠 Combine uploaded + text-sent photos
-const uploadedPhotos = req.files?.map(file => `/uploads/animals/${file.filename}`) || [];
-const bodyPhotos = Array.isArray(req.body.photos) ? req.body.photos : [];
-const photos = [...bodyPhotos, ...uploadedPhotos].filter(p => p && p.trim() !== "");
+    // 🧠 Combine uploaded + text-sent photos
+    const uploadedPhotos = req.files?.map(f => `/uploads/listings/${f.filename}`) || [];
+    const bodyPhotos = Array.isArray(req.body.photos) ? req.body.photos : [];
+    const photos = [...bodyPhotos, ...uploadedPhotos].filter(p => p && p.trim() !== "");
 
-
+    // ✅ Validate basic fields
     if (!title || !animal_type || !price) {
       return res.status(400).json({
         success: false,
         message: "Title, animal type, and price are required"
       });
     }
-    
 
     const sellerRef = req.user.id;
     let farmerRef = null;
 
+    // 🧩 Base listing object
     let listingData = {
       title,
       animal_type,
@@ -45,11 +45,26 @@ const photos = [...bodyPhotos, ...uploadedPhotos].filter(p => p && p.trim() !== 
       seller: sellerRef,
       price,
       description: description || "",
-      photos: photos.filter(p => p.trim() !== ""),
-      location: location || ""
+      photos,
+      location: location || "",
+      status: "available"
     };
 
-    // ✅ FARMER FLOW
+    // 🧩 Enum whitelist for safe validation
+    const validStages = [
+      // Cows
+      "calf", "heifer", "cow",
+      // Bulls
+      "bull_calf", "young_bull", "mature_bull",
+      // Goats
+      "kid", "doeling", "buckling", "nanny", "buck",
+      // Sheep
+      "lamb", "ewe", "ram",
+      // Pigs
+      "piglet", "gilt", "sow", "boar"
+    ];
+
+    // 🧩 FARMER FLOW
     if (req.user.role === "farmer") {
       const farmerDoc = await Farmer.findById(req.user.id);
       if (!farmerDoc) {
@@ -59,18 +74,19 @@ const photos = [...bodyPhotos, ...uploadedPhotos].filter(p => p && p.trim() !== 
       farmerRef = farmerDoc._id;
       listingData.farmer = farmerRef;
 
+      // Link to existing animal if selected
       if (animal_id) {
-        const cow = await Cow.findById(animal_id);
-        if (!cow) {
+        const animal = await Cow.findById(animal_id);
+        if (!animal) {
           return res.status(404).json({ success: false, message: "Animal not found" });
         }
-        listingData.animal_id = cow._id; // only store ref
+        listingData.animal_id = animal._id;
       }
 
       if (!listingData.location) listingData.location = farmerDoc.location;
     }
 
-    // ✅ SELLER FLOW
+    // 🧩 SELLER FLOW
     else if (req.user.role === "seller") {
       const sellerDoc = await User.findById(sellerRef);
       if (!sellerDoc || !sellerDoc.is_approved_seller) {
@@ -83,21 +99,35 @@ const photos = [...bodyPhotos, ...uploadedPhotos].filter(p => p && p.trim() !== 
       if (animal_id) {
         return res.status(400).json({
           success: false,
-          message: "External sellers cannot use animal_id, provide details manually"
+          message: "External sellers cannot use animal_id; provide animal details manually"
         });
       }
 
-      // 🐄 Validate seller-provided animal details
-      if (!animal_details || !animal_details.age || !animal_details.breed_name) {
+      // ✅ Validate seller-provided animal details
+      if (!animal_details.age || !animal_details.breed_name) {
         return res.status(400).json({
           success: false,
-          message: "Sellers must provide at least age and breed_name"
+          message: "Sellers must provide at least 'age' and 'breed_name' for the animal"
         });
+      }
+
+      // 🧩 Sanitize stage properly
+      let cleanStage = null;
+      if (animal_details.stage && validStages.includes(animal_details.stage)) {
+        cleanStage = animal_details.stage;
+      } else if (!animal_details.stage) {
+        // Optional fallback: infer default stage per animal type
+        const stageDefaults = {
+          cow: "cow",
+          bull: "mature_bull",
+          goat: "nanny",
+          sheep: "ewe",
+          pig: "sow"
+        };
+        cleanStage = stageDefaults[animal_type] || null;
       }
 
       listingData.farmer = farmer_id || null;
-
-      // only include provided fields — no "" overwrites
       listingData.animal_details = {
         age: animal_details.age,
         breed_name: animal_details.breed_name,
@@ -106,7 +136,7 @@ const photos = [...bodyPhotos, ...uploadedPhotos].filter(p => p && p.trim() !== 
         ...(animal_details.bull_name && { bull_name: animal_details.bull_name }),
         ...(animal_details.bull_breed && { bull_breed: animal_details.bull_breed }),
         status: animal_details.status || "active",
-        ...(animal_details.stage && { stage: animal_details.stage }),
+        ...(cleanStage && { stage: cleanStage }),
         lifetime_milk: animal_details.lifetime_milk || 0,
         daily_average: animal_details.daily_average || 0,
         total_offspring: animal_details.total_offspring || 0,
@@ -118,25 +148,30 @@ const photos = [...bodyPhotos, ...uploadedPhotos].filter(p => p && p.trim() !== 
       };
     }
 
-    // ❌ OTHER ROLES
+    // ❌ BLOCK OTHER ROLES
     else {
       return res.status(403).json({
         success: false,
-        message: "You are not allowed to create listings"
+        message: "You are not authorized to create listings"
       });
     }
 
+    // 🧩 Create and Save Listing
     const listing = new Listing(listingData);
     await listing.save();
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
-      message: "Listing created successfully",
+      message: "Listing created successfully ✅",
       listing
     });
   } catch (err) {
-    console.error("Create listing error:", err);
-    res.status(500).json({ success: false, message: "Server error", error: err.message });
+    console.error("❌ Create listing error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: err.message
+    });
   }
 };
 // ---------------------------

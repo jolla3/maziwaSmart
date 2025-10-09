@@ -647,7 +647,22 @@ const listingSchema = new Schema({
 
     // lifecycle
     status: { type: String, enum: ["active", "pregnant", "deceased"], default: "active" },
-    stage: { type: String, enum: ["calf", "heifer", "cow"], default: "" },
+    stage: { 
+    type: String,
+    enum: [
+      // Cows
+      'calf', 'heifer', 'cow',
+      // Bulls
+      'bull_calf', 'young_bull', 'mature_bull',
+      // Goats
+      'kid', 'doeling', 'buckling', 'nanny', 'buck',
+      // Sheep
+      'lamb', 'ewe', 'ram',
+      // Pigs
+      'piglet', 'gilt', 'sow', 'boar'
+    ],
+    default: null
+  },
 
     // pregnancy info
     pregnancy: {
