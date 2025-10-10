@@ -537,16 +537,56 @@ exports.updateListing = async (req, res) => {
 // ---------------------------
 // DELETE listing (only seller can delete)
 // ---------------------------
+// controllers/listingController.js - Updated deleteListing function
+
 exports.deleteListing = async (req, res) => {
   try {
     const { id } = req.params;
+    
+    // Extract user ID properly from req.user
+    const userId = req.user && (req.user.id || req.user._id || req.user.userId);
+    
+    if (!userId) {
+      return res.status(401).json({ 
+        success: false, 
+        message: "Unauthorized - User ID not found" 
+      });
+    }
 
-    const listing = await Listing.findOneAndDelete({ _id: id, seller: req.user._id });
-    if (!listing) return res.status(404).json({ success: false, message: "Listing not found or not yours" });
+    console.log('Delete attempt:', { listingId: id, userId, userObject: req.user });
 
-    res.status(200).json({ success: true, message: "Listing deleted successfully" });
+    // Find and delete the listing
+    const listing = await Listing.findOneAndDelete({ 
+      _id: id, 
+      seller: userId 
+    });
+
+    if (!listing) {
+      // Check if listing exists at all
+      const exists = await Listing.findById(id);
+      if (!exists) {
+        return res.status(404).json({ 
+          success: false, 
+          message: "Listing not found" 
+        });
+      }
+      // Listing exists but doesn't belong to this user
+      return res.status(403).json({ 
+        success: false, 
+        message: "You don't have permission to delete this listing" 
+      });
+    }
+
+    res.status(200).json({ 
+      success: true, 
+      message: "Listing deleted successfully" 
+    });
   } catch (err) {
     console.error("Delete listing error:", err);
-    res.status(500).json({ success: false, message: "Failed to delete listing" });
+    res.status(500).json({ 
+      success: false, 
+      message: "Failed to delete listing",
+      error: err.message 
+    });
   }
 };
