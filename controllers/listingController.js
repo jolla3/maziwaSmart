@@ -478,7 +478,7 @@ exports.updateListing = async (req, res) => {
     // 🔹 If there are new photos, merge them with existing ones
     if (uploadedPhotos.length > 0) {
       // Fetch existing listing first to merge
-      const existing = await Listing.findOne({ _id: id, seller: req.user._id });
+      const existing = await Listing.findOne({ _id: id, seller: req.user.id });
       if (!existing) {
         return res.status(404).json({
           success: false,
@@ -507,7 +507,7 @@ exports.updateListing = async (req, res) => {
 
     // 🔹 No new files → standard update
     const listing = await Listing.findOneAndUpdate(
-      { _id: id, seller: req.user._id },
+      { _id: id, seller: req.user.id },
       updates,
       { new: true }
     );
