@@ -20,12 +20,21 @@ exports.createListing = async (req, res) => {
       animal_details = {}
     } = req.body;
 
-    // 🧠 Combine uploaded + text-sent photos
-    const uploadedPhotos = req.files?.map(f => `/uploads/listings/${f.filename}`) || [];
-    const bodyPhotos = Array.isArray(req.body.photos) ? req.body.photos : [];
-    const photos = [...bodyPhotos, ...uploadedPhotos].filter(p => p && p.trim() !== "");
+    // 🧠 Process uploaded files from multer
+    let uploadedPhotos = [];
+    if (req.files && Array.isArray(req.files) && req.files.length > 0) {
+      uploadedPhotos = req.files.map(f => `/uploads/listings/${f.filename}`);
+    }
 
-    // ✅ Validate basic fields
+    // 🧠 Combine with any photos sent via body (if any)
+    const bodyPhotos = Array.isArray(req.body.photos)
+      ? req.body.photos
+      : req.body.photos
+      ? [req.body.photos]
+      : [];
+    const photos = [...bodyPhotos, ...uploadedPhotos].filter(Boolean);
+
+    // ✅ Validate core fields
     if (!title || !animal_type || !price) {
       return res.status(400).json({
         success: false,
@@ -36,7 +45,7 @@ exports.createListing = async (req, res) => {
     const sellerRef = req.user.id;
     let farmerRef = null;
 
-    // 🧩 Base listing object
+    // 🧩 Base object
     let listingData = {
       title,
       animal_type,
@@ -50,17 +59,11 @@ exports.createListing = async (req, res) => {
       status: "available"
     };
 
-    // 🧩 Enum whitelist for safe validation
     const validStages = [
-      // Cows
       "calf", "heifer", "cow",
-      // Bulls
       "bull_calf", "young_bull", "mature_bull",
-      // Goats
       "kid", "doeling", "buckling", "nanny", "buck",
-      // Sheep
       "lamb", "ewe", "ram",
-      // Pigs
       "piglet", "gilt", "sow", "boar"
     ];
 
@@ -74,7 +77,7 @@ exports.createListing = async (req, res) => {
       farmerRef = farmerDoc._id;
       listingData.farmer = farmerRef;
 
-      // Link to existing animal if selected
+      // Link to animal
       if (animal_id) {
         const animal = await Cow.findById(animal_id);
         if (!animal) {
@@ -103,11 +106,11 @@ exports.createListing = async (req, res) => {
         });
       }
 
-      // ✅ Validate seller-provided animal details
+      // ✅ Validate minimal details
       if (!animal_details.age || !animal_details.breed_name) {
         return res.status(400).json({
           success: false,
-          message: "Sellers must provide at least 'age' and 'breed_name' for the animal"
+          message: "Sellers must provide at least 'age' and 'breed_name'"
         });
       }
 
@@ -115,21 +118,20 @@ exports.createListing = async (req, res) => {
       let cleanStage = null;
       if (animal_details.stage && validStages.includes(animal_details.stage)) {
         cleanStage = animal_details.stage;
-      } else if (!animal_details.stage) {
-        // Optional fallback: infer default stage per animal type
-        const stageDefaults = {
+      } else {
+        const defaults = {
           cow: "cow",
           bull: "mature_bull",
           goat: "nanny",
           sheep: "ewe",
           pig: "sow"
         };
-        cleanStage = stageDefaults[animal_type] || null;
+        cleanStage = defaults[animal_type] || null;
       }
 
       listingData.farmer = farmer_id || null;
       listingData.animal_details = {
-        age: animal_details.age,
+        age: Number(animal_details.age),
         breed_name: animal_details.breed_name,
         ...(animal_details.gender && { gender: animal_details.gender }),
         ...(animal_details.bull_code && { bull_code: animal_details.bull_code }),
@@ -143,12 +145,14 @@ exports.createListing = async (req, res) => {
         pregnancy: {
           is_pregnant: animal_details.is_pregnant || false,
           expected_due_date: animal_details.expected_due_date || null,
-          ...(animal_details.insemination_id && { insemination_id: animal_details.insemination_id })
+          ...(animal_details.insemination_id && {
+            insemination_id: animal_details.insemination_id
+          })
         }
       };
     }
 
-    // ❌ BLOCK OTHER ROLES
+    // ❌ Others blocked
     else {
       return res.status(403).json({
         success: false,
@@ -156,7 +160,7 @@ exports.createListing = async (req, res) => {
       });
     }
 
-    // 🧩 Create and Save Listing
+    // 🧩 Save new listing
     const listing = new Listing(listingData);
     await listing.save();
 
