@@ -11,7 +11,6 @@ const passport = require("./config/passport");
 const path = require("path");
 
 // Serve uploaded files publicly
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 
 const app = express();
@@ -23,6 +22,7 @@ app.use(cors());
 
 app.use(passport.initialize());
 
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 
 // all your routes...
