@@ -97,7 +97,7 @@ exports.createListing = async (req, res) => {
           success: false,
           message: "Seller not approved by SuperAdmin"
         });
-      }
+      } 
 
       if (animal_id) {
         return res.status(400).json({

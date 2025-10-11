@@ -8,6 +8,12 @@ require('dotenv').config();
 require('./cron/updateCowStages');
 const passport = require("./config/passport");
 
+const path = require("path");
+
+// Serve uploaded files publicly
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+
+
 const app = express();
 
 // middleware
