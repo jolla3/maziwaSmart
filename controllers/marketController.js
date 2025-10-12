@@ -48,11 +48,15 @@ exports.getMarketListings = async (req, res) => {
 // ---------------------------
 // GET full details for a single listing
 // ---------------------------
+// ✅ controllers/marketController.js
 exports.getMarketListingById = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const listing = await Listing.findById(id).populate("animal_id");
+    // Populate both animal and seller
+    const listing = await Listing.findById(id)
+      .populate("animal_id")
+      .populate("seller", "fullname phone email role _id"); // ✅ Add seller info
 
     if (!listing) {
       return res.status(404).json({ success: false, message: "Listing not found" });
@@ -60,7 +64,6 @@ exports.getMarketListingById = async (req, res) => {
 
     const animal = listing.animal_id;
 
-    // ✅ Extract clean animal details
     const animalDetails = {
       name: animal.cow_name,
       species: animal.species,
@@ -86,6 +89,7 @@ exports.getMarketListingById = async (req, res) => {
         location: listing.location,
         createdAt: listing.createdAt,
         views: listing.views,
+        seller: listing.seller, // ✅ expose seller data
         animal: animalDetails,
       },
     });
