@@ -16,13 +16,9 @@ const { verifyToken, authorizeRoles } = require('../middleware/authMiddleware');
 // Market Routes
 // ---------------------------
 
-// Public: fetch listings with filters + sorting
-router.get("/",verifyToken, getMarketListings);
-
-// Public: fetch single listing with details
-router.get("/:id",verifyToken, getMarketListingById);
-
-// Public: trending listings
-router.get("/extra/trending", verifyToken,getTrendingListings);
+// controllers same, no change
+router.get("/extra/trending", verifyToken, getTrendingListings);
+router.get("/", verifyToken, getMarketListings);
+router.get("/:id", verifyToken, getMarketListingById);
 
 module.exports = router;
