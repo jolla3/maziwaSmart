@@ -17,24 +17,38 @@ exports.createListing = async (req, res) => {
       description,
       location,
       farmer_id,
-      animal_details = {}
+      animal_details
     } = req.body;
 
-    // 🧠 Process uploaded files from multer
+    // 🧠 Parse animal_details if it's JSON string
+    let parsedDetails = {};
+    if (typeof animal_details === "string") {
+      try {
+        parsedDetails = JSON.parse(animal_details);
+      } catch (err) {
+        console.warn("⚠️ Failed to parse animal_details JSON:", err.message);
+        parsedDetails = {};
+      }
+    } else if (typeof animal_details === "object" && animal_details !== null) {
+      parsedDetails = animal_details;
+    }
+
+    // 🧠 Process uploaded images from multer
     let uploadedPhotos = [];
     if (req.files && Array.isArray(req.files) && req.files.length > 0) {
       uploadedPhotos = req.files.map(f => `/uploads/listings/${f.filename}`);
     }
 
-    // 🧠 Combine with any photos sent via body (if any)
+    // 🧠 Combine with any photos from body if any
     const bodyPhotos = Array.isArray(req.body.photos)
       ? req.body.photos
       : req.body.photos
       ? [req.body.photos]
       : [];
+
     const photos = [...bodyPhotos, ...uploadedPhotos].filter(Boolean);
 
-    // ✅ Validate core fields
+    // ✅ Validate essential fields
     if (!title || !animal_type || !price) {
       return res.status(400).json({
         success: false,
@@ -45,7 +59,7 @@ exports.createListing = async (req, res) => {
     const sellerRef = req.user.id;
     let farmerRef = null;
 
-    // 🧩 Base object
+    // 🧩 Base listing structure
     let listingData = {
       title,
       animal_type,
@@ -71,7 +85,10 @@ exports.createListing = async (req, res) => {
     if (req.user.role === "farmer") {
       const farmerDoc = await Farmer.findById(req.user.id);
       if (!farmerDoc) {
-        return res.status(404).json({ success: false, message: "Farmer not found" });
+        return res.status(404).json({
+          success: false,
+          message: "Farmer not found"
+        });
       }
 
       farmerRef = farmerDoc._id;
@@ -81,7 +98,10 @@ exports.createListing = async (req, res) => {
       if (animal_id) {
         const animal = await Cow.findById(animal_id);
         if (!animal) {
-          return res.status(404).json({ success: false, message: "Animal not found" });
+          return res.status(404).json({
+            success: false,
+            message: "Animal not found"
+          });
         }
         listingData.animal_id = animal._id;
       }
@@ -97,7 +117,7 @@ exports.createListing = async (req, res) => {
           success: false,
           message: "Seller not approved by SuperAdmin"
         });
-      } 
+      }
 
       if (animal_id) {
         return res.status(400).json({
@@ -107,17 +127,17 @@ exports.createListing = async (req, res) => {
       }
 
       // ✅ Validate minimal details
-      if (!animal_details.age || !animal_details.breed_name) {
+      if (!parsedDetails.age || !parsedDetails.breed_name) {
         return res.status(400).json({
           success: false,
           message: "Sellers must provide at least 'age' and 'breed_name'"
         });
       }
 
-      // 🧩 Sanitize stage properly
+      // 🧩 Clean stage
       let cleanStage = null;
-      if (animal_details.stage && validStages.includes(animal_details.stage)) {
-        cleanStage = animal_details.stage;
+      if (parsedDetails.stage && validStages.includes(parsedDetails.stage)) {
+        cleanStage = parsedDetails.stage;
       } else {
         const defaults = {
           cow: "cow",
@@ -131,22 +151,22 @@ exports.createListing = async (req, res) => {
 
       listingData.farmer = farmer_id || null;
       listingData.animal_details = {
-        age: Number(animal_details.age),
-        breed_name: animal_details.breed_name,
-        ...(animal_details.gender && { gender: animal_details.gender }),
-        ...(animal_details.bull_code && { bull_code: animal_details.bull_code }),
-        ...(animal_details.bull_name && { bull_name: animal_details.bull_name }),
-        ...(animal_details.bull_breed && { bull_breed: animal_details.bull_breed }),
-        status: animal_details.status || "active",
+        age: Number(parsedDetails.age),
+        breed_name: parsedDetails.breed_name,
+        ...(parsedDetails.gender && { gender: parsedDetails.gender }),
+        ...(parsedDetails.bull_code && { bull_code: parsedDetails.bull_code }),
+        ...(parsedDetails.bull_name && { bull_name: parsedDetails.bull_name }),
+        ...(parsedDetails.bull_breed && { bull_breed: parsedDetails.bull_breed }),
+        status: parsedDetails.status || "active",
         ...(cleanStage && { stage: cleanStage }),
-        lifetime_milk: animal_details.lifetime_milk || 0,
-        daily_average: animal_details.daily_average || 0,
-        total_offspring: animal_details.total_offspring || 0,
+        lifetime_milk: parsedDetails.lifetime_milk || 0,
+        daily_average: parsedDetails.daily_average || 0,
+        total_offspring: parsedDetails.total_offspring || 0,
         pregnancy: {
-          is_pregnant: animal_details.is_pregnant || false,
-          expected_due_date: animal_details.expected_due_date || null,
-          ...(animal_details.insemination_id && {
-            insemination_id: animal_details.insemination_id
+          is_pregnant: parsedDetails.is_pregnant || false,
+          expected_due_date: parsedDetails.expected_due_date || null,
+          ...(parsedDetails.insemination_id && {
+            insemination_id: parsedDetails.insemination_id
           })
         }
       };
@@ -160,7 +180,7 @@ exports.createListing = async (req, res) => {
       });
     }
 
-    // 🧩 Save new listing
+    // 🧩 Save listing
     const listing = new Listing(listingData);
     await listing.save();
 
