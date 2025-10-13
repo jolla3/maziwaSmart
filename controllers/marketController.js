@@ -87,15 +87,6 @@ exports.getMarketListingById = async (req, res) => {
 
     const sellerData = listing.seller || listing.farmer || null;
 
-res.status(200).json({
-  success: true,
-  listing: {
-    ...listing.toObject(),
-    seller: sellerData,
-    animal: animalDetails,
-    images: listing.photos || [],
-  },
-});
 
 
     // ✅ Extract animal details safely
