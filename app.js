@@ -1,4 +1,6 @@
 // app.js
+const fs = require('fs');
+
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -24,26 +26,37 @@ app.use(passport.initialize());
 
 
 // 🔥 Place BEFORE routes
-app.use(
-  "/uploads",
-  express.static(path.join(__dirname, "uploads"), {
-    setHeaders: (res, filePath) => {
-      // ✅ These 2 are crucial for Chrome’s CORB protection
-      res.setHeader("Access-Control-Allow-Origin", "*");
-      res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
 
-      // ✅ Set correct MIME types to avoid “unknown type” blocking
-      if (filePath.endsWith(".jpg") || filePath.endsWith(".jpeg"))
-        res.setHeader("Content-Type", "image/jpeg");
-      else if (filePath.endsWith(".png"))
-        res.setHeader("Content-Type", "image/png");
-      else if (filePath.endsWith(".webp"))
-        res.setHeader("Content-Type", "image/webp");
-    },
-  })
-);
+// ✅ Use absolute path
+const uploadsPath = path.join(__dirname, "uploads");
 
-// ✅ Separate CORS middleware for API routes
+// ✅ Serve static uploads with safe headers
+app.use("/uploads", (req, res, next) => {
+  const filePath = path.join(uploadsPath, req.path);
+
+  // Ensure requested file actually exists
+  if (fs.existsSync(filePath)) {
+    // Set CORB-safe headers
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+
+    // Set proper Content-Type
+    if (filePath.endsWith(".jpg") || filePath.endsWith(".jpeg"))
+      res.setHeader("Content-Type", "image/jpeg");
+    else if (filePath.endsWith(".png"))
+      res.setHeader("Content-Type", "image/png");
+    else if (filePath.endsWith(".webp"))
+      res.setHeader("Content-Type", "image/webp");
+    else res.setHeader("Content-Type", "application/octet-stream");
+
+    return res.sendFile(filePath);
+  }
+
+  // 🔥 If file doesn’t exist, return 404 JSON instead of HTML
+  res.status(404).json({ error: "File not found" });
+});
+
+// ✅ Then place your main CORS setup AFTER this:
 app.use(
   cors({
     origin: ["https://maziwa-smart.vercel.app", "http://localhost:3000"],
