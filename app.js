@@ -25,22 +25,21 @@ app.use(cors());
 app.use(passport.initialize());
 
 
-// 🔥 Place BEFORE routes
+// ==========================
+// 🔥 STATIC FILES (uploads)
+// ==========================
 
-// ✅ Use absolute path
+
 const uploadsPath = path.join(__dirname, "uploads");
 
-// ✅ Serve static uploads with safe headers
+// Serve uploaded images with CORB-safe headers
 app.use("/uploads", (req, res, next) => {
   const filePath = path.join(uploadsPath, req.path);
 
-  // Ensure requested file actually exists
   if (fs.existsSync(filePath)) {
-    // Set CORB-safe headers
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
 
-    // Set proper Content-Type
     if (filePath.endsWith(".jpg") || filePath.endsWith(".jpeg"))
       res.setHeader("Content-Type", "image/jpeg");
     else if (filePath.endsWith(".png"))
@@ -52,11 +51,13 @@ app.use("/uploads", (req, res, next) => {
     return res.sendFile(filePath);
   }
 
-  // 🔥 If file doesn’t exist, return 404 JSON instead of HTML
+  // ⚠️ Never return HTML — Chrome blocks that.
   res.status(404).json({ error: "File not found" });
 });
 
-// ✅ Then place your main CORS setup AFTER this:
+// ==========================
+// 🌍 CORS (API ROUTES)
+// ==========================
 app.use(
   cors({
     origin: ["https://maziwa-smart.vercel.app", "http://localhost:3000"],
