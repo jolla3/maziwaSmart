@@ -491,8 +491,10 @@ exports.updateListing = async (req, res) => {
     // 🔹 Parse incoming update body (JSON fields)
     const updates = { ...req.body };
 
-    // 🔹 Handle new uploaded photos (if any)
-    const uploadedPhotos = req.files?.map(file => `/uploads/animals/${file.filename}`) || [];
+    // 🔹 Handle new uploaded photos (Cloudinary URLs)
+const uploadedPhotos = Array.isArray(req.files)
+  ? req.files.map(file => file.path) // Cloudinary gives secure URL
+  : [];
 
     // 🔹 If there are new photos, merge them with existing ones
     if (uploadedPhotos.length > 0) {
