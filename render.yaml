@@ -1,21 +1,12 @@
-
 services:
   - type: web
     name: maziwasmart
-    env: node
+    runtime: node
+    plan: starter
     buildCommand: npm install
     startCommand: node app.js
     envVars:
       - key: NODE_ENV
         value: production
-
-    headers:
-      - path: /uploads/*
-        name: Access-Control-Allow-Origin
-        value: "*"
-      - path: /uploads/*
-        name: Cross-Origin-Resource-Policy
-        value: cross-origin
-      - path: /uploads/*
-        name: Cache-Control
-        value: public, max-age=31536000
+      - key: ENABLE_UPLOAD_HEADERS
+        value: true
