@@ -1,6 +1,4 @@
 // app.js
-const fs = require('fs');
-
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -10,7 +8,6 @@ require('dotenv').config();
 require('./cron/updateCowStages');
 const passport = require("./config/passport");
 
-const path = require("path");
 
 // Serve uploaded files publicly
 
@@ -24,35 +21,8 @@ app.use(cors());
 
 app.use(passport.initialize());
 
+// app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
-app.get("/image/:folder/:filename", async (req, res) => {
-  try {
-    const { folder, filename } = req.params;
-    const filePath = path.join(__dirname, "uploads", folder, filename);
-
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ error: "File not found" });
-    }
-
-    // ✅ Set proper headers to bypass CORB
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
-    res.setHeader("Cache-Control", "public, max-age=31536000");
-
-    // ✅ Guess MIME type based on extension
-    const ext = path.extname(filePath).toLowerCase();
-    if (ext === ".jpg" || ext === ".jpeg") res.type("image/jpeg");
-    else if (ext === ".png") res.type("image/png");
-    else if (ext === ".webp") res.type("image/webp");
-    else res.type("application/octet-stream");
-
-    // ✅ Send image safely
-    return res.sendFile(filePath);
-  } catch (err) {
-    console.error("❌ Image proxy error:", err);
-    res.status(500).json({ error: "Server error" });
-  }
-});
 
 // all your routes...
 

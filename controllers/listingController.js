@@ -1,12 +1,18 @@
 // controllers/listingController.js
-const { Listing, Farmer, User, Cow } = require('../models/model');
+const { Listing, Farmer, Cow, User } = require("../models/model");
+const cloudinary = require("cloudinary").v2;
 
+// ✅ Ensure Cloudinary is configured globally
+cloudinary.config({
+  cloud_name: process.env.CLOUD_NAME,
+  api_key: process.env.CLOUD_KEY,
+  api_secret: process.env.CLOUD_SECRET,
+});
 // ---------------------------
 // CREATE a new listing
 // ---------------------------
 
 // controllers/listingController.js
-
 exports.createListing = async (req, res) => {
   try {
     const {
@@ -20,47 +26,50 @@ exports.createListing = async (req, res) => {
       animal_details
     } = req.body;
 
-    // 🧠 Parse animal_details if it's JSON string
+    // Parse animal_details safely
     let parsedDetails = {};
     if (typeof animal_details === "string") {
       try {
         parsedDetails = JSON.parse(animal_details);
-      } catch (err) {
-        console.warn("⚠️ Failed to parse animal_details JSON:", err.message);
+      } catch {
         parsedDetails = {};
       }
     } else if (typeof animal_details === "object" && animal_details !== null) {
       parsedDetails = animal_details;
     }
 
-    // 🧠 Process uploaded images from multer
+    // ✅ Handle images from multer (buffer or temp file)
     let uploadedPhotos = [];
     if (req.files && Array.isArray(req.files) && req.files.length > 0) {
-      uploadedPhotos = req.files.map(f => `/uploads/listings/${f.filename}`);
+      const uploadPromises = req.files.map(async (file) => {
+        const result = await cloudinary.uploader.upload(file.path, {
+          folder: "maziwasmart/listings",
+          resource_type: "image",
+        });
+        return result.secure_url;
+      });
+      uploadedPhotos = await Promise.all(uploadPromises);
     }
 
-    // 🧠 Combine with any photos from body if any
     const bodyPhotos = Array.isArray(req.body.photos)
       ? req.body.photos
       : req.body.photos
-      ? [req.body.photos]
-      : [];
+        ? [req.body.photos]
+        : [];
 
     const photos = [...bodyPhotos, ...uploadedPhotos].filter(Boolean);
 
-    // ✅ Validate essential fields
     if (!title || !animal_type || !price) {
       return res.status(400).json({
         success: false,
-        message: "Title, animal type, and price are required"
+        message: "Title, animal type, and price are required",
       });
     }
 
     const sellerRef = req.user.id;
     let farmerRef = null;
 
-    // 🧩 Base listing structure
-    let listingData = {
+    const listingData = {
       title,
       animal_type,
       animal_id: null,
@@ -70,7 +79,7 @@ exports.createListing = async (req, res) => {
       description: description || "",
       photos,
       location: location || "",
-      status: "available"
+      status: "available",
     };
 
     const validStages = [
@@ -81,70 +90,56 @@ exports.createListing = async (req, res) => {
       "piglet", "gilt", "sow", "boar"
     ];
 
-    // 🧩 FARMER FLOW
+    // 👨‍🌾 FARMER
     if (req.user.role === "farmer") {
       const farmerDoc = await Farmer.findById(req.user.id);
-      if (!farmerDoc) {
-        return res.status(404).json({
-          success: false,
-          message: "Farmer not found"
-        });
-      }
+      if (!farmerDoc)
+        return res.status(404).json({ success: false, message: "Farmer not found" });
 
       farmerRef = farmerDoc._id;
       listingData.farmer = farmerRef;
 
-      // Link to animal
       if (animal_id) {
         const animal = await Cow.findById(animal_id);
-        if (!animal) {
-          return res.status(404).json({
-            success: false,
-            message: "Animal not found"
-          });
-        }
+        if (!animal)
+          return res.status(404).json({ success: false, message: "Animal not found" });
         listingData.animal_id = animal._id;
       }
 
       if (!listingData.location) listingData.location = farmerDoc.location;
     }
 
-    // 🧩 SELLER FLOW
+    // 🧑‍💼 SELLER
     else if (req.user.role === "seller") {
       const sellerDoc = await User.findById(sellerRef);
-      if (!sellerDoc || !sellerDoc.is_approved_seller) {
+      if (!sellerDoc || !sellerDoc.is_approved_seller)
         return res.status(403).json({
           success: false,
-          message: "Seller not approved by SuperAdmin"
+          message: "Seller not approved by SuperAdmin",
         });
-      }
 
-      if (animal_id) {
+      if (animal_id)
         return res.status(400).json({
           success: false,
-          message: "External sellers cannot use animal_id; provide animal details manually"
+          message: "External sellers cannot use animal_id; provide details manually",
         });
-      }
 
-      // ✅ Validate minimal details
-      if (!parsedDetails.age || !parsedDetails.breed_name) {
+      if (!parsedDetails.age || !parsedDetails.breed_name)
         return res.status(400).json({
           success: false,
-          message: "Sellers must provide at least 'age' and 'breed_name'"
+          message: "Sellers must provide at least 'age' and 'breed_name'",
         });
-      }
 
-      // 🧩 Clean stage
       let cleanStage = null;
-      if (parsedDetails.stage && validStages.includes(parsedDetails.stage)) {
+      if (parsedDetails.stage && validStages.includes(parsedDetails.stage))
         cleanStage = parsedDetails.stage;
-      } else {
+      else {
         const defaults = {
           cow: "cow",
           bull: "mature_bull",
           goat: "nanny",
           sheep: "ewe",
-          pig: "sow"
+          pig: "sow",
         };
         cleanStage = defaults[animal_type] || null;
       }
@@ -166,35 +161,35 @@ exports.createListing = async (req, res) => {
           is_pregnant: parsedDetails.is_pregnant || false,
           expected_due_date: parsedDetails.expected_due_date || null,
           ...(parsedDetails.insemination_id && {
-            insemination_id: parsedDetails.insemination_id
-          })
-        }
+            insemination_id: parsedDetails.insemination_id,
+          }),
+        },
       };
     }
 
-    // ❌ Others blocked
+    // 🚫 Unauthorized
     else {
       return res.status(403).json({
         success: false,
-        message: "You are not authorized to create listings"
+        message: "You are not authorized to create listings",
       });
     }
 
-    // 🧩 Save listing
+    // ✅ Save listing
     const listing = new Listing(listingData);
     await listing.save();
 
     return res.status(201).json({
       success: true,
       message: "Listing created successfully ✅",
-      listing
+      listing,
     });
   } catch (err) {
     console.error("❌ Create listing error:", err);
     res.status(500).json({
       success: false,
       message: "Server error",
-      error: err.message
+      error: err.message,
     });
   }
 };
@@ -244,7 +239,7 @@ exports.getListings = async (req, res) => {
           gender: cow.gender || null,
           status: cow.status || null,
           stage: cow.stage || null,
-           images: listing.photos,
+          images: listing.photos,
           lifetime_milk: cow.lifetime_milk || 0,
           daily_average: cow.daily_average || 0,
           total_offspring: cow.total_offspring || 0,
@@ -566,51 +561,51 @@ exports.updateListing = async (req, res) => {
 exports.deleteListing = async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     // Extract user ID properly from req.user
     const userId = req.user && (req.user.id || req.user._id || req.user.userId);
-    
+
     if (!userId) {
-      return res.status(401).json({ 
-        success: false, 
-        message: "Unauthorized - User ID not found" 
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized - User ID not found"
       });
     }
 
     console.log('Delete attempt:', { listingId: id, userId, userObject: req.user });
 
     // Find and delete the listing
-    const listing = await Listing.findOneAndDelete({ 
-      _id: id, 
-      seller: userId 
+    const listing = await Listing.findOneAndDelete({
+      _id: id,
+      seller: userId
     });
 
     if (!listing) {
       // Check if listing exists at all
       const exists = await Listing.findById(id);
       if (!exists) {
-        return res.status(404).json({ 
-          success: false, 
-          message: "Listing not found" 
+        return res.status(404).json({
+          success: false,
+          message: "Listing not found"
         });
       }
       // Listing exists but doesn't belong to this user
-      return res.status(403).json({ 
-        success: false, 
-        message: "You don't have permission to delete this listing" 
+      return res.status(403).json({
+        success: false,
+        message: "You don't have permission to delete this listing"
       });
     }
 
-    res.status(200).json({ 
-      success: true, 
-      message: "Listing deleted successfully" 
+    res.status(200).json({
+      success: true,
+      message: "Listing deleted successfully"
     });
   } catch (err) {
     console.error("Delete listing error:", err);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       message: "Failed to delete listing",
-      error: err.message 
+      error: err.message
     });
   }
 };
