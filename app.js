@@ -25,31 +25,34 @@ app.use(cors());
 app.use(passport.initialize());
 
 
-const uploadsPath = path.join(__dirname, "uploads");
+app.get("/image/:folder/:filename", async (req, res) => {
+  try {
+    const { folder, filename } = req.params;
+    const filePath = path.join(__dirname, "uploads", folder, filename);
 
-app.use("/uploads", (req, res, next) => {
-  const filePath = path.join(uploadsPath, req.path);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "File not found" });
+    }
 
-  if (fs.existsSync(filePath)) {
+    // ✅ Set proper headers to bypass CORB
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    res.setHeader("Cache-Control", "public, max-age=31536000");
 
+    // ✅ Guess MIME type based on extension
     const ext = path.extname(filePath).toLowerCase();
-    const mimeTypes = {
-      ".jpg": "image/jpeg",
-      ".jpeg": "image/jpeg",
-      ".png": "image/png",
-      ".webp": "image/webp",
-      ".gif": "image/gif",
-    };
-    res.setHeader("Content-Type", mimeTypes[ext] || "application/octet-stream");
+    if (ext === ".jpg" || ext === ".jpeg") res.type("image/jpeg");
+    else if (ext === ".png") res.type("image/png");
+    else if (ext === ".webp") res.type("image/webp");
+    else res.type("application/octet-stream");
 
+    // ✅ Send image safely
     return res.sendFile(filePath);
+  } catch (err) {
+    console.error("❌ Image proxy error:", err);
+    res.status(500).json({ error: "Server error" });
   }
-
-  res.status(404).json({ error: "File not found" });
 });
-
 
 // all your routes...
 
