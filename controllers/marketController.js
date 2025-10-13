@@ -85,6 +85,19 @@ exports.getMarketListingById = async (req, res) => {
         .json({ success: false, message: "Listing not found" });
     }
 
+    const sellerData = listing.seller || listing.farmer || null;
+
+res.status(200).json({
+  success: true,
+  listing: {
+    ...listing.toObject(),
+    seller: sellerData,
+    animal: animalDetails,
+    images: listing.photos || [],
+  },
+});
+
+
     // ✅ Extract animal details safely
     const animal = listing.animal_id;
     const animalDetails = animal
@@ -111,6 +124,7 @@ exports.getMarketListingById = async (req, res) => {
     res.status(200).json({
       success: true,
       listing: {
+        ...listing.toObject(),
         _id: listing._id,
         title: listing.title,
         price: listing.price,
@@ -118,9 +132,13 @@ exports.getMarketListingById = async (req, res) => {
         location: listing.location,
         createdAt: listing.createdAt,
         views: listing.views,
-        seller: listing.seller || null,
-        farmer: listing.farmer || null,
-        animal: animalDetails,
+        
+        
+
+    seller: sellerData,
+    animal: animalDetails,
+    
+       
       },
     });
   } catch (err) {
