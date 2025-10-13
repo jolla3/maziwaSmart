@@ -25,14 +25,8 @@ app.use(cors());
 app.use(passport.initialize());
 
 
-// ==========================
-// 🔥 STATIC FILES (uploads)
-// ==========================
-
-
 const uploadsPath = path.join(__dirname, "uploads");
 
-// Serve uploaded images with CORB-safe headers
 app.use("/uploads", (req, res, next) => {
   const filePath = path.join(uploadsPath, req.path);
 
@@ -40,31 +34,21 @@ app.use("/uploads", (req, res, next) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
 
-    if (filePath.endsWith(".jpg") || filePath.endsWith(".jpeg"))
-      res.setHeader("Content-Type", "image/jpeg");
-    else if (filePath.endsWith(".png"))
-      res.setHeader("Content-Type", "image/png");
-    else if (filePath.endsWith(".webp"))
-      res.setHeader("Content-Type", "image/webp");
-    else res.setHeader("Content-Type", "application/octet-stream");
+    const ext = path.extname(filePath).toLowerCase();
+    const mimeTypes = {
+      ".jpg": "image/jpeg",
+      ".jpeg": "image/jpeg",
+      ".png": "image/png",
+      ".webp": "image/webp",
+      ".gif": "image/gif",
+    };
+    res.setHeader("Content-Type", mimeTypes[ext] || "application/octet-stream");
 
     return res.sendFile(filePath);
   }
 
-  // ⚠️ Never return HTML — Chrome blocks that.
   res.status(404).json({ error: "File not found" });
 });
-
-// ==========================
-// 🌍 CORS (API ROUTES)
-// ==========================
-app.use(
-  cors({
-    origin: ["https://maziwa-smart.vercel.app", "http://localhost:3000"],
-    methods: ["GET", "POST", "PUT", "DELETE"],
-    credentials: true,
-  })
-);
 
 
 // all your routes...

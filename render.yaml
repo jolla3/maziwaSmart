@@ -2,10 +2,13 @@
 services:
   - type: web
     name: maziwasmart
+    env: node
     buildCommand: npm install
+    startCommand: node app.js
     envVars:
       - key: NODE_ENV
         value: production
+
     headers:
       - path: /uploads/*
         name: Access-Control-Allow-Origin
