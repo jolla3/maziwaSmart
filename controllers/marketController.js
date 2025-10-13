@@ -53,31 +53,57 @@ exports.getMarketListingById = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Populate both animal and seller
     const listing = await Listing.findById(id)
-      .populate("animal_id")
-      .populate("seller", "fullname phone email role _id"); // ✅ Add seller info
+      .populate({
+        path: "animal_id",
+        select:
+          "cow_name species breed_id mother_id lifetime_milk daily_average total_offspring status stage photos pregnancy offspring_ids birth_date gender",
+        populate: [
+          { path: "breed_id", select: "breed_name" },
+          {
+            path: "mother_id",
+            select:
+              "cow_name breed_id lifetime_milk daily_average total_offspring birth_date gender",
+            populate: { path: "breed_id", select: "breed_name" },
+          },
+          { path: "offspring_ids", select: "cow_name birth_date stage gender" },
+          {
+            path: "pregnancy.insemination_id",
+            model: "Insemination",
+            select:
+              "insemination_date method bull_code bull_name bull_breed outcome expected_due_date",
+          },
+        ],
+      })
+      .populate("seller", "fullname email phone role") // ✅ populate seller user details
+      .populate("farmer", "fullname phone email location farmer_code"); // ✅ optional farmer info
 
     if (!listing) {
-      return res.status(404).json({ success: false, message: "Listing not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Listing not found" });
     }
 
     const animal = listing.animal_id;
-
-    const animalDetails = {
-      name: animal.cow_name,
-      species: animal.species,
-      gender: animal.gender,
-      stage: animal.stage,
-      status: animal.status,
-      breed: animal.breed_id || animal.bull_breed || "Unknown",
-      lifetime_milk: animal.lifetime_milk,
-      daily_average: animal.daily_average,
-      bull_code: animal.bull_code || null,
-      bull_name: animal.bull_name || null,
-      bull_breed: animal.bull_breed || null,
-      calved_count: animal.calved_count || 0,
-    };
+    const animalDetails = animal
+      ? {
+          name: animal.cow_name,
+          species: animal.species,
+          gender: animal.gender,
+          stage: animal.stage,
+          status: animal.status,
+          breed:
+            animal.breed_id?.breed_name ||
+            animal.bull_breed ||
+            "Unknown",
+          lifetime_milk: animal.lifetime_milk,
+          daily_average: animal.daily_average,
+          bull_code: animal.bull_code || null,
+          bull_name: animal.bull_name || null,
+          bull_breed: animal.bull_breed || null,
+          calved_count: animal.calved_count || 0,
+        }
+      : null;
 
     res.status(200).json({
       success: true,
@@ -89,13 +115,16 @@ exports.getMarketListingById = async (req, res) => {
         location: listing.location,
         createdAt: listing.createdAt,
         views: listing.views,
-        seller: listing.seller, // ✅ expose seller data
+        seller: listing.seller, // ✅ fully populated seller object
+        farmer: listing.farmer || null,
         animal: animalDetails,
       },
     });
   } catch (err) {
     console.error("❌ Market single fetch error:", err);
-    res.status(500).json({ success: false, message: "Failed to fetch listing details" });
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to fetch listing details" });
   }
 };
 
