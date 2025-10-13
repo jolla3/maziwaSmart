@@ -22,7 +22,22 @@ app.use(cors());
 
 app.use(passport.initialize());
 
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+import cors from "cors";
+
+app.use(
+  "/uploads",
+  cors({
+    origin: "*",
+    methods: ["GET"] || ["POST"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  }),
+  express.static("uploads", {
+    setHeaders: (res) => {
+      res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+      res.setHeader("Access-Control-Allow-Origin", "*");
+    },
+  })
+);
 
 
 // all your routes...
