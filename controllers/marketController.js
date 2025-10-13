@@ -53,7 +53,7 @@ exports.getMarketListingById = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // ✅ Fetch listing + deeply populate related fields
+    // Fetch listing + deeply populate related fields
     const listing = await Listing.findById(id)
       .populate({
         path: "animal_id",
@@ -76,20 +76,16 @@ exports.getMarketListingById = async (req, res) => {
           },
         ],
       })
-      .populate("seller", "fullname email phone role")
-      .populate("farmer", "fullname phone email location farmer_code");
+      .populate("seller", "_id fullname email phone role") // ✅ include _id
+      .populate("farmer", "_id fullname phone email location farmer_code");
 
     if (!listing) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Listing not found" });
+      return res.status(404).json({ success: false, message: "Listing not found" });
     }
 
     const sellerData = listing.seller || listing.farmer || null;
 
-
-
-    // ✅ Extract animal details safely
+    // Extract animal details safely
     const animal = listing.animal_id;
     const animalDetails = animal
       ? {
@@ -108,10 +104,10 @@ exports.getMarketListingById = async (req, res) => {
           bull_name: animal.pregnancy?.insemination_id?.bull_name || null,
           bull_breed: animal.pregnancy?.insemination_id?.bull_breed || null,
           calved_count: animal.total_offspring || 0,
+          photos: animal.photos || [], // ✅ include animal photos
         }
       : null;
 
-    // ✅ Return consistent naming for images
     res.status(200).json({
       success: true,
       listing: {
@@ -119,24 +115,17 @@ exports.getMarketListingById = async (req, res) => {
         _id: listing._id,
         title: listing.title,
         price: listing.price,
-        images: listing.photos || [], // 🔥 frontend expects this key
+        images: listing.photos?.length ? listing.photos : animalDetails?.photos || [],
         location: listing.location,
         createdAt: listing.createdAt,
         views: listing.views,
-        
-        
-
-    seller: sellerData,
-    animal: animalDetails,
-    
-       
+        seller: sellerData,
+        animal: animalDetails,
       },
     });
   } catch (err) {
     console.error("❌ Market single fetch error:", err);
-    res
-      .status(500)
-      .json({ success: false, message: "Failed to fetch listing details" });
+    res.status(500).json({ success: false, message: "Failed to fetch listing details" });
   }
 };
 
