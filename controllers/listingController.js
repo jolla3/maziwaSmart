@@ -244,7 +244,7 @@ exports.getListings = async (req, res) => {
           gender: cow.gender || null,
           status: cow.status || null,
           stage: cow.stage || null,
-          photos: cow.photos || [],
+           images: listing.photos,
           lifetime_milk: cow.lifetime_milk || 0,
           daily_average: cow.daily_average || 0,
           total_offspring: cow.total_offspring || 0,

@@ -53,6 +53,7 @@ exports.getMarketListingById = async (req, res) => {
   try {
     const { id } = req.params;
 
+    // ✅ Fetch listing + deeply populate related fields
     const listing = await Listing.findById(id)
       .populate({
         path: "animal_id",
@@ -75,8 +76,8 @@ exports.getMarketListingById = async (req, res) => {
           },
         ],
       })
-      .populate("seller", "fullname email phone role") // ✅ populate seller user details
-      .populate("farmer", "fullname phone email location farmer_code"); // ✅ optional farmer info
+      .populate("seller", "fullname email phone role")
+      .populate("farmer", "fullname phone email location farmer_code");
 
     if (!listing) {
       return res
@@ -84,6 +85,7 @@ exports.getMarketListingById = async (req, res) => {
         .json({ success: false, message: "Listing not found" });
     }
 
+    // ✅ Extract animal details safely
     const animal = listing.animal_id;
     const animalDetails = animal
       ? {
@@ -98,24 +100,25 @@ exports.getMarketListingById = async (req, res) => {
             "Unknown",
           lifetime_milk: animal.lifetime_milk,
           daily_average: animal.daily_average,
-          bull_code: animal.bull_code || null,
-          bull_name: animal.bull_name || null,
-          bull_breed: animal.bull_breed || null,
-          calved_count: animal.calved_count || 0,
+          bull_code: animal.pregnancy?.insemination_id?.bull_code || null,
+          bull_name: animal.pregnancy?.insemination_id?.bull_name || null,
+          bull_breed: animal.pregnancy?.insemination_id?.bull_breed || null,
+          calved_count: animal.total_offspring || 0,
         }
       : null;
 
+    // ✅ Return consistent naming for images
     res.status(200).json({
       success: true,
       listing: {
         _id: listing._id,
         title: listing.title,
         price: listing.price,
-        photos: listing.photos,
+        images: listing.photos || [], // 🔥 frontend expects this key
         location: listing.location,
         createdAt: listing.createdAt,
         views: listing.views,
-        seller: listing.seller, // ✅ fully populated seller object
+        seller: listing.seller || null,
         farmer: listing.farmer || null,
         animal: animalDetails,
       },
@@ -127,6 +130,7 @@ exports.getMarketListingById = async (req, res) => {
       .json({ success: false, message: "Failed to fetch listing details" });
   }
 };
+
 
 // ---------------------------
 // GET trending listings (top 10 by views)
