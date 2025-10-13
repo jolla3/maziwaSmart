@@ -23,18 +23,32 @@ app.use(cors());
 app.use(passport.initialize());
 
 
+// 🔥 Place BEFORE routes
 app.use(
   "/uploads",
-  cors({
-    origin: "*",
-    methods: ["GET"] || ["POST"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  }),
-  express.static("uploads", {
-    setHeaders: (res) => {
-      res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+  express.static(path.join(__dirname, "uploads"), {
+    setHeaders: (res, filePath) => {
+      // ✅ These 2 are crucial for Chrome’s CORB protection
       res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+
+      // ✅ Set correct MIME types to avoid “unknown type” blocking
+      if (filePath.endsWith(".jpg") || filePath.endsWith(".jpeg"))
+        res.setHeader("Content-Type", "image/jpeg");
+      else if (filePath.endsWith(".png"))
+        res.setHeader("Content-Type", "image/png");
+      else if (filePath.endsWith(".webp"))
+        res.setHeader("Content-Type", "image/webp");
     },
+  })
+);
+
+// ✅ Separate CORS middleware for API routes
+app.use(
+  cors({
+    origin: ["https://maziwa-smart.vercel.app", "http://localhost:3000"],
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    credentials: true,
   })
 );
 
