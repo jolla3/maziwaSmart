@@ -22,7 +22,6 @@ app.use(cors());
 
 app.use(passport.initialize());
 
-import cors from "cors";
 
 app.use(
   "/uploads",
