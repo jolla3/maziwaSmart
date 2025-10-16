@@ -479,7 +479,7 @@ exports.getListingById = async (req, res) => {
 
     res.status(200).json({ success: true, listing: obj });
   } catch (err) {
-    console.error('Get listing by id error:', err);
+console.error("Update listing error:", err.message, err.stack);
     res.status(500).json({ success: false, message: 'Failed to fetch listing', error: err.message });
   }
 };// UPDATE listing (only seller can update)
