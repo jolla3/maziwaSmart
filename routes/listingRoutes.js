@@ -1,5 +1,5 @@
 // routes/listingRoutes.js
-const express = require('express');
+const express = require("express");
 const router = express.Router();
 
 const {
@@ -8,35 +8,35 @@ const {
   getUserListings,
   getListingById,
   updateListing,
-  deleteListing
-} = require('../controllers/listingController');
+  deleteListing,
+} = require("../controllers/listingController");
 
 const { verifyToken } = require("../middleware/authMiddleware");
 
-// ⬇️ Import upload utility
-const makeUploader = require('../middleware/upload');
-const listingUpload = makeUploader('listings'); // will save under /uploads/listings/
+// ✅ Import Cloudinary uploader
+const makeUploader = require("../middleware/upload");
+const upload = makeUploader("listings"); // uploads go to Cloudinary folder: maziwasmart/listings
 
 // ---------------------------
 // Marketplace Routes
 // ---------------------------
 
-// Public: get all active listings
-router.get('/', getListings);
+// 🔹 Public: get all active listings
+router.get("/", getListings);
 
-// Protected: get your own listings
-router.get('/mylistings', verifyToken, getUserListings);
+// 🔹 Protected: get user's own listings
+router.get("/mylistings", verifyToken, getUserListings);
 
-// Public: get a single listing (increments views)
-router.get('/:id', getListingById);
+// 🔹 Public: get a single listing
+router.get("/:id", getListingById);
 
-// Protected: create new listing (with up to 10 images)
-router.post('/', verifyToken, listingUpload.array('images', 10), createListing);
+// 🔹 Protected: create new listing (with up to 10 images)
+router.post("/", verifyToken, upload.array("images", 10), createListing);
 
-// Protected: update your own listing (optionally update images)
-router.put('/:id', verifyToken, listingUpload.array('images', 10), updateListing);
+// 🔹 Protected: update existing listing (Cloudinary, match frontend FormData key 'images')
+router.put("/:id", verifyToken, upload.array("images", 10), updateListing);
 
-// Protected: delete your own listing
-router.delete('/:id', verifyToken, deleteListing);
+// 🔹 Protected: delete listing
+router.delete("/:id", verifyToken, deleteListing);
 
 module.exports = router;
