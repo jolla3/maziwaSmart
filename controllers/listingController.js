@@ -488,70 +488,65 @@ exports.updateListing = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // 🔹 Parse incoming update body (JSON fields)
+    // 🧩 Log request summary for debugging
+    console.log("🟢 Update called for listing:", id);
+    console.log("🟢 req.user:", req.user?.id);
+    console.log("🟢 req.files:", req.files?.map(f => f.path || f.secure_url));
+
+    // 🔹 Parse incoming update body
     const updates = { ...req.body };
 
     // 🔹 Handle new uploaded photos (Cloudinary URLs)
-const uploadedPhotos = Array.isArray(req.files)
-  ? req.files.map(file => file.path) // Cloudinary gives secure URL
-  : [];
+    const uploadedPhotos = Array.isArray(req.files)
+      ? req.files.map(f => f.path || f.secure_url)
+      : [];
 
-    // 🔹 If there are new photos, merge them with existing ones
-    if (uploadedPhotos.length > 0) {
-      // Fetch existing listing first to merge
-      const existing = await Listing.findOne({ _id: id, seller: req.user.id });
-      if (!existing) {
-        return res.status(404).json({
-          success: false,
-          message: "Listing not found or not yours"
-        });
-      }
-
-      // Combine old + new
-      const existingPhotos = existing.photos || [];
-      const bodyPhotos = Array.isArray(req.body.photos)
-        ? req.body.photos.filter(p => p && p.trim() !== "")
-        : [];
-
-      // Merge and deduplicate
-      updates.photos = [...new Set([...existingPhotos, ...bodyPhotos, ...uploadedPhotos])];
-
-      // Then apply update
-      const listing = await Listing.findByIdAndUpdate(id, updates, { new: true });
-
-      return res.status(200).json({
-        success: true,
-        message: "Listing updated (with new photos)",
-        listing
+    // 🔹 Fetch existing listing
+    const existing = await Listing.findOne({ _id: id, seller: req.user.id });
+    if (!existing) {
+      return res.status(404).json({
+        success: false,
+        message: "Listing not found or not owned by you"
       });
     }
 
-    // 🔹 No new files → standard update
-    const listing = await Listing.findOneAndUpdate(
-      { _id: id, seller: req.user.id },
-      updates,
-      { new: true }
-    );
+    // 🔹 Merge photos
+    const existingPhotos = Array.isArray(existing.photos) ? existing.photos : [];
+    const bodyPhotos = Array.isArray(req.body.photos)
+      ? req.body.photos.filter(p => p && p.trim() !== "")
+      : [];
+
+    updates.photos = [
+      ...new Set([...existingPhotos, ...bodyPhotos, ...uploadedPhotos])
+    ];
+
+    // 🔹 Perform update
+    const listing = await Listing.findByIdAndUpdate(id, updates, {
+      new: true,
+      runValidators: true,
+    });
 
     if (!listing) {
       return res.status(404).json({
         success: false,
-        message: "Listing not found or not yours"
+        message: "Listing not found after update"
       });
     }
 
     return res.status(200).json({
       success: true,
-      message: "Listing updated",
-      listing
+      message: "Listing updated successfully ✅",
+      listing,
     });
+
   } catch (err) {
-    console.error("Update listing error:", JSON.stringify(err, Object.getOwnPropertyNames(err)));
+    console.error("❌ Update listing error details:");
+    console.error(JSON.stringify(err, Object.getOwnPropertyNames(err), 2));
 
     res.status(500).json({
       success: false,
-      message: "Failed to update listing",
-      error: err.message
+      message: "Internal Server Error during update",
+      error: err.message || "Unknown error"
     });
   }
 };
