@@ -40,3 +40,4 @@ router.put("/:id", verifyToken, upload.array("images", 10), updateListing);
 router.delete("/:id", verifyToken, deleteListing);
 
 module.exports = router;
+4
