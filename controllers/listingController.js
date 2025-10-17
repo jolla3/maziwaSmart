@@ -388,7 +388,7 @@ exports.getUserListings = async (req, res) => {
     console.error('Get user listings error:', err);
     res.status(500).json({ success: false, message: 'Failed to fetch your listings', error: err.message });
   }
-};
+}
 
 // GET single listing by id (same enrichment rules)
 exports.getListingById = async (req, res) => {
@@ -484,43 +484,53 @@ exports.getListingById = async (req, res) => {
   }
 };// UPDATE listing (only seller can update)
 // ---------------------------
+// controllers/listingController.js
+
 exports.updateListing = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // 🧩 Log request summary for debugging
-    console.log("🟢 Update called for listing:", id);
-    console.log("🟢 req.user:", req.user?.id);
-    console.log("🟢 req.files:", req.files?.map(f => f.path || f.secure_url));
+    console.log("🟢 PATCH update called for:", id);
+    console.log("🟢 req.user:", JSON.stringify(req.user, null, 2));
+    console.log("🟢 req.files:", req.files?.map(f => f.path || f.secure_url) || []);
+    console.log("🟢 req.body:", req.body);
 
-    // 🔹 Parse incoming update body
+    // 🧠 Prepare updates from body
     const updates = { ...req.body };
 
-    // 🔹 Handle new uploaded photos (Cloudinary URLs)
-    const uploadedPhotos = Array.isArray(req.files)
-      ? req.files.map(f => f.path || f.secure_url)
-      : [];
+    // ✅ If files exist, upload each to Cloudinary
+    let uploadedPhotos = [];
+    if (req.files && req.files.length > 0) {
+      console.log(`📸 Received ${req.files.length} files to upload...`);
+      for (const file of req.files) {
+        console.log(`⬆️ Uploading ${file.originalname}...`);
+        const uploadResult = await cloudinary.uploader.upload(file.path, {
+          folder: "maziwasmart/listings",
+          resource_type: "image",
+        });
+        uploadedPhotos.push(uploadResult.secure_url);
+        console.log("✅ Upload success:", uploadResult.secure_url);
+      }
+    }
 
-    // 🔹 Fetch existing listing
+    // 🧠 Fetch the existing listing
     const existing = await Listing.findOne({ _id: id, seller: req.user.id });
     if (!existing) {
       return res.status(404).json({
         success: false,
-        message: "Listing not found or not owned by you"
+        message: "Listing not found or not owned by you",
       });
     }
 
-    // 🔹 Merge photos
+    // 🧠 Merge photos — keep old ones + add new uploaded ones
     const existingPhotos = Array.isArray(existing.photos) ? existing.photos : [];
     const bodyPhotos = Array.isArray(req.body.photos)
       ? req.body.photos.filter(p => p && p.trim() !== "")
       : [];
 
-    updates.photos = [
-      ...new Set([...existingPhotos, ...bodyPhotos, ...uploadedPhotos])
-    ];
+    updates.photos = [...new Set([...existingPhotos, ...bodyPhotos, ...uploadedPhotos])];
 
-    // 🔹 Perform update
+    // 🧠 Save update
     const listing = await Listing.findByIdAndUpdate(id, updates, {
       new: true,
       runValidators: true,
@@ -529,27 +539,27 @@ exports.updateListing = async (req, res) => {
     if (!listing) {
       return res.status(404).json({
         success: false,
-        message: "Listing not found after update"
+        message: "Listing not found after update",
       });
     }
 
-    return res.status(200).json({
+    console.log("✅ Listing updated successfully:", listing._id);
+    res.status(200).json({
       success: true,
       message: "Listing updated successfully ✅",
       listing,
     });
 
   } catch (err) {
-    console.error("❌ Update listing error details:");
-    console.error(JSON.stringify(err, Object.getOwnPropertyNames(err), 2));
-
+    console.error("❌ Update listing error:", err);
     res.status(500).json({
       success: false,
       message: "Internal Server Error during update",
-      error: err.message || "Unknown error"
+      error: err.message || "Unknown error",
     });
   }
 };
+
 
 // ---------------------------
 // DELETE listing (only seller can delete)

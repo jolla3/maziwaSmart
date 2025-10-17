@@ -92,6 +92,10 @@ app.use('/api/market', marketRoutes);
 const listingRoutes = require('./routes/listingRoutes');
 app.use('/api/listing', listingRoutes)
 
+const cloudinaryTest = require("./routes/cloudinaryTest");
+app.use("/api/cloudinary-test", cloudinaryTest);
+
+
 // MongoDB connection
 mongoose.connect(process.env.MONGO_URI)
     .then(() => console.log('connected to MongoDb'))
