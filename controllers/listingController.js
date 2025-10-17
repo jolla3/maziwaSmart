@@ -28,41 +28,37 @@ exports.createListing = async (req, res) => {
       animal_details,
     } = req.body;
 
-    console.log("🧠 Body received:", req.body);
-    console.log("🧠 Files received:", req.files?.map(f => f.originalname) || []);
+    console.log("📦 Body received:", req.body);
+    console.log("📸 Files received:", req.files?.map(f => f.originalname) || []);
 
-    // ✅ Parse animal_details
+    // ✅ Parse animal_details safely
     let parsedDetails = {};
     if (typeof animal_details === "string") {
       try {
         parsedDetails = JSON.parse(animal_details);
-      } catch (e) {
-        console.error("⚠️ Error parsing animal_details JSON:", e.message);
+      } catch {
         parsedDetails = {};
       }
     } else if (typeof animal_details === "object" && animal_details !== null) {
       parsedDetails = animal_details;
     }
 
-    // ✅ Upload to Cloudinary
+    // ✅ Upload images to Cloudinary
     let uploadedPhotos = [];
     if (req.files && req.files.length > 0) {
       console.log(`📸 Uploading ${req.files.length} image(s) to Cloudinary...`);
-
       const uploadPromises = req.files.map(async (file) => {
         try {
           const result = await cloudinary.uploader.upload(file.path, {
             folder: "maziwasmart/listings",
             resource_type: "image",
           });
-          console.log("✅ Cloudinary upload success:", result.secure_url);
           return result.secure_url;
-        } catch (uploadErr) {
-          console.error("❌ Cloudinary upload failed:", uploadErr);
+        } catch (err) {
+          console.error("❌ Cloudinary upload failed:", err.message);
           return null;
         }
       });
-
       uploadedPhotos = (await Promise.all(uploadPromises)).filter(Boolean);
     }
 
@@ -80,17 +76,17 @@ exports.createListing = async (req, res) => {
     const listingData = {
       title,
       animal_type,
-      animal_id: null,
-      farmer: null,
-      seller: sellerRef,
       price,
       description: description || "",
-      photos: uploadedPhotos,
       location: location || "",
+      photos: uploadedPhotos,
       status: "available",
+      seller: sellerRef,
+      animal_id: null,
+      farmer: null,
     };
 
-    // ✅ Validation for stages
+    // ✅ Allowed animal stages
     const validStages = [
       "calf", "heifer", "cow",
       "bull_calf", "young_bull", "mature_bull",
@@ -99,12 +95,16 @@ exports.createListing = async (req, res) => {
       "piglet", "gilt", "sow", "boar"
     ];
 
-    // 👨‍🌾 FARMER
+    // ----------------------------
+    // 👨‍🌾 FARMER LISTING
+    // ----------------------------
     if (req.user.role === "farmer") {
-      console.log("👨‍🌾 Creating listing for farmer");
+      console.log("👨‍🌾 Creating listing for farmer...");
+
       const farmerDoc = await Farmer.findById(req.user.id);
-      if (!farmerDoc)
+      if (!farmerDoc) {
         return res.status(404).json({ success: false, message: "Farmer not found" });
+      }
 
       farmerRef = farmerDoc._id;
       listingData.farmer = farmerRef;
@@ -116,26 +116,26 @@ exports.createListing = async (req, res) => {
         listingData.animal_id = animal._id;
       }
 
-      if (!listingData.location) listingData.location = farmerDoc.location;
+      if (!listingData.location) listingData.location = farmerDoc.location || "";
     }
 
-    // 🧑‍💼 SELLER
+    // ----------------------------
+    // 🧑‍💼 SELLER LISTING
+    // ----------------------------
     else if (req.user.role === "seller") {
-      console.log("🧑‍💼 Creating listing for seller");
+      console.log("🧑‍💼 Creating listing for seller...");
+
       const sellerDoc = await User.findById(sellerRef);
-      if (!sellerDoc || !sellerDoc.is_approved_seller) {
+      console.log("📍 Seller found:", !!sellerDoc);
+
+      if (!sellerDoc)
+        return res.status(404).json({ success: false, message: "Seller not found" });
+
+      if (!sellerDoc.is_approved_seller)
         return res.status(403).json({
           success: false,
           message: "Seller not approved by SuperAdmin",
         });
-      }
-
-      if (animal_id) {
-        return res.status(400).json({
-          success: false,
-          message: "Sellers cannot provide animal_id; details must be manual",
-        });
-      }
 
       if (!parsedDetails.age || !parsedDetails.breed_name) {
         return res.status(400).json({
@@ -145,9 +145,9 @@ exports.createListing = async (req, res) => {
       }
 
       let cleanStage = null;
-      if (parsedDetails.stage && validStages.includes(parsedDetails.stage))
-        cleanStage = parsedDetails.stage;
-      else {
+      if (parsedDetails.stage && validStages.includes(parsedDetails.stage.toLowerCase())) {
+        cleanStage = parsedDetails.stage.toLowerCase();
+      } else {
         const defaults = {
           cow: "cow",
           bull: "mature_bull",
@@ -158,7 +158,6 @@ exports.createListing = async (req, res) => {
         cleanStage = defaults[animal_type] || null;
       }
 
-      listingData.farmer = farmer_id || null;
       listingData.animal_details = {
         age: Number(parsedDetails.age),
         breed_name: parsedDetails.breed_name,
@@ -181,19 +180,19 @@ exports.createListing = async (req, res) => {
       };
     }
 
-    // 🚫 Unauthorized
+    // 🚫 Unauthorized user role
     else {
       return res.status(403).json({
         success: false,
-        message: "Unauthorized role — cannot create listing",
+        message: "Unauthorized — only farmer or seller can create listings",
       });
     }
 
-    // ✅ Save listing
+    // ✅ Save the listing
     const listing = new Listing(listingData);
     await listing.save();
 
-    console.log("✅ Listing saved successfully:", listing._id);
+    console.log("✅ Listing created:", listing._id);
 
     return res.status(201).json({
       success: true,
@@ -202,14 +201,13 @@ exports.createListing = async (req, res) => {
     });
   } catch (err) {
     console.error("❌ Create listing error:", err);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Server error during listing creation",
       error: err.message,
     });
   }
-};// ---------------------------
-// GET all active listings (Marketplace homepage)
+};// GET all active listings (Marketplace homepage)
 // ---------------------------
 exports.getListings = async (req, res) => {
   try {
