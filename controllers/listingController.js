@@ -26,7 +26,12 @@ exports.createListing = async (req, res) => {
       animal_details
     } = req.body;
 
-    // Parse animal_details safely
+    console.log("🟢 Create listing request received");
+    console.log("🟢 req.user:", req.user);
+    console.log("🟢 req.files:", req.files?.map(f => f.originalname));
+    console.log("🟢 req.body:", req.body);
+
+    // ✅ Parse animal_details safely
     let parsedDetails = {};
     if (typeof animal_details === "string") {
       try {
@@ -38,26 +43,25 @@ exports.createListing = async (req, res) => {
       parsedDetails = animal_details;
     }
 
-    // ✅ Handle images from multer (buffer or temp file)
+    // ✅ Handle Cloudinary uploads
     let uploadedPhotos = [];
-    if (req.files && Array.isArray(req.files) && req.files.length > 0) {
+    if (req.files && req.files.length > 0) {
+      console.log(`📸 Received ${req.files.length} file(s) to upload...`);
+
       const uploadPromises = req.files.map(async (file) => {
+        console.log("⬆️ Uploading:", file.originalname);
         const result = await cloudinary.uploader.upload(file.path, {
           folder: "maziwasmart/listings",
           resource_type: "image",
         });
+        console.log("✅ Upload success:", result.secure_url);
         return result.secure_url;
       });
+
       uploadedPhotos = await Promise.all(uploadPromises);
     }
 
-    const bodyPhotos = Array.isArray(req.body.photos)
-      ? req.body.photos
-      : req.body.photos
-        ? [req.body.photos]
-        : [];
-
-    const photos = [...bodyPhotos, ...uploadedPhotos].filter(Boolean);
+    const photos = uploadedPhotos.filter(Boolean);
 
     if (!title || !animal_type || !price) {
       return res.status(400).json({
@@ -179,6 +183,8 @@ exports.createListing = async (req, res) => {
     const listing = new Listing(listingData);
     await listing.save();
 
+    console.log("✅ Listing created successfully:", listing._id);
+
     return res.status(201).json({
       success: true,
       message: "Listing created successfully ✅",
@@ -192,8 +198,7 @@ exports.createListing = async (req, res) => {
       error: err.message,
     });
   }
-};
-// ---------------------------
+};// ---------------------------
 // GET all active listings (Marketplace homepage)
 // ---------------------------
 exports.getListings = async (req, res) => {
