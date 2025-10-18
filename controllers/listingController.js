@@ -483,19 +483,8 @@ exports.updateListing = async (req, res) => {
     const { id } = req.params;
 
     console.log("🟢 PATCH update called for:", id);
-    console.log("🟢 req.user:", JSON.stringify(req.user, null, 2));
-    console.log("🟢 req.files:", req.files?.map(f => f.path) || []);
     console.log("🟢 req.body:", req.body);
-
-    const updates = { ...req.body };
-
-    // ✅ Get new uploaded photos from Cloudinary
-    let newUploadedPhotos = [];
-    if (req.files && req.files.length > 0) {
-      console.log(`📸 Received ${req.files.length} new files`);
-      newUploadedPhotos = req.files.map(f => f.path); // Already Cloudinary URLs
-      console.log("✅ New Cloudinary URLs:", newUploadedPhotos);
-    }
+    console.log("🟢 req.files:", req.files?.length || 0);
 
     const existing = await Listing.findOne({ _id: id, seller: req.user.id });
     if (!existing) {
@@ -505,32 +494,56 @@ exports.updateListing = async (req, res) => {
       });
     }
 
-    // ✅ Handle photos array properly
+    const updates = { ...req.body };
+
+    // ✅ Handle photos properly
     let finalPhotos = [];
-    
-    if (req.body.photos) {
-      // If photos sent in body, use those (for deleting photos case)
-      if (typeof req.body.photos === 'string') {
-        // Single photo sent as string
-        finalPhotos = [req.body.photos];
-      } else if (Array.isArray(req.body.photos)) {
-        // Multiple photos sent as array
-        finalPhotos = req.body.photos.filter(p => p && typeof p === 'string' && p.trim() !== '');
+
+    // If existingPhotos is sent (during save with new files)
+    if (req.body.existingPhotos) {
+      try {
+        const parsed = JSON.parse(req.body.existingPhotos);
+        if (Array.isArray(parsed)) {
+          finalPhotos = parsed.filter(p => p && typeof p === 'string');
+        }
+      } catch (e) {
+        console.error("Failed to parse existingPhotos:", e);
       }
-    } else {
-      // No photos in body, keep existing
+    } 
+    // If photos is sent directly (during delete)
+    else if (req.body.photos) {
+      if (Array.isArray(req.body.photos)) {
+        finalPhotos = req.body.photos.filter(p => p && typeof p === 'string');
+      } else if (typeof req.body.photos === 'string') {
+        try {
+          const parsed = JSON.parse(req.body.photos);
+          if (Array.isArray(parsed)) {
+            finalPhotos = parsed.filter(p => p && typeof p === 'string');
+          }
+        } catch {
+          finalPhotos = [req.body.photos];
+        }
+      }
+    } 
+    // Otherwise keep existing
+    else {
       finalPhotos = Array.isArray(existing.photos) ? existing.photos : [];
     }
 
     // Add new uploaded photos
-    if (newUploadedPhotos.length > 0) {
-      finalPhotos = [...finalPhotos, ...newUploadedPhotos];
+    if (req.files && req.files.length > 0) {
+      const newPhotos = req.files.map(f => f.path);
+      console.log("✅ New uploads:", newPhotos);
+      finalPhotos = [...finalPhotos, ...newPhotos];
     }
 
     // Remove duplicates
     updates.photos = [...new Set(finalPhotos)];
 
-    console.log("📸 Final photos array:", updates.photos);
+    console.log("📸 Final photos:", updates.photos);
+
+    // Remove existingPhotos from updates (not a schema field)
+    delete updates.existingPhotos;
 
     const listing = await Listing.findByIdAndUpdate(id, updates, {
       new: true,
@@ -544,7 +557,7 @@ exports.updateListing = async (req, res) => {
       });
     }
 
-    console.log("✅ Listing updated successfully:", listing._id);
+    console.log("✅ Listing updated:", listing._id);
     res.status(200).json({
       success: true,
       message: "Listing updated successfully ✅",
@@ -556,11 +569,10 @@ exports.updateListing = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Internal Server Error during update",
-      error: err.message || "Unknown error",
+      error: err.message,
     });
   }
 };
-
 // ---------------------------
 // DELETE listing (only seller can delete)
 // ---------------------------
