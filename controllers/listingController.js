@@ -44,23 +44,16 @@ exports.createListing = async (req, res) => {
     }
 
     // ✅ Upload images to Cloudinary
-    let uploadedPhotos = [];
-    if (req.files && req.files.length > 0) {
-      console.log(`📸 Uploading ${req.files.length} image(s) to Cloudinary...`);
-      const uploadPromises = req.files.map(async (file) => {
-        try {
-          const result = await cloudinary.uploader.upload(file.path, {
-            folder: "maziwasmart/listings",
-            resource_type: "image",
-          });
-          return result.secure_url;
-        } catch (err) {
-          console.error("❌ Cloudinary upload failed:", err.message);
-          return null;
-        }
-      });
-      uploadedPhotos = (await Promise.all(uploadPromises)).filter(Boolean);
-    }
+    // ✅ Cloudinary URLs are already ready from multer-storage-cloudinary
+let uploadedPhotos = [];
+if (Array.isArray(req.files) && req.files.length > 0) {
+  console.log(`📸 ${req.files.length} image(s) already uploaded via multer-storage-cloudinary`);
+  uploadedPhotos = req.files.map(f => f.path); // multer-storage-cloudinary gives Cloudinary URLs
+  console.log("✅ Cloudinary URLs:", uploadedPhotos);
+} else {
+  console.log("⚠️ No files uploaded");
+}
+
 
     // ✅ Basic validation
     if (!title || !animal_type || !price) {

@@ -62,32 +62,6 @@ exports.getNotifications = async (req, res) => {
 
 
 // 🟢 Create a notification + emit to socket
-exports.createNotification = async (req, res) => {
-  try {
-    const { type, message, cow, targetUserId, targetFarmerId } = req.body;
-
-    const notification = await Notification.create({
-      user: targetUserId || null,
-      farmer: targetFarmerId || null,
-      cow: cow || null,
-      type,
-      message,
-    });
-
-    const io = req.app.get("io");
-    if (targetUserId) {
-      io.to(`user_${targetUserId}`).emit("new_notification", notification);
-    }
-    if (targetFarmerId) {
-      io.to(`farmer_${targetFarmerId}`).emit("new_notification", notification);
-    }
-
-    res.status(201).json({ success: true, data: notification });
-  } catch (err) {
-    console.error("❌ Error creating notification:", err);
-    res.status(500).json({ success: false, message: "Server Error" });
-  }
-};
 
 // 🟢 Mark a single notification as read
 exports.markAsRead = async (req, res) => {
@@ -161,6 +135,32 @@ exports.deleteNotification = async (req, res) => {
     res.json({ success: true, message: "Notification deleted" });
   } catch (err) {
     console.error("❌ Error deleting notification:", err);
+    res.status(500).json({ success: false, message: "Server Error" });
+  }
+};
+exports.createNotification = async (req, res) => {
+  try {
+    const { type, message, cow, targetUserId, targetFarmerId } = req.body;
+
+    const notification = await Notification.create({
+      user: targetUserId || null,
+      farmer: targetFarmerId || null,
+      cow: cow || null,
+      type,
+      message,
+    });
+
+    const io = req.app.get("io");
+    if (targetUserId) {
+      io.to(`user_${targetUserId}`).emit("new_notification", notification);
+    }
+    if (targetFarmerId) {
+      io.to(`farmer_${targetFarmerId}`).emit("new_notification", notification);
+    }
+
+    res.status(201).json({ success: true, data: notification });
+  } catch (err) {
+    console.error("❌ Error creating notification:", err);
     res.status(500).json({ success: false, message: "Server Error" });
   }
 };
