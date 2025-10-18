@@ -1,18 +1,20 @@
 // controllers/notificationController.js
 const { Notification } = require("../models/model");
 
-// 🛠 Helper: decide filter based on logged-in role
+// 🛠 Better Helper: Build filter that matches how notifications are stored
 function buildUserFilter(req) {
   if (req.user.role === "farmer") {
-    return { farmer: req.user.id };
+    // Check BOTH farmer ObjectId and farmer_code
+    return {
+      $or: [
+        { farmer: req.user.id },
+        { farmer_code: req.user.code }
+      ]
+    };
   } else {
     return { user: req.user.id };
   }
 }
-
-// 🟢 Get all notifications (filter by role, farmer_code, user)
-// controllers/notificationController.js
-
 exports.getNotifications = async (req, res) => {
   try {
     const { type, is_read } = req.query;
@@ -64,18 +66,26 @@ exports.getNotifications = async (req, res) => {
 // 🟢 Create a notification + emit to socket
 
 // 🟢 Mark a single notification as read
+// 🟢 Mark a single notification as read
 exports.markAsRead = async (req, res) => {
   try {
     const { id } = req.params;
     const filter = buildUserFilter(req);
 
+    // Build query: _id AND (user filter)
+    const query = {
+      _id: id,
+      ...filter
+    };
+
     const updated = await Notification.findOneAndUpdate(
-      { _id: id, ...filter },
+      query,
       { is_read: true },
       { new: true }
     );
 
     if (!updated) {
+      console.log("❌ Notification not found with filter:", query);
       return res
         .status(404)
         .json({ success: false, message: "Notification not found" });
@@ -83,8 +93,7 @@ exports.markAsRead = async (req, res) => {
 
     const io = req.app.get("io");
     if (updated.user) io.to(`user_${updated.user}`).emit("notification_read", updated);
-    if (updated.farmer)
-      io.to(`farmer_${updated.farmer}`).emit("notification_read", updated);
+    if (updated.farmer) io.to(`farmer_${updated.farmer}`).emit("notification_read", updated);
 
     res.json({ success: true, data: updated });
   } catch (err) {
@@ -114,31 +123,37 @@ exports.markAllAsRead = async (req, res) => {
 };
 
 // 🟢 Delete a notification
+
+// 🟢 Delete a notification
 exports.deleteNotification = async (req, res) => {
   try {
     const { id } = req.params;
     const filter = buildUserFilter(req);
 
-    const deleted = await Notification.findOneAndDelete({ _id: id, ...filter });
+    const query = {
+      _id: id,
+      ...filter
+    };
+
+    const deleted = await Notification.findOneAndDelete(query);
+    
     if (!deleted) {
+      console.log("❌ Notification not found with filter:", query);
       return res
         .status(404)
         .json({ success: false, message: "Notification not found" });
     }
 
     const io = req.app.get("io");
-    if (deleted.user)
-      io.to(`user_${deleted.user}`).emit("notification_deleted", { id });
-    if (deleted.farmer)
-      io.to(`farmer_${deleted.farmer}`).emit("notification_deleted", { id });
+    if (deleted.user) io.to(`user_${deleted.user}`).emit("notification_deleted", { id });
+    if (deleted.farmer) io.to(`farmer_${deleted.farmer}`).emit("notification_deleted", { id });
 
     res.json({ success: true, message: "Notification deleted" });
   } catch (err) {
     console.error("❌ Error deleting notification:", err);
     res.status(500).json({ success: false, message: "Server Error" });
   }
-};
-exports.createNotification = async (req, res) => {
+};exports.createNotification = async (req, res) => {
   try {
     const { type, message, cow, targetUserId, targetFarmerId } = req.body;
 
