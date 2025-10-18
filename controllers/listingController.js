@@ -190,7 +190,9 @@ exports.createListing = async (req, res) => {
       error: err.message,
     });
   }
-};// GET all active listings (Marketplace homepage)
+};
+
+// GET all active listings (Marketplace homepage)
 // ---------------------------
 exports.getListings = async (req, res) => {
   try {
@@ -482,6 +484,7 @@ exports.getListingById = async (req, res) => {
 // ---------------------------
 // controllers/listingController.js
 
+// controllers/listingController.js - updateListing function
 exports.updateListing = async (req, res) => {
   try {
     const { id } = req.params;
@@ -499,54 +502,49 @@ exports.updateListing = async (req, res) => {
     }
 
     const updates = { ...req.body };
-
-    // ✅ Handle photos properly
     let finalPhotos = [];
 
-    // If existingPhotos is sent (during save with new files)
-    if (req.body.existingPhotos) {
-      try {
-        const parsed = JSON.parse(req.body.existingPhotos);
-        if (Array.isArray(parsed)) {
-          finalPhotos = parsed.filter(p => p && typeof p === 'string');
+    // ✅ Extract existing photos from photos[] array notation
+    if (req.body.photos) {
+      // FormData sends array items as photos[0], photos[1], etc.
+      const photosArray = [];
+      Object.keys(req.body).forEach(key => {
+        if (key.startsWith('photos[') && req.body[key]) {
+          photosArray.push(req.body[key]);
         }
-      } catch (e) {
-        console.error("Failed to parse existingPhotos:", e);
+      });
+      
+      if (photosArray.length > 0) {
+        finalPhotos = photosArray.filter(p => p && typeof p === 'string' && p.startsWith('http'));
+      } else {
+        // Fallback: try direct photos field
+        finalPhotos = Array.isArray(existing.photos) ? existing.photos : [];
       }
-    } 
-    // If photos is sent directly (during delete)
-    else if (req.body.photos) {
-      if (Array.isArray(req.body.photos)) {
-        finalPhotos = req.body.photos.filter(p => p && typeof p === 'string');
-      } else if (typeof req.body.photos === 'string') {
-        try {
-          const parsed = JSON.parse(req.body.photos);
-          if (Array.isArray(parsed)) {
-            finalPhotos = parsed.filter(p => p && typeof p === 'string');
-          }
-        } catch {
-          finalPhotos = [req.body.photos];
-        }
-      }
-    } 
-    // Otherwise keep existing
-    else {
+    } else {
+      // Keep existing photos if none provided
       finalPhotos = Array.isArray(existing.photos) ? existing.photos : [];
     }
 
-    // Add new uploaded photos
+    // Add new uploaded photos from Cloudinary
     if (req.files && req.files.length > 0) {
       const newPhotos = req.files.map(f => f.path);
       console.log("✅ New uploads:", newPhotos);
       finalPhotos = [...finalPhotos, ...newPhotos];
     }
 
-    // Remove duplicates
-    updates.photos = [...new Set(finalPhotos)];
+    // Remove duplicates and filter out invalid URLs
+    updates.photos = [...new Set(finalPhotos)].filter(p => 
+      p && typeof p === 'string' && p.startsWith('http')
+    );
 
     console.log("📸 Final photos:", updates.photos);
 
-    // Remove existingPhotos from updates (not a schema field)
+    // Clean up FormData artifacts
+    Object.keys(updates).forEach(key => {
+      if (key.startsWith('photos[')) {
+        delete updates[key];
+      }
+    });
     delete updates.existingPhotos;
 
     const listing = await Listing.findByIdAndUpdate(id, updates, {
@@ -576,8 +574,7 @@ exports.updateListing = async (req, res) => {
       error: err.message,
     });
   }
-};
-// ---------------------------
+};// ---------------------------
 // DELETE listing (only seller can delete)
 // ---------------------------
 // controllers/listingController.js - Updated deleteListing function
