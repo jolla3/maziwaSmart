@@ -43,17 +43,15 @@ exports.createListing = async (req, res) => {
       parsedDetails = animal_details;
     }
 
-    // ✅ Upload images to Cloudinary
-    // ✅ Cloudinary URLs are already ready from multer-storage-cloudinary
-let uploadedPhotos = [];
-if (Array.isArray(req.files) && req.files.length > 0) {
-  console.log(`📸 ${req.files.length} image(s) already uploaded via multer-storage-cloudinary`);
-  uploadedPhotos = req.files.map(f => f.path); // multer-storage-cloudinary gives Cloudinary URLs
-  console.log("✅ Cloudinary URLs:", uploadedPhotos);
-} else {
-  console.log("⚠️ No files uploaded");
-}
-
+    // ✅ Get Cloudinary URLs from multer-storage-cloudinary
+    let uploadedPhotos = [];
+    if (Array.isArray(req.files) && req.files.length > 0) {
+      console.log(`📸 ${req.files.length} image(s) uploaded via multer-storage-cloudinary`);
+      uploadedPhotos = req.files.map(f => f.path); // Cloudinary URLs
+      console.log("✅ Cloudinary URLs:", uploadedPhotos);
+    } else {
+      console.log("⚠️ No files uploaded");
+    }
 
     // ✅ Basic validation
     if (!title || !animal_type || !price) {
@@ -79,7 +77,6 @@ if (Array.isArray(req.files) && req.files.length > 0) {
       farmer: null,
     };
 
-    // ✅ Allowed animal stages
     const validStages = [
       "calf", "heifer", "cow",
       "bull_calf", "young_bull", "mature_bull",
@@ -88,9 +85,6 @@ if (Array.isArray(req.files) && req.files.length > 0) {
       "piglet", "gilt", "sow", "boar"
     ];
 
-    // ----------------------------
-    // 👨‍🌾 FARMER LISTING
-    // ----------------------------
     if (req.user.role === "farmer") {
       console.log("👨‍🌾 Creating listing for farmer...");
 
@@ -110,12 +104,7 @@ if (Array.isArray(req.files) && req.files.length > 0) {
       }
 
       if (!listingData.location) listingData.location = farmerDoc.location || "";
-    }
-
-    // ----------------------------
-    // 🧑‍💼 SELLER LISTING
-    // ----------------------------
-    else if (req.user.role === "seller") {
+    } else if (req.user.role === "seller") {
       console.log("🧑‍💼 Creating listing for seller...");
 
       const sellerDoc = await User.findById(sellerRef);
@@ -171,17 +160,13 @@ if (Array.isArray(req.files) && req.files.length > 0) {
           }),
         },
       };
-    }
-
-    // 🚫 Unauthorized user role
-    else {
+    } else {
       return res.status(403).json({
         success: false,
         message: "Unauthorized — only farmer or seller can create listings",
       });
     }
 
-    // ✅ Save the listing
     const listing = new Listing(listingData);
     await listing.save();
 
@@ -200,7 +185,8 @@ if (Array.isArray(req.files) && req.files.length > 0) {
       error: err.message,
     });
   }
-};// GET all active listings (Marketplace homepage)
+};
+// GET all active listings (Marketplace homepage)
 // ---------------------------
 exports.getListings = async (req, res) => {
   try {
@@ -498,28 +484,19 @@ exports.updateListing = async (req, res) => {
 
     console.log("🟢 PATCH update called for:", id);
     console.log("🟢 req.user:", JSON.stringify(req.user, null, 2));
-    console.log("🟢 req.files:", req.files?.map(f => f.path || f.secure_url) || []);
+    console.log("🟢 req.files:", req.files?.map(f => f.path) || []);
     console.log("🟢 req.body:", req.body);
 
-    // 🧠 Prepare updates from body
     const updates = { ...req.body };
 
-    // ✅ If files exist, upload each to Cloudinary
-    let uploadedPhotos = [];
+    // ✅ Get new uploaded photos from Cloudinary
+    let newUploadedPhotos = [];
     if (req.files && req.files.length > 0) {
-      console.log(`📸 Received ${req.files.length} files to upload...`);
-      for (const file of req.files) {
-        console.log(`⬆️ Uploading ${file.originalname}...`);
-        const uploadResult = await cloudinary.uploader.upload(file.path, {
-          folder: "maziwasmart/listings",
-          resource_type: "image",
-        });
-        uploadedPhotos.push(uploadResult.secure_url);
-        console.log("✅ Upload success:", uploadResult.secure_url);
-      }
+      console.log(`📸 Received ${req.files.length} new files`);
+      newUploadedPhotos = req.files.map(f => f.path); // Already Cloudinary URLs
+      console.log("✅ New Cloudinary URLs:", newUploadedPhotos);
     }
 
-    // 🧠 Fetch the existing listing
     const existing = await Listing.findOne({ _id: id, seller: req.user.id });
     if (!existing) {
       return res.status(404).json({
@@ -528,15 +505,33 @@ exports.updateListing = async (req, res) => {
       });
     }
 
-    // 🧠 Merge photos — keep old ones + add new uploaded ones
-    const existingPhotos = Array.isArray(existing.photos) ? existing.photos : [];
-    const bodyPhotos = Array.isArray(req.body.photos)
-      ? req.body.photos.filter(p => p && p.trim() !== "")
-      : [];
+    // ✅ Handle photos array properly
+    let finalPhotos = [];
+    
+    if (req.body.photos) {
+      // If photos sent in body, use those (for deleting photos case)
+      if (typeof req.body.photos === 'string') {
+        // Single photo sent as string
+        finalPhotos = [req.body.photos];
+      } else if (Array.isArray(req.body.photos)) {
+        // Multiple photos sent as array
+        finalPhotos = req.body.photos.filter(p => p && typeof p === 'string' && p.trim() !== '');
+      }
+    } else {
+      // No photos in body, keep existing
+      finalPhotos = Array.isArray(existing.photos) ? existing.photos : [];
+    }
 
-    updates.photos = [...new Set([...existingPhotos, ...bodyPhotos, ...uploadedPhotos])];
+    // Add new uploaded photos
+    if (newUploadedPhotos.length > 0) {
+      finalPhotos = [...finalPhotos, ...newUploadedPhotos];
+    }
 
-    // 🧠 Save update
+    // Remove duplicates
+    updates.photos = [...new Set(finalPhotos)];
+
+    console.log("📸 Final photos array:", updates.photos);
+
     const listing = await Listing.findByIdAndUpdate(id, updates, {
       new: true,
       runValidators: true,
@@ -565,7 +560,6 @@ exports.updateListing = async (req, res) => {
     });
   }
 };
-
 
 // ---------------------------
 // DELETE listing (only seller can delete)
