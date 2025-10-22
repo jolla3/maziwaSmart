@@ -57,6 +57,7 @@ const {
   login,
   registerSeller,
   googleCallback,
+  registerFarmer,
 } = require("../controllers/authController");
 const { toggleSellerApproval } = require("../controllers/adminController");
 const { verifyToken } = require("../middleware/authMiddleware");
@@ -64,7 +65,8 @@ const { verifyToken } = require("../middleware/authMiddleware");
 // ----------------------------
 // NORMAL AUTH ROUTES
 // ----------------------------
-router.post("/register", registerAdmin);     // Admin register
+router.post("/register", registerAdmin);
+router.post('/register/farmer', registerFarmer);     // Admin register
 router.post("/login", login);                // Login (admin, farmer, porter, etc.)
 router.post("/seller/register", registerSeller); // Register seller (pending approval)
 router.post("/set-password", require("../controllers/authController").setPassword);
