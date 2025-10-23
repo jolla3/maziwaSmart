@@ -95,6 +95,9 @@ app.use('/api/listing', listingRoutes)
 const cloudinaryTest = require("./routes/cloudinaryTest");
 app.use("/api/cloudinary-test", cloudinaryTest);
 
+const requestApproval = require("./routes/sellerRequestRoutes");
+app.use("/api/seller-request", requestApproval);
+
 
 // MongoDB connection
 mongoose.connect(process.env.MONGO_URI)
