@@ -71,26 +71,26 @@ exports.login = async (req, res) => {
     const { email, password } = req.body;
 
     let user = null;
-    let role = "";
-    let code = "";
+    let role = ""
+    let code = ""
 
-    // 1️⃣ Try system user (admin, superadmin, broker, buyer, seller, manager)
+    // 1️⃣ Check if it's a system user (admin, superadmin, broker, buyer, seller, manager)
     user = await User.findOne({ email });
     if (user) {
-      role = user.role;
-      code = ""; // system users don’t have a code
+      role = user.role; // use directly from schema
+      code = ""; // system users don’t have a farmer/porter code
     }
 
-    // 2️⃣ Try farmer
+    // 2️⃣ Farmer
     if (!user) {
       user = await Farmer.findOne({ email });
       if (user) {
-        role = "farmer";
+        role = "farmer"
         code = user.farmer_code;
       }
     }
 
-    // 3️⃣ Try porter
+    // 3️⃣ Porter
     if (!user) {
       user = await Porter.findOne({ email });
       if (user) {
@@ -99,62 +99,53 @@ exports.login = async (req, res) => {
       }
     }
 
-    // 🚫 Not found
+    // 🚨 Account not found
     if (!user) {
       return res.status(404).json({ message: "❌ Account not found" });
     }
 
-    // 🚫 Check if inactive
-    if (user.is_active === false) {
-      return res.status(403).json({
-        message: "🚫 Account is deactivated. Please contact admin.",
-      });
-    }
-
-    // 🚫 No password set
+    // 🚨 No password set
     if (!user.password) {
-      return res.status(400).json({
-        message: `❌ This ${role} has no login credentials.`,
-      });
+      return res
+        .status(400)
+        .json({ message: `❌ This ${role} has no login credentials` });
     }
 
-    // ✅ Compare passwords
+    // ✅ Validate password
     const validPass = await bcrypt.compare(password, user.password);
     if (!validPass) {
-      return res.status(400).json({
-        message: "❌ Invalid credentials.",
-      });
+      return res.status(400).json({ message: "❌ Invalid password" });
     }
 
-    // 🎯 Build payload
+    // ✅ JWT Payload
     const payload = {
       id: user._id,
       name: user.name || user.fullname || user.username || "",
       email: user.email,
       role,
-      ...(code && { code }), // include code if available
+      code,
     };
 
-    // 🔐 Generate token
     const token = jwt.sign(payload, process.env.JWT_SECRET, {
       expiresIn: "7d",
     });
 
-    // ✅ Success
+    // ✅ Success response
     res.status(200).json({
-      success: true,
       message: "✅ Login successful",
       token,
       role,
-      user: payload,
+      user: {
+        id: user._id,
+        name: user.name || user.fullname || user.username || "",
+        email: user.email,
+        role,
+        code,
+      },
     });
   } catch (error) {
     console.error("❌ Login error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Login failed.",
-      error: error.message,
-    });
+    res.status(500).json({ message: "Login failed", error: error.message });
   }
 };
 
