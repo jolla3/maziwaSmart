@@ -727,6 +727,19 @@ const chatMessageSchema = new Schema({
 });
 
 const ChatMessage = mongoose.model('ChatMessage', chatMessageSchema);
+
+
+const sellerApprovalRequestSchema = new Schema({
+  seller_id: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+  email: { type: String, required: true },
+  phone: { type: String, required: true },
+  country: { type: String, required: true },
+  county: { type: String, required: true },
+  status: { type: String, enum: ["pending", "approved", "rejected"], default: "pending" },
+  created_at: { type: Date, default: Date.now },
+});
+
+const SellerApprovalRequest = mongoose.model("SellerApprovalRequest", sellerApprovalRequestSchema);
 // const dealSchema = new Schema({
 //   listing: { type: Schema.Types.ObjectId, ref: 'Listing', required: true },
 //   buyer: { type: Schema.Types.ObjectId, ref: 'User', required: true },
@@ -741,7 +754,7 @@ const ChatMessage = mongoose.model('ChatMessage', chatMessageSchema);
 //   updated_at: { type: Date, default: Date.now }
 // });
 
-// const ChatMessage = mongoose.model('ChatMessage', dealSchema);
+// const ChatMessage = mongoose.model('ChatMess3age', dealSchema);
 
 
 
@@ -757,6 +770,7 @@ module.exports = {
   PorterLog,
   MilkRecord,
   CowMilkRecord,
+  SellerApprovalRequest,
 
   DailyMilkSummary,
   Breed,

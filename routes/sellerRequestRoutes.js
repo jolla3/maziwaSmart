@@ -16,3 +16,4 @@ router.post("/verify-otp", verifyOtp);
 router.post("/complete-setup", completeSellerSetup);
 
 module.exports = router;
+
