@@ -98,6 +98,9 @@ app.use("/api/cloudinary-test", cloudinaryTest);
 const requestApproval = require("./routes/sellerRequestRoutes");
 app.use("/api/seller-request", requestApproval);
 
+const Approval = require("./routes/adminRoutes");
+app.use("/api/approval",Approval);
+
 
 
 

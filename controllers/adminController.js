@@ -9,13 +9,25 @@ exports.getPendingSellerRequests = async (req, res) => {
       return res.status(403).json({ success: false, message: "❌ Not authorized" });
     }
 
+    // ✅ Populate seller info including phone and county from SellerApprovalRequest
     const requests = await SellerApprovalRequest.find({ status: "pending" })
-      .populate("seller_id", "fullname email role createdAt phone county");
+      .populate("seller_id", "fullname username email role createdAt")
+      .lean(); // Use lean for better performance
+
+    // ✅ Map and include phone/county from the request itself
+    const formattedRequests = requests.map(req => ({
+      ...req,
+      phone: req.phone,
+      county: req.county,
+      country: req.country
+    }));
+
+    console.log(`✅ Found ${formattedRequests.length} pending requests`);
 
     res.status(200).json({
       success: true,
-      count: requests.length,
-      requests,
+      count: formattedRequests.length,
+      requests: formattedRequests,
     });
   } catch (err) {
     console.error("❌ Fetch pending seller requests error:", err);

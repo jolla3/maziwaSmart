@@ -59,7 +59,7 @@ const {
   googleCallback,
   registerFarmer,
 } = require("../controllers/authController");
-const { toggleSellerApproval } = require("../controllers/adminController");
+// const { toggleSellerApproval } = require("../controllers/adminController");
 const { verifyToken } = require("../middleware/authMiddleware");
 
 // ----------------------------
@@ -72,7 +72,6 @@ router.post("/login", login);                // Login (admin, farmer, porter, et
 router.post("/set-password", require("../controllers/authController").setPassword);
 
 // Only superadmin should access
-router.patch("/:id", verifyToken, toggleSellerApproval);
 
 
 // ----------------------------
