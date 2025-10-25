@@ -23,7 +23,7 @@ exports.getPendingSellerRequests = async (req, res) => {
 };
 
 
-
+// ✅ Review (approve/reject) seller request
 exports.reviewSellerRequest = async (req, res) => {
   try {
     if (req.user.role !== "superadmin") {
