@@ -1,52 +1,33 @@
 // utils/emailService.js
-const nodemailer = require("nodemailer");
+const Brevo = require("@getbrevo/brevo");
 
-// ✅ Create transporter (Brevo-compatible)
-const transporter = nodemailer.createTransport({
-  host: process.env.EMAIL_HOST || "smtp-relay.brevo.com",
-  port: Number(process.env.EMAIL_PORT) || 587,
-  secure: false, // STARTTLS
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-  tls: { rejectUnauthorized: false },
-  connectionTimeout: 10000,
-  greetingTimeout: 10000,
-  socketTimeout: 10000,
-});
+const apiInstance = new Brevo.TransactionalEmailsApi();
+apiInstance.setApiKey(Brevo.TransactionalEmailsApiApiKeys.apiKey, process.env.BREVO_API_KEY);
 
-
-// ✅ Verify connection
-transporter.verify((error, success) => {
-  if (error) {
-    console.error("❌ Email transporter verification failed:", error.message);
-  } else {
-    console.log("✅ Brevo email service ready to send messages!");
-  }
-});
-
-// ✅ Reusable send mail function
+// ✅ Reusable sendMail function
 const sendMail = async (to, subject, html) => {
   try {
-    const mailOptions = {
-      from: `"MaziwaSmart (No Reply)" <maziwasmart@gmail.com>`,
-      to,
+    const emailData = {
+      sender: {
+        name: "MaziwaSmart (No Reply)",
+        email: "maziwasmart@gmail.com", // use Gmail or any verified Brevo sender
+      },
+      to: [{ email: to }],
       subject,
-      replyTo: "maziwasmart@gmail.com",
+      htmlContent: html,
+      replyTo: { email: "no-reply@maziwasmart.com" }, // no replies
       headers: {
         "X-Auto-Response-Suppress": "All",
         "Auto-Submitted": "auto-generated",
       },
-      html,
     };
 
-    const info = await transporter.sendMail(mailOptions);
-    console.log("✅ Email sent:", info.messageId);
-    return { success: true, messageId: info.messageId };
-  } catch (err) {
-    console.error("❌ Email sending failed:", err.message);
-    return { success: false, error: err.message };
+    const response = await apiInstance.sendTransacEmail(emailData);
+    console.log("✅ Email sent successfully via Brevo:", response.messageId || response);
+    return { success: true };
+  } catch (error) {
+    console.error("❌ Email sending failed:", error.message || error);
+    return { success: false, error: error.message || error };
   }
 };
 

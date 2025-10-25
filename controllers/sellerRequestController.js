@@ -1,4 +1,4 @@
-const { User } = require("../models/model");
+const { User , SellerApprovalRequest} = require("../models/model");
 const crypto = require("crypto");
 const { sendMail } = require("../utils/emailService");
 
@@ -111,6 +111,16 @@ exports.completeSellerSetup = async (req, res) => {
     user.seller_terms_text = SELLER_TERMS;
     user.seller_terms_accepted_at = new Date();
     await user.save();
+
+    // Save approval request record
+await SellerApprovalRequest.create({
+  seller_id: user._id,
+  email,
+  phone,
+  country: user.country || "Unknown",
+  county,
+  status: "pending",
+});
 
     // Notify superadmin
     const adminMsg = `
