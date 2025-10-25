@@ -7,11 +7,32 @@ const {
   reviewSellerRequest,
 } = require("../controllers/adminController");
 
+// ✅ TEST ROUTE - Check if route is working
+router.get("/test", (req, res) => {
+  res.json({ 
+    success: true, 
+    message: "Admin route is working!",
+    timestamp: new Date()
+  });
+});
+
+// ✅ TEST ROUTE - Check auth
+router.get("/test-auth", verifyToken, (req, res) => {
+  res.json({ 
+    success: true, 
+    message: "Auth is working!",
+    user: {
+      id: req.user.id,
+      role: req.user.role
+    }
+  });
+});
+
 // ✅ Toggle seller approval manually (admin or superadmin)
 router.patch(
   "/approve-seller/:id",
   verifyToken,
-  authorizeRoles("admin", "superadmin"), // ✅ Allow both
+  authorizeRoles("admin", "superadmin"),
   toggleSellerApproval
 );
 
@@ -19,7 +40,7 @@ router.patch(
 router.get(
   "/seller-requests",
   verifyToken,
-  authorizeRoles("admin", "superadmin"), // ✅ Allow both
+  authorizeRoles("admin", "superadmin"),
   getPendingSellerRequests
 );
 
@@ -27,7 +48,7 @@ router.get(
 router.patch(
   "/seller-requests/:id",
   verifyToken,
-  authorizeRoles("admin", "superadmin"), // ✅ Allow both
+  authorizeRoles("admin", "superadmin"),
   reviewSellerRequest
 );
 
