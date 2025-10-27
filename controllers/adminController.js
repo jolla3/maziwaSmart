@@ -10,9 +10,9 @@ exports.getPendingSellerRequests = async (req, res) => {
       return res.status(403).json({ success: false, message: "❌ Not authorized" });
     }
 
-    const filter =status?{status}:{}
+    const query = status && status !== "all" ? { status } : {};
     // ✅ Populate seller info including phone and county from SellerApprovalRequest
-    const requests = await SellerApprovalRequest.find(filter)
+    const requests = await SellerApprovalRequest.find(query)
       .populate("seller_id", "fullname username email role createdAt")
       .lean(); // Use lean for better performance
 
