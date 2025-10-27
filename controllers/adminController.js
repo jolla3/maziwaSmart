@@ -4,13 +4,15 @@ const { sendMail } = require("../utils/emailService");
 // ✅ Get all pending seller approval requests
 exports.getPendingSellerRequests = async (req, res) => {
   try {
+    const {status} = req.query
     // ✅ Allow both admin and superadmin
     if (!["admin", "superadmin"].includes(req.user.role)) {
       return res.status(403).json({ success: false, message: "❌ Not authorized" });
     }
 
+    const filter =status?{status}:{}
     // ✅ Populate seller info including phone and county from SellerApprovalRequest
-    const requests = await SellerApprovalRequest.find({ status: "pending" })
+    const requests = await SellerApprovalRequest.find(filter)
       .populate("seller_id", "fullname username email role createdAt")
       .lean(); // Use lean for better performance
 
@@ -43,8 +45,8 @@ exports.reviewSellerRequest = async (req, res) => {
       return res.status(403).json({ success: false, message: "❌ Not authorized" });
     }
 
-    const { id } = req.params;
-    const { decision } = req.body;
+    const { id } = req.params
+    const { decision } = req.body
     
     if (!["approve", "reject"].includes(decision)) {
       return res.status(400).json({ 
