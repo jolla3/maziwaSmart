@@ -87,24 +87,26 @@ exports.getMarketListingById = async (req, res) => {
 
     // Extract animal details safely
     const animal = listing.animal_id;
-const animalDetails = animal
-  ? {
-      name: animal.cow_name,
-      species: animal.species,
-      gender: animal.gender,
-      stage: animal.stage,
-      status: animal.status,
-      breed: animal.breed_id?.breed_name || animal.bull_breed || "Unknown",
-      lifetime_milk: animal.lifetime_milk,
-      daily_average: animal.daily_average,
-      bull_code: animal.pregnancy?.insemination_id?.bull_code || null,
-      bull_name: animal.pregnancy?.insemination_id?.bull_name || null,
-      bull_breed: animal.pregnancy?.insemination_id?.bull_breed || null,
-      calved_count: animal.total_offspring || 0,
-      pregnancy: animal.pregnancy || null, // 👈 add this line
-      photos: animal.photos || [],
-    }
-  : null;
+    const animalDetails = animal
+      ? {
+          name: animal.cow_name,
+          species: animal.species,
+          gender: animal.gender,
+          stage: animal.stage,
+          status: animal.status,
+          breed:
+            animal.breed_id?.breed_name ||
+            animal.bull_breed ||
+            "Unknown",
+          lifetime_milk: animal.lifetime_milk,
+          daily_average: animal.daily_average,
+          bull_code: animal.pregnancy?.insemination_id?.bull_code || null,
+          bull_name: animal.pregnancy?.insemination_id?.bull_name || null,
+          bull_breed: animal.pregnancy?.insemination_id?.bull_breed || null,
+          calved_count: animal.total_offspring || 0,
+          photos: animal.photos || [], // ✅ include animal photos
+        }
+      : null;
 
     res.status(200).json({
       success: true,
