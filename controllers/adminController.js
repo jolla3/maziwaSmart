@@ -24,7 +24,7 @@ exports.getPendingSellerRequests = async (req, res) => {
       country: req.country
     }));
 
-    console.log(`✅ Found ${formattedRequests.length} pending requests`);
+    
 
     res.status(200).json({
       success: true,
