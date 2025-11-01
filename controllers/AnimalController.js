@@ -113,77 +113,132 @@ exports.createAnimal = async (req, res) => {
 exports.getMyAnimals = async (req, res) => {
   try {
     const farmer_code = req.user.code;
-    const { species, gender, stage, page = 1, limit = 20, sortBy = "created_at", order = "desc" } = req.query;
+    const {
+      species,
+      gender,
+      stage,
+      page = 1,
+      limit = 20,
+      sortBy = "created_at",
+      order = "desc"
+    } = req.query;
 
-    // ✅ Build dynamic filter
+    // 🧠 Defensive casting
+    const safePage = Math.max(parseInt(page) || 1, 1);
+    const safeLimit = Math.min(parseInt(limit) || 20, 100);
+    const skip = (safePage - 1) * safeLimit;
+
+    // ✅ Dynamic filters
     const filter = { farmer_code };
     if (species) filter.species = species;
     if (gender) filter.gender = gender;
     if (stage) filter.stage = Array.isArray(stage) ? { $in: stage } : stage;
 
-    // ✅ Sorting
+    // ✅ Sorting logic
     const sort = {};
     sort[sortBy] = order === "asc" ? 1 : -1;
 
-    // ✅ Pagination
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-
-    // 🔎 Query animals
+    // 🔎 Query animals (with optimized select)
     const animals = await Cow.find(filter)
+      .select(
+        "cow_name species gender stage status photos birth_date breed_id mother_id offspring_ids pregnancy lifetime_milk daily_average created_at"
+      )
       .populate("breed_id", "breed_name")
       .populate("mother_id", "cow_name species")
-      .populate({ path: "offspring_ids", select: "cow_name species birth_date" })
+      .populate({
+        path: "offspring_ids",
+        select: "cow_name species birth_date"
+      })
       .sort(sort)
       .skip(skip)
-      .limit(parseInt(limit))
+      .limit(safeLimit)
       .lean();
 
-    // ✅ Total count for pagination
+    // ✅ Total count
     const total = await Cow.countDocuments(filter);
 
     // ✅ Stats breakdown per species + stage
-    const stats = await Cow.aggregate([
+    const rawStats = await Cow.aggregate([
       { $match: filter },
-      { $group: { _id: { species: "$species", stage: "$stage" }, count: { $sum: 1 } } },
+      {
+        $group: {
+          _id: { species: "$species", stage: "$stage" },
+          count: { $sum: 1 }
+        }
+      },
       {
         $group: {
           _id: "$_id.species",
-          breakdown: { $push: { stage: "$_id.stage", count: "$count" } },
+          breakdown: {
+            $push: { stage: "$_id.stage", count: "$count" }
+          },
           total: { $sum: "$count" }
         }
       }
     ]);
 
+    // 🧩 Flatten stats for easier use in frontend charts
+    const stats = rawStats.map(s => ({
+      species: s._id,
+      total: s.total,
+      breakdown: s.breakdown.reduce((acc, b) => {
+        acc[b.stage || "unknown"] = b.count;
+        return acc;
+      }, {})
+    }));
+
+    // ✅ Build clean animal data
+    const formattedAnimals = animals.map(a => ({
+      id: a._id,
+      name: a.cow_name,
+      species: a.species,
+      gender: a.gender,
+      stage: a.stage || null,
+      status: a.status || "active",
+      photos: a.photos || [],
+      birth_date: a.birth_date,
+      breed: a.breed_id?.breed_name || null,
+      mother: a.mother_id
+        ? { id: a.mother_id._id, name: a.mother_id.cow_name }
+        : null,
+      offspring: a.offspring_ids?.map(o => ({
+        id: o._id,
+        name: o.cow_name,
+        species: o.species,
+        birth_date: o.birth_date
+      })),
+      pregnancy: a.pregnancy
+        ? {
+            is_pregnant: a.pregnancy.is_pregnant || false,
+            expected_due_date: a.pregnancy.expected_due_date || null
+          }
+        : { is_pregnant: false, expected_due_date: null },
+      lifetime_milk: a.lifetime_milk || 0,
+      daily_average: a.daily_average || 0,
+      created_at: a.created_at
+    }));
+
+    // ✅ Respond with paginated, structured data
     res.status(200).json({
       success: true,
       meta: {
         total,
-        page: parseInt(page),
-        limit: parseInt(limit),
-        totalPages: Math.ceil(total / limit),
-        stats // e.g. [{ _id: "cow", breakdown: [...], total: 12 }]
+        page: safePage,
+        limit: safeLimit,
+        totalPages: Math.ceil(total / safeLimit),
+        hasNextPage: safePage * safeLimit < total,
+        hasPrevPage: safePage > 1,
+        stats
       },
-      animals: animals.map(a => ({
-        id: a._id,
-        name: a.cow_name,
-        species: a.species,
-        gender: a.gender,
-        stage: a.stage || null,
-        birth_date: a.birth_date,
-        breed: a.breed_id?.breed_name || null,
-        mother: a.mother_id ? { id: a.mother_id._id, name: a.mother_id.cow_name } : null,
-        offspring: a.offspring_ids?.map(o => ({
-          id: o._id,
-          name: o.cow_name,
-          species: o.species,
-          birth_date: o.birth_date
-        })),
-        created_at: a.created_at
-      }))
+      animals: formattedAnimals
     });
   } catch (error) {
     console.error("❌ Error fetching animals:", error);
-    res.status(500).json({ success: false, message: "Failed to fetch animals", error: error.message });
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch animals",
+      error: error.message
+    });
   }
 };
 
@@ -218,13 +273,14 @@ exports.updateAnimal = async (req, res) => {
     const farmer_code = req.user.code;
     const { id } = req.params;
 
-    // 🧠 1️⃣ Prepare update object
+    // 🧠 1️⃣ Prepare update fields
     const updates = { ...req.body };
 
-    // 🧠 2️⃣ Map uploaded photos (from multer)
-    const uploadedPhotos = req.files?.map(file => `/uploads/animals/${file.filename}`) || [];
+    // 🧠 2️⃣ Extract Cloudinary URLs from multer
+    const uploadedPhotos =
+      req.files?.map(file => file.path || file.filename || file.secure_url) || [];
 
-    // 🧠 3️⃣ Get current animal to merge photos safely
+    // 🧠 3️⃣ Get existing animal
     const existing = await Cow.findOne({ _id: id, farmer_code });
     if (!existing) {
       return res.status(404).json({
@@ -235,18 +291,33 @@ exports.updateAnimal = async (req, res) => {
 
     const existingPhotos = existing.photos || [];
     const bodyPhotos = Array.isArray(req.body.photos)
-      ? req.body.photos.filter(p => p && p.trim() !== "")
+      ? req.body.photos.filter(p => typeof p === "string" && p.trim() !== "")
       : [];
 
-    // 🧠 4️⃣ Combine and deduplicate
-    const mergedPhotos = [...new Set([...existingPhotos, ...bodyPhotos, ...uploadedPhotos])];
+    // 🧠 4️⃣ Determine photos to keep and remove
+    const mergedPhotos = [...new Set([...bodyPhotos, ...uploadedPhotos])];
+    const removedPhotos = existingPhotos.filter(p => !mergedPhotos.includes(p));
+
     updates.photos = mergedPhotos;
 
-    // 🧠 5️⃣ Run update
-    const updatedAnimal = await Cow.findByIdAndUpdate(id, updates, {
-      new: true,
-      runValidators: true
-    });
+    // 🧠 5️⃣ Delete removed photos from Cloudinary
+    if (removedPhotos.length > 0) {
+      for (const url of removedPhotos) {
+        try {
+          const publicId = url.split("/").pop().split(".")[0];
+          await cloudinary.uploader.destroy(`maziwasmart/animals/${publicId}`);
+        } catch (err) {
+          console.warn(`⚠️ Failed to delete Cloudinary image: ${url}`);
+        }
+      }
+    }
+
+    // 🧠 6️⃣ Secure update (respect farmer_code)
+    const updatedAnimal = await Cow.findOneAndUpdate(
+      { _id: id, farmer_code },
+      updates,
+      { new: true, runValidators: true }
+    );
 
     res.status(200).json({
       success: true,
@@ -255,7 +326,6 @@ exports.updateAnimal = async (req, res) => {
         : "✅ Animal updated successfully",
       animal: updatedAnimal
     });
-
   } catch (error) {
     console.error("❌ Error updating animal:", error);
     res.status(500).json({
@@ -273,20 +343,48 @@ exports.deleteAnimal = async (req, res) => {
     const farmer_code = req.user.code;
     const { id } = req.params;
 
-    const deletedAnimal = await Cow.findOneAndDelete({ _id: id, farmer_code });
-
-    if (!deletedAnimal) {
-      return res.status(404).json({ success: false, message: "Animal not found or not yours" });
+    // 🔍 Find animal by ID and owner
+    const animal = await Cow.findOne({ _id: id, farmer_code });
+    if (!animal) {
+      return res.status(404).json({
+        success: false,
+        message: "Animal not found or not yours"
+      });
     }
+
+    // 🧹 1️⃣ Delete Cloudinary images
+    if (Array.isArray(animal.photos) && animal.photos.length > 0) {
+      for (const url of animal.photos) {
+        try {
+          const publicId = url.split("/").pop().split(".")[0];
+          await cloudinary.uploader.destroy(`maziwasmart/animals/${publicId}`);
+        } catch (err) {
+          console.warn(`⚠️ Failed to delete Cloudinary image: ${url}`);
+        }
+      }
+    }
+
+    // 🧬 2️⃣ Clean up relationships (if needed)
+    // Remove this animal from offspring lists of others
+    await Cow.updateMany(
+      { offspring_ids: id },
+      { $pull: { offspring_ids: id } }
+    );
+
+    // 🗑️ 3️⃣ Delete the animal record
+    await Cow.deleteOne({ _id: id, farmer_code });
 
     res.status(200).json({
       success: true,
-      message: "🗑️ Animal deleted successfully",
-      animal: deletedAnimal
+      message: "🗑️ Animal deleted successfully (and photos cleaned up)"
     });
   } catch (error) {
     console.error("❌ Error deleting animal:", error);
-    res.status(500).json({ success: false, message: "Failed to delete animal", error: error.message });
+    res.status(500).json({
+      success: false,
+      message: "Failed to delete animal",
+      error: error.message
+    });
   }
 };
 
