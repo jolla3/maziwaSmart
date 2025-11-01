@@ -4,6 +4,111 @@ const path = require('path');
 const stringSimilarity = require('string-similarity');
 const chrono = require('chrono-node');
 const sharp = require('sharp');
+
+
+exports.uploadInseminationImage = async (req, res) => {
+  try {
+    // Get the path of the uploaded image
+    const imagePath = req.file.path;
+
+    // Run OCR on the image to extract text
+    const { data: { text } } = await Tesseract.recognize(imagePath, 'eng');
+    console.log(`Extracted text from image: ${text}`);
+
+    // Return JSON response so client doesn’t timeout
+    return res.status(200).json({
+      message: "OCR completed successfully",
+      raw_text: text,
+      file_path: imagePath
+    });
+
+  } catch (error) {
+    console.error(`Error occurred while processing image: ${error}`);
+    return res.status(500).json({
+      message: "Failed to process image",
+      error: error.message
+    });
+  }
+};
+
+exports.handleOCRUpload = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: "No file uploaded" });
+    }
+
+    // Run OCR
+    const { data: { text } } = await Tesseract.recognize(req.file.path, "eng");
+    console.log("📄 OCR Text:", text);
+
+    let cow_name = null;
+
+    // 1️⃣ Try regex extraction (Name: Mercy)
+    const nameRegex = text.match(/(?:Name|Cow)\s*[:\-]?\s*([A-Za-z]{3,})/i);
+    if (nameRegex) {
+      cow_name = nameRegex[1].trim();
+    }
+
+    // 2️⃣ If regex fails, do fuzzy match with DB cows
+    if (!cow_name) {
+      const cows = await Cow.find({ farmer_code: req.user.code }); 
+      const cowNames = cows.map(c => c.cow_name);
+
+      const match = stringSimilarity.findBestMatch(text, cowNames);
+      if (match.bestMatch.rating > 0.5) {
+        cow_name = match.bestMatch.target;
+      }
+    }
+
+    if (!cow_name) {
+      return res.status(400).json({ error: "Could not extract cow name from card" });
+    }
+
+    // Find the cow in DB
+    const cowDoc = await Cow.findOne({ cow_name, farmer_code: req.user.code });
+    if (!cowDoc) {
+      return res.status(404).json({ error: "Cow not found in database. Please register cow first." });
+    }
+
+    // Extract bull + inseminator
+    const bullCodeMatch = text.match(/Bull\s*code\s*[:\-]?\s*([A-Za-z0-9]+)/i);
+    const bullBreedMatch = text.match(/Breed\s*[:\-]?\s*([A-Za-z]+)/i);
+    const inseminatorMatch = text.match(/Inseminator\s*[:\-]?\s*([A-Za-z ]+)/i);
+
+    // Extract date
+    const dateMatch = text.match(/(\d{2,4}[\/\-\s]\d{1,2}[\/\-\s]\d{1,2})/);
+    let inseminationDate = null;
+    if (dateMatch) {
+      inseminationDate = new Date(dateMatch[1]);
+    }
+    if (!inseminationDate || isNaN(inseminationDate)) {
+      console.warn("⚠️ Could not parse insemination date from OCR. Using today.");
+      inseminationDate = new Date();
+    }
+
+    // Build insemination record
+    const inseminationData = {
+      cow_id: cowDoc._id,
+      farmer_code: req.user.code,
+      cow_name,
+      bull_code: bullCodeMatch ? bullCodeMatch[1] : null,
+      bull_breed: bullBreedMatch ? bullBreedMatch[1] : null,
+      inseminator: inseminatorMatch ? inseminatorMatch[1].trim() : null,
+      insemination_date: inseminationDate,
+    };
+
+    const record = new Insemination(inseminationData);
+    await record.save();
+
+    res.status(201).json({ message: "Insemination record saved", record });
+
+  } catch (err) {
+    console.error("OCR Handler Error:", err);
+    res.status(500).json({ error: "Failed to process insemination card" });
+  }
+};
+
+
 exports.addInseminationRecord = async (req, res) => {
   try {
     const {
@@ -160,109 +265,6 @@ exports.getInseminationRecords = async (req, res) => {
   } catch (error) {
     console.error("❌ Error fetching insemination records:", error);
     res.status(500).json({ success: false, message: "Failed to fetch insemination records", error: error.message });
-  }
-};
-
-
-exports.uploadInseminationImage = async (req, res) => {
-  try {
-    // Get the path of the uploaded image
-    const imagePath = req.file.path;
-
-    // Run OCR on the image to extract text
-    const { data: { text } } = await Tesseract.recognize(imagePath, 'eng');
-    console.log(`Extracted text from image: ${text}`);
-
-    // Return JSON response so client doesn’t timeout
-    return res.status(200).json({
-      message: "OCR completed successfully",
-      raw_text: text,
-      file_path: imagePath
-    });
-
-  } catch (error) {
-    console.error(`Error occurred while processing image: ${error}`);
-    return res.status(500).json({
-      message: "Failed to process image",
-      error: error.message
-    });
-  }
-};
-
-exports.handleOCRUpload = async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: "No file uploaded" });
-    }
-
-    // Run OCR
-    const { data: { text } } = await Tesseract.recognize(req.file.path, "eng");
-    console.log("📄 OCR Text:", text);
-
-    let cow_name = null;
-
-    // 1️⃣ Try regex extraction (Name: Mercy)
-    const nameRegex = text.match(/(?:Name|Cow)\s*[:\-]?\s*([A-Za-z]{3,})/i);
-    if (nameRegex) {
-      cow_name = nameRegex[1].trim();
-    }
-
-    // 2️⃣ If regex fails, do fuzzy match with DB cows
-    if (!cow_name) {
-      const cows = await Cow.find({ farmer_code: req.user.code }); 
-      const cowNames = cows.map(c => c.cow_name);
-
-      const match = stringSimilarity.findBestMatch(text, cowNames);
-      if (match.bestMatch.rating > 0.5) {
-        cow_name = match.bestMatch.target;
-      }
-    }
-
-    if (!cow_name) {
-      return res.status(400).json({ error: "Could not extract cow name from card" });
-    }
-
-    // Find the cow in DB
-    const cowDoc = await Cow.findOne({ cow_name, farmer_code: req.user.code });
-    if (!cowDoc) {
-      return res.status(404).json({ error: "Cow not found in database. Please register cow first." });
-    }
-
-    // Extract bull + inseminator
-    const bullCodeMatch = text.match(/Bull\s*code\s*[:\-]?\s*([A-Za-z0-9]+)/i);
-    const bullBreedMatch = text.match(/Breed\s*[:\-]?\s*([A-Za-z]+)/i);
-    const inseminatorMatch = text.match(/Inseminator\s*[:\-]?\s*([A-Za-z ]+)/i);
-
-    // Extract date
-    const dateMatch = text.match(/(\d{2,4}[\/\-\s]\d{1,2}[\/\-\s]\d{1,2})/);
-    let inseminationDate = null;
-    if (dateMatch) {
-      inseminationDate = new Date(dateMatch[1]);
-    }
-    if (!inseminationDate || isNaN(inseminationDate)) {
-      console.warn("⚠️ Could not parse insemination date from OCR. Using today.");
-      inseminationDate = new Date();
-    }
-
-    // Build insemination record
-    const inseminationData = {
-      cow_id: cowDoc._id,
-      farmer_code: req.user.code,
-      cow_name,
-      bull_code: bullCodeMatch ? bullCodeMatch[1] : null,
-      bull_breed: bullBreedMatch ? bullBreedMatch[1] : null,
-      inseminator: inseminatorMatch ? inseminatorMatch[1].trim() : null,
-      insemination_date: inseminationDate,
-    };
-
-    const record = new Insemination(inseminationData);
-    await record.save();
-
-    res.status(201).json({ message: "Insemination record saved", record });
-
-  } catch (err) {
-    console.error("OCR Handler Error:", err);
-    res.status(500).json({ error: "Failed to process insemination card" });
   }
 };
 

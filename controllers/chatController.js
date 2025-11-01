@@ -94,7 +94,8 @@ exports.sendMessage = async (req, res) => {
       io.to(room.toString()).emit("new_message", chatMessage);
     }
 
-    res.status(201).json({ success: true, chatMessage });
+    res.status(201).json({ success: true, message: chatMessage });
+
   } catch (err) {
     console.error("❌ Chat send error:", err);
     res.status(500).json({ success: false, message: "Failed to send message" });

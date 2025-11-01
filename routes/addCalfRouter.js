@@ -8,7 +8,7 @@ const { verifyToken, authorizeRoles } = require('../middleware/authMiddleware');
 router.post("/", verifyToken,addCalfController.addCalf)
 router.get("/", verifyToken,addCalfController.getAwaitingCalves)
     
-router.post("/", verifyToken,addCalfController.addCalfFromPregnancy)
+router.post("/fromPregnancy", verifyToken,addCalfController.addCalfFromPregnancy)
 router.get("/:id", verifyToken,addCalfController.getCowFamilyTree)
 
 module.exports = router
