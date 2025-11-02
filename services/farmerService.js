@@ -27,24 +27,50 @@ exports.getFarmerDashboard = async (user) => {
     .lean();
 
   // 2️⃣ Milk summary aggregation
-  const milkFacetPromise = MilkRecord.aggregate([
-    {
-      $match: {
-        $or: [{ farmer_code: farmerCode }, { farmer_id: new mongoose.Types.ObjectId(farmerId) }],
-      },
+const milkFacetPromise = MilkRecord.aggregate([
+  {
+    $match: {
+      $or: [
+        { farmer_code: farmerCode },
+        { farmer_id: new mongoose.Types.ObjectId(farmerId) }
+      ],
     },
-    {
-      $facet: {
-        totalMilk: [{ $group: { _id: null, total: { $sum: "$litres" } } }],
-        bySlot: [{ $group: { _id: "$time_slot", litres: { $sum: "$litres" } } }],
-        recent: [
-          { $sort: { collection_date: -1 } },
-          { $limit: 5 },
-          { $project: { collection_date: 1, litres: 1, time_slot: 1, created_by: 1 } },
-        ],
-      },
+  },
+  {
+    $facet: {
+      totalMilk: [{ $group: { _id: null, total: { $sum: "$litres" } } }],
+      bySlot: [{ $group: { _id: "$time_slot", litres: { $sum: "$litres" } } }],
+      recent: [
+        { $sort: { collection_date: -1 } },
+        { $limit: 5 },
+        {
+          $lookup: {
+            from: "porters",
+            localField: "created_by",
+            foreignField: "_id",
+            as: "porter_info",
+          },
+        },
+        {
+          $unwind: {
+            path: "$porter_info",
+            preserveNullAndEmptyArrays: true,
+          },
+        },
+        {
+          $project: {
+            collection_date: 1,
+            litres: 1,
+            time_slot: 1,
+            "porter_info.name": 1,
+            "porter_info.phone": 1,
+          },
+        },
+      ],
     },
-  ]);
+  },
+]);
+
 
   // 3️⃣ Counts in parallel
   const countsPromise = Promise.all([
@@ -92,11 +118,13 @@ exports.getFarmerDashboard = async (user) => {
   }, {});
 
   const recentActivities = recentRaw.map((r) => ({
-    date: r.collection_date,
-    litres: r.litres,
-    slot: r.time_slot,
-    created_by: r.created_by || null,
-  }));
+  date: r.collection_date,
+  litres: r.litres,
+  slot: r.time_slot,
+  porter: r.porter_info
+    ? { name: r.porter_info.name, phone: r.porter_info.phone }
+    : null,
+}));
 
   const [cowCount, breedCount, inseminationCount, anomalyCount] = counts;
 
