@@ -135,7 +135,7 @@ const breedSchema = new Schema({
   is_active: { type: Boolean, default: true },
 
   // Bull-specific fields (only filled when species = bull)
-  bull_code: { type: String, unique: true, sparse: true },  // catalog/stud code
+  bull_code: { type: String},  // catalog/stud code
   bull_name: { type: String },                             // traceable name
   origin_farm: { type: String },
   country: { type: String }

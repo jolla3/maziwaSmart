@@ -33,46 +33,58 @@ exports.addCalf = async (req, res) => {
       }
     }
 
-    // 🧬 Determine breedDoc
-    let breedDoc = null;
-    if (breed_id) {
-      breedDoc = await Breed.findOne({ _id: breed_id, farmer_id });
+ // 🧬 Determine breedDoc safely
+if (breed_id) {
+  breedDoc = await Breed.findOne({ _id: breed_id, farmer_id });
 
-      if (!breedDoc) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid breed_id — no matching breed found for this farmer"
-        });
-      }
+  if (!breedDoc) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid breed_id — no matching breed found for this farmer"
+    });
+  }
+} else {
+  if (!species || !breed_name) {
+    return res.status(400).json({
+      success: false,
+      message: "species and breed_name are required when breed_id is not provided"
+    });
+  }
 
-      // Auto-patch missing bull data
-      let updated = false;
-      if (!breedDoc.bull_code && bull_code) {
-        breedDoc.bull_code = bull_code;
-        updated = true;
-      }
-      if (!breedDoc.bull_name && bull_name) {
-        breedDoc.bull_name = bull_name;
-        updated = true;
-      }
-      if (updated) await breedDoc.save();
+  // 🧠 Normalize input
+  const cleanBullCode = bull_code && bull_code.trim() !== "" ? bull_code.trim() : undefined;
+  const cleanBullName = bull_name && bull_name.trim() !== "" ? bull_name.trim() : undefined;
 
-    } else {
-      if (!species || !breed_name) {
-        return res.status(400).json({
-          success: false,
-          message: "species and breed_name are required when breed_id is not provided"
-        });
-      }
+  // 🧩 Check if breed already exists for this farmer + species
+  breedDoc = await Breed.findOne({
+    farmer_id,
+    species,
+    breed_name: new RegExp(`^${breed_name}$`, "i"), // case-insensitive match
+  });
 
-      breedDoc = await new Breed({
-        breed_name,
-        species,
-        bull_code,
-        bull_name,
-        farmer_id
-      }).save();
+  if (breedDoc) {
+    // ✅ Update bull info if missing
+    let updated = false;
+    if (cleanBullCode && !breedDoc.bull_code) {
+      breedDoc.bull_code = cleanBullCode;
+      updated = true;
     }
+    if (cleanBullName && !breedDoc.bull_name) {
+      breedDoc.bull_name = cleanBullName;
+      updated = true;
+    }
+    if (updated) await breedDoc.save();
+  } else {
+    // ✅ Create a new one only if none exists
+    breedDoc = await new Breed({
+      breed_name,
+      species,
+      farmer_id,
+      ...(cleanBullCode ? { bull_code: cleanBullCode } : {}),
+      ...(cleanBullName ? { bull_name: cleanBullName } : {}),
+    }).save();
+  }
+}
 
     // 🧠 Determine species source
     const actualSpecies = species || breedDoc.species || (mother ? mother.species : "cow");
