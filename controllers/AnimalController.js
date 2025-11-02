@@ -110,7 +110,7 @@ exports.createAnimal = async (req, res) => {
 };
 
 // GET /api/farmer/animals
-exports.getMyAnimals = async (req, res) => {
+exports.getMyAnimals = async (req, res) => { 
   try {
     const farmer_code = req.user.code;
     const {
@@ -138,13 +138,14 @@ exports.getMyAnimals = async (req, res) => {
     const sort = {};
     sort[sortBy] = order === "asc" ? 1 : -1;
 
-    // 🔎 Query animals (with optimized select)
+    // 🔎 Query animals (with extended select for bull fields)
     const animals = await Cow.find(filter)
       .select(
-        "cow_name species gender stage status photos birth_date breed_id mother_id offspring_ids pregnancy lifetime_milk daily_average created_at"
+        "cow_name species gender stage status photos birth_date breed_id mother_id father_id bull_code bull_name offspring_ids pregnancy lifetime_milk daily_average created_at"
       )
       .populate("breed_id", "breed_name")
       .populate("mother_id", "cow_name species")
+      .populate("father_id", "cow_name species")
       .populate({
         path: "offspring_ids",
         select: "cow_name species birth_date"
@@ -177,7 +178,7 @@ exports.getMyAnimals = async (req, res) => {
       }
     ]);
 
-    // 🧩 Flatten stats for easier use in frontend charts
+    // 🧩 Flatten stats for charts
     const stats = rawStats.map(s => ({
       species: s._id,
       total: s.total,
@@ -199,7 +200,12 @@ exports.getMyAnimals = async (req, res) => {
       birth_date: a.birth_date,
       breed: a.breed_id?.breed_name || null,
       mother: a.mother_id
-        ? { id: a.mother_id._id, name: a.mother_id.cow_name }
+        ? { id: a.mother_id._id, name: a.mother_id.cow_name, species: a.mother_id.species }
+        : null,
+      father: a.father_id
+        ? { id: a.father_id._id, name: a.father_id.cow_name, species: a.father_id.species }
+        : a.bull_name
+        ? { code: a.bull_code || null, name: a.bull_name }
         : null,
       offspring: a.offspring_ids?.map(o => ({
         id: o._id,
@@ -218,7 +224,7 @@ exports.getMyAnimals = async (req, res) => {
       created_at: a.created_at
     }));
 
-    // ✅ Respond with paginated, structured data
+    // ✅ Send structured response
     res.status(200).json({
       success: true,
       meta: {
