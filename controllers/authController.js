@@ -204,16 +204,15 @@ exports.registerSeller = async (req, res) => {
 exports.googleCallback = async (req, res) => {
   try {
     const { displayName, emails, photos } = req.user || {};
-    const email = emails?.[0]?.value || req.user?.email || null;
 
-    const frontendURL = process.env.FRONTEND_URL || "https://maziwa-smart.vercel.app";
+    // Safely extract email
+    const email = Array.isArray(emails) && emails.length > 0 ? emails[0].value : null;
 
     if (!email) {
       console.error("❌ Google login failed: No email returned from Google.");
+      const frontendURL = process.env.FRONTEND_URL || "https://maziwa-smart.vercel.app";
       return res.redirect(
-        `${frontendURL}/google-login?error=${encodeURIComponent(
-          "No email found from Google account. Please use a valid Google account."
-        )}`
+        `${frontendURL}/google-callback?error=${encodeURIComponent("No email found from Google account. Please use a valid Google account.")}`
       );
     }
 
@@ -223,19 +222,19 @@ exports.googleCallback = async (req, res) => {
     let isNewUser = false;
 
     if (!user) {
-      // Check Farmer fallback
       const farmer = await Farmer.findOne({ email });
       if (farmer) {
         user = farmer;
         role = "farmer";
         code = farmer.farmer_code;
       } else {
-        // Create new Google user
+        // Create new Google buyer user
         user = new User({
           username: displayName || "Unnamed User",
           email,
           role: "buyer",
-          photo: photos?.[0]?.value || null,
+          photo: Array.isArray(photos) && photos.length > 0 ? photos[0].value : null,
+          email_verified: true,
         });
         await user.save();
         isNewUser = true;
@@ -244,7 +243,7 @@ exports.googleCallback = async (req, res) => {
       role = user.role;
     }
 
-    // JWT
+    // Build JWT
     const payload = {
       id: user._id,
       name: user.username || displayName,
@@ -254,18 +253,23 @@ exports.googleCallback = async (req, res) => {
     };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "7d" });
 
-    // Redirect
+    const frontendURL = process.env.FRONTEND_URL || "https://maziwa-smart.vercel.app";
+
+    // ✅ Redirect to Google callback handler on frontend
     if (isNewUser) {
       return res.redirect(`${frontendURL}/set-password?token=${token}`);
     } else {
       return res.redirect(
-        `${frontendURL}/google-login?token=${token}&role=${role}&name=${encodeURIComponent(payload.name)}`
+        `${frontendURL}/google-callback?token=${token}&role=${role}&name=${encodeURIComponent(payload.name)}`
       );
     }
+
   } catch (err) {
     console.error("❌ Google callback error:", err);
     const frontendURL = process.env.FRONTEND_URL || "https://maziwa-smart.vercel.app";
-    return res.redirect(`${frontendURL}/google-login?error=${encodeURIComponent("Google login failed")}`);
+    res.redirect(
+      `${frontendURL}/google-callback?error=${encodeURIComponent("Google login failed")}`
+    );
   }
 };
 
