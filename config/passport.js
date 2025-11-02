@@ -2,10 +2,9 @@ const passport = require("passport");
 const GoogleStrategy = require("passport-google-oauth20").Strategy;
 const { User } = require("../models/model");
 
-// ✅ FIXED: Match your actual route structure
 const callbackURL =
   process.env.NODE_ENV === "production"
-    ? "https://maziwasmart.onrender.com/api/userAuth/google/callback"  // ✅ Changed to /api/userAuth/
+    ? "https://maziwasmart.onrender.com/api/userAuth/google/callback"
     : "http://localhost:5000/api/userAuth/google/callback";
 
 passport.use(
@@ -17,16 +16,20 @@ passport.use(
     },
     async (accessToken, refreshToken, profile, done) => {
       try {
-        const email = profile.emails[0].value;
+        // ✅ Safe email extraction
+        const email = profile.emails?.[0]?.value || null;
+        if (!email) return done(null, false, { message: "No email returned from Google" });
+
+        // Check if user exists
         let user = await User.findOne({ email });
 
         if (!user) {
+          // Create Google user without password
           user = new User({
-            username: profile.displayName,
+            username: profile.displayName || "Unnamed User",
             email,
-            role: "buyer", // ✅ Correct default role
-            photo: profile.photos?.[0]?.value,
-            email_verified: true,
+            role: "buyer",
+            photo: profile.photos?.[0]?.value || null,
           });
           await user.save();
         }
