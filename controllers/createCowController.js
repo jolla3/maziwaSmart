@@ -204,25 +204,49 @@ exports.getCowLitresSummary = async (req, res) => {
     const farmer_code = Number(req.user.code);
     const { id } = req.params;
 
+    // Confirm ownership
     const cow = await Cow.findOne({ _id: id, farmer_code });
     if (!cow) {
       return res.status(404).json({ message: "Cow not found or unauthorized" });
     }
 
-    const records = await CowMilkRecord.find({ animal_id: cow._id, farmer_code });
+    // Fetch all milk records for that cow
+    const records = await CowMilkRecord.find(
+      { animal_id: cow._id, farmer_code },
+      { litres: 1, time_slot: 1, collection_date: 1 }
+    ).sort({ collection_date: -1 });
 
+    // Group data by date and slot
     const summary = {};
     records.forEach(r => {
       const date = r.collection_date.toISOString().split("T")[0];
-      summary[date] = (summary[date] || 0) + r.litres;
+      if (!summary[date]) summary[date] = [];
+
+      summary[date].push({
+        time_slot: r.time_slot,
+        litres: r.litres
+      });
     });
 
-    res.status(200).json({ cow_name: cow.cow_name, summary });
+    // Sort by date (latest first)
+    const sortedSummary = Object.entries(summary)
+      .sort(([dateA], [dateB]) => new Date(dateB) - new Date(dateA))
+      .map(([date, slots]) => ({ date, slots }));
+
+    res.status(200).json({
+      cow_name: cow.cow_name,
+      cow_id: cow._id,
+      summary: sortedSummary
+    });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Error fetching litres summary", error: err.message });
+    console.error("Error fetching litres summary:", err);
+    res.status(500).json({
+      message: "Error fetching litres summary",
+      error: err.message
+    });
   }
 };
+
 
 // Get last 7 days for a cow
 exports.getCowLast7Days = async (req, res) => {
@@ -241,21 +265,26 @@ exports.getCowLast7Days = async (req, res) => {
     }).sort({ collection_date: 1 });
 
     let total = 0;
-    const weeklySummary = records.map(r => {
+    const summary = {};
+
+    records.forEach(r => {
+      const date = moment(r.collection_date).format("YYYY-MM-DD");
+      if (!summary[date]) summary[date] = [];
+      summary[date].push({ time_slot: r.time_slot, litres: r.litres });
       total += r.litres;
-      return {
-        day: moment(r.collection_date).format("dddd"),
-        date: moment(r.collection_date).format("YYYY-MM-DD"),
-        litres: r.litres,
-        week: `Week ${Math.ceil(moment(r.collection_date).date() / 7)}`,
-        month: moment(r.collection_date).format("MMMM")
-      };
     });
+
+    const weeklyData = Object.entries(summary).map(([date, slots]) => ({
+      date,
+      day: moment(date).format("dddd"),
+      slots,
+      total_litres: slots.reduce((sum, s) => sum + s.litres, 0)
+    }));
 
     res.status(200).json({
       cow_name: cow.cow_name,
       cow_id: cow._id,
-      weekly_trend: weeklySummary,
+      weekly_summary: weeklyData,
       total_litres_this_week: total
     });
   } catch (err) {
@@ -280,34 +309,35 @@ exports.getCowMonthlyTotal = async (req, res) => {
       animal_id: cow._id,
       farmer_code,
       collection_date: { $gte: start, $lte: end }
-    });
+    }).sort({ collection_date: 1 });
 
     const weeks = {};
+
     records.forEach(r => {
       const date = moment(r.collection_date);
       const weekNum = `Week ${Math.ceil(date.date() / 7)}`;
-      const rangeStart = date.clone().startOf("week").format("MMM D");
-      const rangeEnd = date.clone().endOf("week").format("MMM D");
-      const key = `${weekNum} (${rangeStart} - ${rangeEnd})`;
+      if (!weeks[weekNum]) weeks[weekNum] = { week: weekNum, slots: {} };
 
-      if (!weeks[key]) {
-        weeks[key] = {
-          week: weekNum,
-          date_range: `${rangeStart} - ${rangeEnd}`,
-          total_litres: 0,
-          month: date.format("MMMM")
-        };
-      }
-      weeks[key].total_litres += r.litres;
+      if (!weeks[weekNum].slots[r.time_slot]) weeks[weekNum].slots[r.time_slot] = 0;
+      weeks[weekNum].slots[r.time_slot] += r.litres;
     });
+
+    const monthlySummary = Object.values(weeks).map(week => ({
+      week: week.week,
+      slots: Object.entries(week.slots).map(([slot, litres]) => ({
+        time_slot: slot,
+        litres
+      })),
+      total_litres: Object.values(week.slots).reduce((a, b) => a + b, 0)
+    }));
 
     res.status(200).json({
       cow_name: cow.cow_name,
       cow_id: cow._id,
-      monthly_summary: Object.values(weeks)
+      monthly_summary: monthlySummary
     });
   } catch (err) {
-    console.error(err);
+    console.error("Monthly summary error:", err);
     res.status(500).json({ message: "Failed to fetch monthly summary", error: err.message });
   }
 };
@@ -324,16 +354,28 @@ exports.getCowWeeklyTrend = async (req, res) => {
     const records = await CowMilkRecord.find({ animal_id: cow._id, farmer_code });
 
     const weekdayMap = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-    const trend = weekdayMap.reduce((acc, day) => ({ ...acc, [day]: 0 }), {});
+    const trend = {};
 
     records.forEach(r => {
-      const day = new Date(r.collection_date).getDay();
-      trend[weekdayMap[day]] += r.litres;
+      const day = weekdayMap[new Date(r.collection_date).getDay()];
+      if (!trend[day]) trend[day] = {};
+      if (!trend[day][r.time_slot]) trend[day][r.time_slot] = 0;
+      trend[day][r.time_slot] += r.litres;
     });
 
-    res.status(200).json({ cow_name: cow.cow_name, trend });
+    const formattedTrend = Object.entries(trend).map(([day, slots]) => ({
+      day,
+      slots: Object.entries(slots).map(([time_slot, litres]) => ({ time_slot, litres })),
+      total_litres: Object.values(slots).reduce((a, b) => a + b, 0)
+    }));
+
+    res.status(200).json({
+      cow_name: cow.cow_name,
+      cow_id: cow._id,
+      weekly_trend: formattedTrend
+    });
   } catch (err) {
+    console.error("Weekly trend fetch error:", err);
     res.status(500).json({ message: "Failed to fetch weekly trend", error: err.message });
   }
 };
-
