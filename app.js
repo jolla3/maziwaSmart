@@ -7,25 +7,20 @@ const socketIo = require('socket.io');
 require('dotenv').config();
 require('./cron/updateCowStages');
 const passport = require("./config/passport");
-
-
-// Serve uploaded files publicly
-
+const { logger } = require("./utils/logger"); // keeps your logging neat
 
 const app = express();
 
-// middleware
+// ===============================
+// Middleware setup
+// ===============================
 app.use(express.json());
 app.use(cors());
-
-
 app.use(passport.initialize());
 
-// app.use("/uploads", express.static(path.join(__dirname, "uploads")));
-
-
-// all your routes...
-
+// ===============================
+// Routes
+// ===============================
 const userAuth = require('./routes/authRouter');
 app.use('/api/userAuth', userAuth);
 
@@ -90,7 +85,7 @@ const marketRoutes = require('./routes/marketRoutes');
 app.use('/api/market', marketRoutes);
 
 const listingRoutes = require('./routes/listingRoutes');
-app.use('/api/listing', listingRoutes)
+app.use('/api/listing', listingRoutes);
 
 const cloudinaryTest = require("./routes/cloudinaryTest");
 app.use("/api/cloudinary-test", cloudinaryTest);
@@ -99,51 +94,39 @@ const requestApproval = require("./routes/sellerRequestRoutes");
 app.use("/api/seller-request", requestApproval);
 
 const Approval = require("./routes/adminRoutes");
-app.use("/api/approval",Approval);
+app.use("/api/approval", Approval);
 
-
-
-
-// MongoDB connection
+// ===============================
+// MongoDB Connection
+// ===============================
 mongoose.connect(process.env.MONGO_URI)
-    .then(() => console.log('connected to MongoDb'))
-    .catch(err => console.log("MongoDB connection error", err));
+  .then(() => logger.info('✅ Connected to MongoDB'))
+  .catch(err => logger.error("❌ MongoDB connection error", err));
 
-
+// ===============================
+// HTTP + Socket.IO Setup
+// ===============================
 const { verifySocketAuth } = require("./middleware/authMiddleware");
-// ✅ Create HTTP server + socket.io here
 const server = http.createServer(app);
 
 const io = socketIo(server, {
   cors: {
-    origin: ["https://maziwa-smart.vercel.app", "http://localhost:3000"], // update for your frontend
+    origin: ["https://maziwa-smart.vercel.app", "http://localhost:3000"],
     methods: ["GET", "POST"],
     credentials: true,
   },
 });
 
-// Attach io globally so controllers can use it
 app.set("io", io);
-
-// ✅ Authenticate each socket connection
 io.use(verifySocketAuth);
 
-// ✅ Handle socket connections
 io.on("connection", (socket) => {
   const userId = socket.user?.id;
-  console.log(`✅ User connected: ${userId} (socket: ${socket.id})`);
+  logger(`✅ User connected: ${userId} (socket: ${socket.id})`);
 
-  // Join private room
-  if (userId) {
-    socket.join(userId.toString());
-    console.log(`📡 Joined room: ${userId}`);
-  }
+  if (userId) socket.join(userId.toString());
 
-  // Handle sending messages
   socket.on("send_message", (data) => {
-    console.log("💬 Message received:", data);
-
-    // Emit to receiver
     if (data.receiver) {
       io.to(data.receiver.toString()).emit("new_message", {
         ...data,
@@ -154,12 +137,14 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", () => {
-    console.log(`❌ Disconnected: ${socket.id} (User: ${userId})`);
+    logger.warn(`❌ Disconnected: ${socket.id} (User: ${userId})`);
   });
 });
 
-// Start server
+// ===============================
+// Start Server
+// ===============================
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  logger.info(`🚀 Server running on port ${PORT}`);
 });
