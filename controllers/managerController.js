@@ -42,7 +42,8 @@ exports.addManager = async (req, res) => {
 exports.getManagers = async (req, res) => {
   try {
     const farmer_code = req.user.farmer_code
-    const managers = await Manager.find({ farmer_code });
+    const farmer_id = req.user.id
+    const managers = await Manager.find({ farmer_code  } && {farmer_id});
     res.status(200).json(managers);
   } catch (error) {
     res.status(500).json({ message: 'Failed to fetch managers', error: error.message });

@@ -1,6 +1,6 @@
 const passport = require("passport");
 const GoogleStrategy = require("passport-google-oauth20").Strategy;
-const { User } = require("../models/model");
+const { User, Farmer } = require("../models/model");
 
 const callbackURL =
   process.env.NODE_ENV === "production"
@@ -13,25 +13,37 @@ passport.use(
       clientID: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
       callbackURL,
+      passReqToCallback: true, // ✅ allows us to access req.query.role
     },
-    async (accessToken, refreshToken, profile, done) => {
+    async (req, accessToken, refreshToken, profile, done) => {
       try {
-        // ✅ Safe email extraction
-        const email = profile.emails?.[0]?.value || null;
-        if (!email) return done(null, false, { message: "No email returned from Google" });
+        const roleFromFrontend = req.query.role || "buyer"; // default to buyer
+        const email = profile.emails?.[0]?.value;
+        if (!email) return done(null, false, { message: "No email from Google" });
 
-        // Check if user exists
-        let user = await User.findOne({ email });
-
-        if (!user) {
-          // Create Google user without password
-          user = new User({
-            username: profile.displayName || "Unnamed User",
-            email,
-            role: "buyer",
-            photo: profile.photos?.[0]?.value || null,
-          });
-          await user.save();
+        let user;
+        if (roleFromFrontend === "farmer") {
+          user = await Farmer.findOne({ email });
+          if (!user) {
+            user = new Farmer({
+              fullname: profile.displayName,
+              email,
+              photo: profile.photos?.[0]?.value,
+              role: "farmer",
+            });
+            await user.save();
+          }
+        } else {
+          user = await User.findOne({ email });
+          if (!user) {
+            user = new User({
+              username: profile.displayName,
+              email,
+              role: roleFromFrontend,
+              photo: profile.photos?.[0]?.value,
+            });
+            await user.save();
+          }
         }
 
         return done(null, user);
@@ -42,18 +54,4 @@ passport.use(
     }
   )
 );
-
-passport.serializeUser((user, done) => {
-  done(null, user.id);
-});
-
-passport.deserializeUser(async (id, done) => {
-  try {
-    const user = await User.findById(id);
-    done(null, user);
-  } catch (err) {
-    done(err, null);
-  }
-});
-
-module.exports = passport;
+  module.exports = passport;

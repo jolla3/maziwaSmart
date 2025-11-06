@@ -203,73 +203,26 @@ exports.registerSeller = async (req, res) => {
 
 exports.googleCallback = async (req, res) => {
   try {
-    const { displayName, emails, photos } = req.user || {};
-
-    // Safely extract email
-    const email = Array.isArray(emails) && emails.length > 0 ? emails[0].value : null;
-
-    if (!email) {
-      console.error("❌ Google login failed: No email returned from Google.");
-      const frontendURL = process.env.FRONTEND_URL || "https://maziwa-smart.vercel.app";
-      return res.redirect(
-        `${frontendURL}/google-callback?error=${encodeURIComponent("No email found from Google account. Please use a valid Google account.")}`
-      );
+    const user = req.user;
+    if (!user || !user.email) {
+      return res.redirect(`${FRONTEND_URL}/google-callback?error=No email found`);
     }
 
-    let user = await User.findOne({ email });
-    let role = "buyer";
-    let code = "";
-    let isNewUser = false;
+    const role = user.role || "buyer";
+    const code = user.farmer_code || "";
 
-    if (!user) {
-      const farmer = await Farmer.findOne({ email });
-      if (farmer) {
-        user = farmer;
-        role = "farmer";
-        code = farmer.farmer_code;
-      } else {
-        // Create new Google buyer user
-        user = new User({
-          username: displayName || "Unnamed User",
-          email,
-          role: "buyer",
-          photo: Array.isArray(photos) && photos.length > 0 ? photos[0].value : null,
-          email_verified: true,
-        });
-        await user.save();
-        isNewUser = true;
-      }
-    } else {
-      role = user.role;
-    }
-
-    // Build JWT
-    const payload = {
-      id: user._id,
-      name: user.username || displayName,
-      email: user.email,
-      role,
-      code,
-    };
+    const payload = { id: user._id, name: user.username || user.fullname, email: user.email, role, code };
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "7d" });
 
-    const frontendURL = process.env.FRONTEND_URL || "https://maziwa-smart.vercel.app";
-
-    // ✅ Redirect to Google callback handler on frontend
-    if (isNewUser) {
-      return res.redirect(`${frontendURL}/set-password?token=${token}`);
-    } else {
-      return res.redirect(
-        `${frontendURL}/google-callback?token=${token}&role=${role}&name=${encodeURIComponent(payload.name)}`
-      );
+    if (!user.password && role !== "buyer") {
+      // Optionally force set-password for farmers or any special role
+      return res.redirect(`${FRONTEND_URL}/set-password?token=${token}`);
     }
 
+    return res.redirect(`${FRONTEND_URL}/google-callback?token=${token}&role=${role}&name=${encodeURIComponent(payload.name)}`);
   } catch (err) {
-    console.error("❌ Google callback error:", err);
-    const frontendURL = process.env.FRONTEND_URL || "https://maziwa-smart.vercel.app";
-    res.redirect(
-      `${frontendURL}/google-callback?error=${encodeURIComponent("Google login failed")}`
-    );
+    console.error(err);
+    return res.redirect(`${FRONTEND_URL}/google-callback?error=Google login failed`);
   }
 };
 
