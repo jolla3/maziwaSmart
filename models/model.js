@@ -229,7 +229,7 @@ cowSchema.post('save', async function (doc, next) {
 
     // 🔥 Enforce calves to always default properly
     if (doc.is_calf && !doc.stage) {
-      doc.stage = 'calf';
+      doc.stage = '';
       await doc.save(); // one-time correction
     }
 

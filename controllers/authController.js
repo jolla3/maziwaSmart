@@ -203,29 +203,50 @@ exports.registerSeller = async (req, res) => {
 
 exports.googleCallback = async (req, res) => {
   try {
-    const user = req.user;
+    const user = req.user; // user is the Mongo object returned by passport strategy
+    const frontendURL = process.env.FRONTEND_URL || "https://maziwa-smart.vercel.app";
+
     if (!user || !user.email) {
-      return res.redirect(`${FRONTEND_URL}/google-callback?error=No email found`);
+      console.error("Google callback: no user or no email in req.user");
+      return res.redirect(
+        `${frontendURL}/google-callback?error=${encodeURIComponent("No email found from Google account.")}`
+      );
     }
 
-    const role = user.role || "buyer";
+    // Determine role and name fields depending on which collection
+    const role = user.role || (user._collection === "Farmer" ? "farmer" : "buyer");
+    // name: user.username (User) or user.fullname (Farmer)
+    const name = user.username || user.fullname || user.displayName || "User";
+
+    // optional farmer_code
     const code = user.farmer_code || "";
 
-    const payload = { id: user._id, name: user.username || user.fullname, email: user.email, role, code };
+    const payload = {
+      id: user._id,
+      name,
+      email: user.email,
+      role,
+      code,
+    };
+
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "7d" });
 
-    if (!user.password && role !== "buyer") {
-      // Optionally force set-password for farmers or any special role
-      return res.redirect(`${FRONTEND_URL}/set-password?token=${token}`);
+    // If user has no password saved in DB, redirect them to set-password (first-time registration)
+    // This respects your "no temporary password" rule:
+    if (!user.password) {
+      return res.redirect(`${frontendURL}/set-password?token=${token}`);
     }
 
-    return res.redirect(`${FRONTEND_URL}/google-callback?token=${token}&role=${role}&name=${encodeURIComponent(payload.name)}`);
+    // Existing user: redirect to frontend handler
+    return res.redirect(
+      `${frontendURL}/google-callback?token=${token}&role=${encodeURIComponent(role)}&name=${encodeURIComponent(name)}`
+    );
   } catch (err) {
-    console.error(err);
-    return res.redirect(`${FRONTEND_URL}/google-callback?error=Google login failed`);
+    console.error("googleCallback error:", err);
+    const frontendURL = process.env.FRONTEND_URL || "https://maziwa-smart.vercel.app";
+    return res.redirect(`${frontendURL}/google-callback?error=${encodeURIComponent("Google login failed")}`);
   }
 };
-
 
 // ✅ Controller to set password after Google signup
 exports.setPassword = async (req, res) => {
