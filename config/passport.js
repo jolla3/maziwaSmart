@@ -1,7 +1,7 @@
 // passport.js
 const passport = require("passport");
 const GoogleStrategy = require("passport-google-oauth20").Strategy;
-const { User, Farmer } = require("../models/model"); // adjust path
+const { User, Farmer } = require("../models/model");
 
 const callbackURL =
   process.env.NODE_ENV === "production"
@@ -14,20 +14,32 @@ passport.use(
       clientID: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
       callbackURL,
-      passReqToCallback: true, // IMPORTANT: allows access to req.query.role
+      passReqToCallback: true, // IMPORTANT: allows access to req
     },
-    // (req, accessToken, refreshToken, profile, done)
     async (req, accessToken, refreshToken, profile, done) => {
       try {
-        const roleFromFrontend = (req.query?.role || "buyer").toLowerCase();
+        // ✅ Extract role from OAuth state parameter
+        let roleFromFrontend = "buyer"; // default
+        
+        try {
+          const state = req.query.state;
+          if (state) {
+            const parsed = JSON.parse(state);
+            roleFromFrontend = (parsed.role || "buyer").toLowerCase();
+          }
+        } catch (e) {
+          console.log("Could not parse state, using default role");
+        }
+
         const email = profile.emails?.[0]?.value || null;
 
         if (!email) {
-          // If Google didn't return email, fail early
           return done(null, false, { message: "No email returned from Google" });
         }
 
-        // Try finding an existing user: check User -> Farmer (match your app order)
+        console.log(`🔍 Google OAuth: email=${email}, role=${roleFromFrontend}`);
+
+        // Try finding existing user
         let user = await User.findOne({ email }).lean();
         let userCollection = "User";
 
@@ -36,28 +48,30 @@ passport.use(
           if (user) userCollection = "Farmer";
         }
 
-        // If user exists, return it (we pass to req.user)
+        // If user exists, return it
         if (user) {
-          // attach a flag to identify which collection this came from
           user._collection = userCollection;
+          console.log(`✅ Existing user found in ${userCollection}`);
           return done(null, user);
         }
 
-        // No user found -> create in the collection selected by frontend role
+        // ✅ No user found -> create based on role
         if (roleFromFrontend === "farmer") {
-          // create farmer
+          console.log("🌱 Creating new Farmer account");
           const newFarmer = new Farmer({
             fullname: profile.displayName || "Unnamed Farmer",
             email,
             photo: profile.photos?.[0]?.value || null,
-            // other farmer-specific fields: farmer_code etc. if you have generation logic do it in controllers
+            role: "farmer",
+            is_active: true,
           });
           const saved = await newFarmer.save();
           const savedObj = saved.toObject();
           savedObj._collection = "Farmer";
+          console.log(`✅ New Farmer created: ${savedObj._id}`);
           return done(null, savedObj);
         } else {
-          // default: create User (buyer/seller etc.)
+          console.log("👤 Creating new User account");
           const newUser = new User({
             username: profile.displayName || "Unnamed User",
             email,
@@ -67,20 +81,18 @@ passport.use(
           const saved = await newUser.save();
           const savedObj = saved.toObject();
           savedObj._collection = "User";
+          console.log(`✅ New User created: ${savedObj._id}`);
           return done(null, savedObj);
         }
       } catch (err) {
-        console.error("GoogleStrategy error:", err);
+        console.error("❌ GoogleStrategy error:", err);
         return done(err, null);
       }
     }
   )
 );
 
-// Note: because we use session:false in your routes, serialize/deserialize are not required.
-// But if you keep them, use something simple:
 passport.serializeUser((user, done) => {
-  // user might be plain object or mongoose doc
   done(null, { id: user._id || user.id, collection: user._collection || "User" });
 });
 
