@@ -48,7 +48,7 @@ exports.getMarketListings = async (req, res) => {
 // ---------------------------
 // GET full details for a single listing
 // ---------------------------
-// ✅ controllers/marketController.js
+
 exports.getMarketListingById = async (req, res) => {
   try {
     const { id } = req.params;
