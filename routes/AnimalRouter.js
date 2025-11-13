@@ -13,7 +13,7 @@ router.post('/', verifyToken, animalUpload.any('photo'), AnimalController.create
 
 router.get("/", verifyToken, AnimalController.getMyAnimals);
 router.get("/:id", verifyToken, AnimalController.getAnimalById);
-router.put("/:id", verifyToken,animalUpload.any('photo'), AnimalController.updateAnimal);
+router.patch("/:id", verifyToken,animalUpload.any('photo'), AnimalController.updateAnimal);
 router.delete("/:id", verifyToken, AnimalController.deleteAnimal);
 router.put("/bulk", verifyToken, AnimalController.bulkUpdateAnimals);
 module.exports = router;
