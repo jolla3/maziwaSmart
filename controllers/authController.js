@@ -203,48 +203,48 @@ exports.registerSeller = async (req, res) => {
 
 exports.googleCallback = async (req, res) => {
   try {
-    const user = req.user; // user is the Mongo object returned by passport strategy
-    const frontendURL = process.env.FRONTEND_URL || "https://maziwa-smart.vercel.app";
+    const user = req.user;
 
     if (!user || !user.email) {
-      console.error("Google callback: no user or no email in req.user");
-      return res.redirect(
-        `${frontendURL}/google-callback?error=${encodeURIComponent("No email found from Google account.")}`
-      );
+      console.error("❌ Missing email in req.user");
+      return res.redirect(`${process.env.FRONTEND_URL}/google-callback?error=No email found`);
     }
 
-    // Determine role and name fields depending on which collection
-    const role = user.role || (user._collection === "Farmer" ? "farmer" : "buyer");
-    // name: user.username (User) or user.fullname (Farmer)
-    const name = user.username || user.fullname || user.displayName || "User";
+    // ✅ Determine role and collection type properly
+    let role;
+    if (user._collectionType === "Farmer") role = "farmer";
+    else if (user.role) role = user.role;
+    else role = "buyer"; // default fallback
 
-    // optional farmer_code
+    // ✅ If farmer_code exists (issued externally), use it — do NOT generate it here
     const code = user.farmer_code || "";
 
+    // ✅ Build JWT payload
     const payload = {
       id: user._id,
-      name,
+      name: user.username || user.fullname || "Unnamed User",
       email: user.email,
       role,
-      code,
+      code, // included only if already present
     };
 
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "7d" });
+    const frontendURL = process.env.FRONTEND_URL || "https://maziwa-smart.vercel.app";
 
-    // If user has no password saved in DB, redirect them to set-password (first-time registration)
-    // This respects your "no temporary password" rule:
+    // ✅ If user has no password, it’s their first Google login → redirect to set-password
     if (!user.password) {
       return res.redirect(`${frontendURL}/set-password?token=${token}`);
     }
 
-    // Existing user: redirect to frontend handler
+    // ✅ Otherwise, redirect to normal flow
     return res.redirect(
-      `${frontendURL}/google-callback?token=${token}&role=${encodeURIComponent(role)}&name=${encodeURIComponent(name)}`
+      `${frontendURL}/google-callback?token=${token}&role=${role}&name=${encodeURIComponent(payload.name)}`
     );
+
   } catch (err) {
-    console.error("googleCallback error:", err);
+    console.error("❌ googleCallback error:", err);
     const frontendURL = process.env.FRONTEND_URL || "https://maziwa-smart.vercel.app";
-    return res.redirect(`${frontendURL}/google-callback?error=${encodeURIComponent("Google login failed")}`);
+    return res.redirect(`${frontendURL}/google-callback?error=Google login failed`);
   }
 };
 
