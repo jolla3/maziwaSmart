@@ -123,10 +123,10 @@ const updateStagesAndPregnancies = async () => {
       species: "pig",
       stage: "gilt",
       birth_date: { $lte: moment().subtract(1, "years").toDate() }
-    });
+    })
     for (const g of gilts) {
       g.stage = "sow";
-      await g.save();
+      await g.save()
     }
 
     /** ================================
@@ -190,7 +190,7 @@ const updateStagesAndPregnancies = async () => {
   } catch (err) {
     console.error("❌ Error in stage/pregnancy cron:", err.message);
   }
-};
+}
 
 // Run every day at midnight (00:00)
 cron.schedule("0 0 * * *", updateStagesAndPregnancies);

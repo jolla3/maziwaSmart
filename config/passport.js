@@ -8,107 +8,124 @@ const callbackURL =
     ? "https://maziwasmart.onrender.com/api/userAuth/google/callback"
     : "http://localhost:5000/api/userAuth/google/callback";
 
+// ---------------------------------------------------------
+// Helper: Normalize user object for session storage
+// ---------------------------------------------------------
+const wrapUser = (doc, collection) => {
+  if (!doc) return null;
+  const obj = doc.toObject ? doc.toObject() : doc;
+  obj._collection = collection;
+  return obj;
+};
+
+// ---------------------------------------------------------
+// GOOGLE STRATEGY
+// ---------------------------------------------------------
 passport.use(
   new GoogleStrategy(
     {
       clientID: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
       callbackURL,
-      passReqToCallback: true, // IMPORTANT: allows access to req
+      passReqToCallback: true
     },
     async (req, accessToken, refreshToken, profile, done) => {
       try {
-        // ✅ Extract role from OAuth state parameter
-        let roleFromFrontend = "buyer"; // default
-        
+        // -----------------------------------------
+        // ROLE FROM FRONTEND STATE (default buyer)
+        // -----------------------------------------
+        let role = "buyer";
+
         try {
-          const state = req.query.state;
-          if (state) {
-            const parsed = JSON.parse(state);
-            roleFromFrontend = (parsed.role || "buyer").toLowerCase();
+          if (req.query.state) {
+            const parsed = JSON.parse(req.query.state);
+            role = (parsed.role || "buyer").toLowerCase();
           }
-        } catch (e) {
-          console.log("Could not parse state, using default role");
+        } catch (_) {
+          // If invalid JSON: ignore silently
         }
 
-        const email = profile.emails?.[0]?.value || null;
+        // -----------------------------------------
+        // EXTRACT EMAIL
+        // -----------------------------------------
+        const email = profile.emails?.[0]?.value;
+        if (!email) return done(null, false, { message: "No email returned from Google" });
 
-        if (!email) {
-          return done(null, false, { message: "No email returned from Google" });
+        // -----------------------------------------
+        // 1: Check User collection
+        // -----------------------------------------
+        const existingUser = await User.findOne({ email });
+        if (existingUser) {
+          return done(null, wrapUser(existingUser, "User"));
         }
 
-        console.log(`🔍 Google OAuth: email=${email}, role=${roleFromFrontend}`);
-
-        // Try finding existing user
-        let user = await User.findOne({ email }).lean();
-        let userCollection = "User";
-
-        if (!user) {
-          user = await Farmer.findOne({ email }).lean();
-          if (user) userCollection = "Farmer";
+        // -----------------------------------------
+        // 2: Check Farmer collection
+        // -----------------------------------------
+        const existingFarmer = await Farmer.findOne({ email });
+        if (existingFarmer) {
+          return done(null, wrapUser(existingFarmer, "Farmer"));
         }
 
-        // If user exists, return it
-        if (user) {
-          user._collection = userCollection;
-          console.log(`✅ Existing user found in ${userCollection}`);
-          return done(null, user);
-        }
-
-        // ✅ No user found -> create based on role
-        if (roleFromFrontend === "farmer") {
-          console.log("🌱 Creating new Farmer account");
+        // -----------------------------------------
+        // 3: Create new Farmer (if role = farmer)
+        // -----------------------------------------
+        if (role === "farmer") {
           const newFarmer = new Farmer({
             fullname: profile.displayName || "Unnamed Farmer",
             email,
             photo: profile.photos?.[0]?.value || null,
             role: "farmer",
-            is_active: true,
+            farmer_code: null, // Filled later manually
+            phone: null,
+            is_active: true
           });
-          const saved = await newFarmer.save();
-          const savedObj = saved.toObject();
-          savedObj._collection = "Farmer";
-          console.log(`✅ New Farmer created: ${savedObj._id}`);
-          return done(null, savedObj);
-        } else {
-          console.log("👤 Creating new User account");
-          const newUser = new User({
-            username: profile.displayName || "Unnamed User",
-            email,
-            role: roleFromFrontend || "buyer",
-            photo: profile.photos?.[0]?.value || null,
-          });
-          const saved = await newUser.save();
-          const savedObj = saved.toObject();
-          savedObj._collection = "User";
-          console.log(`✅ New User created: ${savedObj._id}`);
-          return done(null, savedObj);
+
+          const savedFarmer = await newFarmer.save();
+          return done(null, wrapUser(savedFarmer, "Farmer"));
         }
+
+        // -----------------------------------------
+        // 4: Default → Create new User
+        // -----------------------------------------
+        const newUser = new User({
+          username: profile.displayName || "Unnamed User",
+          email,
+          role, // buyer | seller | admin | broker | manager etc.
+          photo: profile.photos?.[0]?.value || null
+        });
+
+        const savedUser = await newUser.save();
+        return done(null, wrapUser(savedUser, "User"));
+
       } catch (err) {
-        console.error("❌ GoogleStrategy error:", err);
+        console.error("Google Strategy Error:", err);
         return done(err, null);
       }
     }
   )
 );
 
+// ---------------------------------------------------------
+// SERIALIZER / DESERIALIZER
+// ---------------------------------------------------------
 passport.serializeUser((user, done) => {
-  done(null, { id: user._id || user.id, collection: user._collection || "User" });
+  done(null, {
+    id: user._id || user.id,
+    collection: user._collection || "User"
+  });
 });
 
 passport.deserializeUser(async (obj, done) => {
   try {
     if (!obj) return done(null, null);
-    const { id, collection } = obj;
-    if (collection === "Farmer") {
-      const farmer = await Farmer.findById(id);
-      return done(null, farmer);
-    } else {
-      const user = await User.findById(id);
-      return done(null, user);
-    }
+
+    const Model = obj.collection === "Farmer" ? Farmer : User;
+    const user = await Model.findById(obj.id);
+
+    return done(null, user || null);
   } catch (err) {
-    done(err, null);
+    return done(err, null);
   }
 });
 

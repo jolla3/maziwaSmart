@@ -62,102 +62,130 @@ exports.registerAdmin = async (req, res) => {
   }
 };
 
-// ----------------------------
-// NORMAL LOGIN
-// ----------------------------
-// controllers/authController.js
+// loginController.js
 exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ message: "Email and password required" });
+    }
+
+    // -----------------------------------------
+    // CENTRALIZED MODEL CONFIG (NO HARDCODING)
+    // -----------------------------------------
+    const roleConfig = [
+      {
+        model: User,
+        getRole: (u) => u.role,
+        getCode: () => ""
+      },
+      {
+        model: Farmer,
+        getRole: () => "farmer",
+        getCode: (u) => u.farmer_code
+      },
+      {
+        model: Porter,
+        getRole: () => "porter",
+        getCode: () => u.porter_code || ""
+      },
+      {
+        model: Manager,
+        getRole: () => "manager",
+        getCode: (u) => u.farmer_code
+      }
+    ];
 
     let user = null;
     let role = "";
     let code = "";
 
-    // 1️⃣ Try system user (admin, superadmin, broker, buyer, seller, manager)
-    user = await User.findOne({ email });
-    if (user) {
-      role = user.role;
-      code = ""; // system users don’t have a code
-    }
+    // -----------------------------------------
+    // AUTO-MATCH USER BY EMAIL
+    // -----------------------------------------
+    for (const cfg of roleConfig) {
+      const found = await cfg.model.findOne({ email });
 
-    // 2️⃣ Try farmer
-    if (!user) {
-      user = await Farmer.findOne({ email });
-      if (user) {
-        role = "farmer";
-        code = user.farmer_code;
+      if (found) {
+        user = found;
+        role = cfg.getRole(found);
+        code = cfg.getCode(found) || "";
+        break;
       }
     }
 
-    // 3️⃣ Try porter
+    // -----------------------------------------
+    // ACCOUNT NOT FOUND
+    // -----------------------------------------
     if (!user) {
-      user = await Porter.findOne({ email });
-      if (user) {
-        role = "porter";
-        code = user.porter_code || "";
-      }
+      return res.status(404).json({ message: "Account not found" });
     }
 
-    // 🚫 Not found
-    if (!user) {
-      return res.status(404).json({ message: "❌ Account not found" });
-    }
-
-    // 🚫 Check if inactive
+    // -----------------------------------------
+    // CHECK ACTIVE STATUS
+    // -----------------------------------------
     if (user.is_active === false) {
       return res.status(403).json({
-        message: "🚫 Account is deactivated. Please contact admin.",
+        message: "Account is deactivated. Contact admin."
       });
     }
 
-    // 🚫 No password set
+    // -----------------------------------------
+    // NO PASSWORD SET
+    // -----------------------------------------
     if (!user.password) {
       return res.status(400).json({
-        message: `❌ This ${role} has no login credentials.`,
+        message: "This account has no login credentials set."
       });
     }
 
-    // ✅ Compare passwords
+    // -----------------------------------------
+    // PASSWORD CHECK
+    // -----------------------------------------
     const validPass = await bcrypt.compare(password, user.password);
+
     if (!validPass) {
       return res.status(400).json({
-        message: "❌ Invalid credentials.",
+        message: "Invalid credentials"
       });
     }
 
-    // 🎯 Build payload
+    // -----------------------------------------
+    // JWT PAYLOAD
+    // -----------------------------------------
     const payload = {
       id: user._id,
       name: user.name || user.fullname || user.username || "",
       email: user.email,
       role,
-      ...(code && { code }), // include code if available
+      ...(code && { code })
     };
 
-    // 🔐 Generate token
     const token = jwt.sign(payload, process.env.JWT_SECRET, {
-      expiresIn: "7d",
+      expiresIn: "7d"
     });
 
-    // ✅ Success
-    res.status(200).json({
+    // -----------------------------------------
+    // SUCCESS RESPONSE
+    // -----------------------------------------
+    return res.status(200).json({
       success: true,
-      message: "✅ Login successful",
+      message: "Login successful",
       token,
       role,
-      user: payload,
+      user: payload
     });
-  } catch (error) {
-    console.error("❌ Login error:", error);
-    res.status(500).json({
+
+  } catch (err) {
+    console.error("Login error:", err);
+    return res.status(500).json({
       success: false,
-      message: "Login failed.",
-      error: error.message,
+      message: "Login failed",
+      error: err.message
     });
   }
 };
-
 
 // ----------------------------
 // REGISTER SELLER
@@ -206,73 +234,143 @@ exports.googleCallback = async (req, res) => {
     const user = req.user;
 
     if (!user || !user.email) {
-      console.error("❌ Missing email in req.user");
-      return res.redirect(`${process.env.FRONTEND_URL}/google-callback?error=No email found`);
+      return res.redirect(
+        `${process.env.FRONTEND_URL}/google-callback?error=No email found`
+      );
     }
 
-    // ✅ Determine role and collection type properly
-    let role;
-    if (user._collectionType === "Farmer") role = "farmer";
-    else if (user.role) role = user.role;
-    else role = "buyer"; // default fallback
+    // -----------------------------------------
+    // DYNAMIC ROLE RESOLUTION (NO HARDCODING)
+    // -----------------------------------------
+    const role =
+      user._collection === "Farmer"
+        ? "farmer"
+        : user.role
+        ? user.role
+        : "buyer";
 
-    // ✅ If farmer_code exists (issued externally), use it — do NOT generate it here
+    // Farmer_code only exists for real farmers
     const code = user.farmer_code || "";
 
-    // ✅ Build JWT payload
+    // -----------------------------------------
+    // BUILD JWT
+    // -----------------------------------------
     const payload = {
       id: user._id,
       name: user.username || user.fullname || "Unnamed User",
       email: user.email,
       role,
-      code, // included only if already present
+      ...(code && { code })
     };
 
-    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "7d" });
-    const frontendURL = process.env.FRONTEND_URL || "https://maziwa-smart.vercel.app";
+    const token = jwt.sign(payload, process.env.JWT_SECRET, {
+      expiresIn: "7d"
+    });
 
-    // ✅ If user has no password, it’s their first Google login → redirect to set-password
+    const frontendURL =
+      process.env.FRONTEND_URL || "https://maziwa-smart.vercel.app";
+
+    // -----------------------------------------
+    // FIRST-TIME GOOGLE LOGIN (no password stored)
+    // -----------------------------------------
     if (!user.password) {
       return res.redirect(`${frontendURL}/set-password?token=${token}`);
     }
 
-    // ✅ Otherwise, redirect to normal flow
+    // -----------------------------------------
+    // EXISTING USER → NORMAL FLOW
+    // -----------------------------------------
     return res.redirect(
-      `${frontendURL}/google-callback?token=${token}&role=${role}&name=${encodeURIComponent(payload.name)}`
+      `${frontendURL}/google-callback?token=${token}&role=${role}&name=${encodeURIComponent(
+        payload.name
+      )}`
     );
-
   } catch (err) {
-    console.error("❌ googleCallback error:", err);
-    const frontendURL = process.env.FRONTEND_URL || "https://maziwa-smart.vercel.app";
-    return res.redirect(`${frontendURL}/google-callback?error=Google login failed`);
+    console.error("googleCallback error:", err);
+
+    const frontendURL =
+      process.env.FRONTEND_URL || "https://maziwa-smart.vercel.app";
+
+    return res.redirect(
+      `${frontendURL}/google-callback?error=Google login failed`
+    );
   }
 };
 
-// ✅ Controller to set password after Google signup
+// ------------------------------------------------------------------
+// COMPLETE GOOGLE REGISTRATION WITH PASSWORD
+// ------------------------------------------------------------------
 exports.setPassword = async (req, res) => {
   try {
-    const { token, password } = req.body;
-    if (!token || !password)
-      return res.status(400).json({ message: "Missing token or password." });
+    const { token, password, phone, location, farmer_code } = req.body;
 
-    // Verify token
+    if (!token || !password) {
+      return res.status(400).json({ message: "Missing token or password" });
+    }
+
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const hashed = await bcrypt.hash(password, 10);
+
+    // ------------------------------------------------------------------
+    // FARMER FLOW
+    // ------------------------------------------------------------------
+    if (decoded.role === "farmer") {
+      const farmer = await Farmer.findById(decoded.id);
+      if (!farmer)
+        return res.status(404).json({ message: "Farmer not found" });
+
+      if (!phone || !farmer_code) {
+        return res
+          .status(400)
+          .json({ message: "Phone and farmer_code required" });
+      }
+
+      farmer.password = hashed;
+      farmer.phone = phone;
+      farmer.farmer_code = farmer_code;
+      if (location) farmer.location = location;
+
+      await farmer.save();
+
+      return res.json({
+        message: "Farmer registration complete",
+        success: true,
+      });
+    }
+
+    // ------------------------------------------------------------------
+    // USER FLOW
+    // ------------------------------------------------------------------
     const user = await User.findById(decoded.id);
     if (!user)
-      return res.status(404).json({ message: "User not found." });
+      return res.status(404).json({ message: "User not found" });
 
-    // Hash and update password
-    const hashedPassword = await bcrypt.hash(password, 10);
-    user.password = hashedPassword;
+    user.password = hashed;
+    if (phone) user.phone = phone;
+
     await user.save();
 
-    res.status(200).json({ message: "Password set successfully. You can now log in." });
+    return res.json({
+      message: "Registration complete",
+      success: true,
+    });
   } catch (err) {
-    console.error("❌ Error in setPassword:", err)
-    res.status(500).json({ message: "Server error while setting password." });
+    console.error("setPassword error:", err);
+
+    if (err.name === "JsonWebTokenError") {
+      return res.status(401).json({ message: "Invalid token" });
+    }
+
+    if (err.name === "TokenExpiredError") {
+      return res.status(401).json({ message: "Token expired" });
+    }
+
+    return res.status(500).json({
+      message: "Server error",
+      error: err.message,
+    });
   }
 };
-
 
 // 🧩 Register Farmer Controller
 exports.registerFarmer = async (req, res) => {

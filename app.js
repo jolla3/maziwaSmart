@@ -7,20 +7,26 @@ const socketIo = require('socket.io');
 require('dotenv').config();
 require('./cron/updateCowStages');
 const passport = require("./config/passport");
-const { logger } = require("./utils/logger"); // keeps your logging neat
+const { logger } = require("./utils/logger");
 
 const app = express();
 
-// ===============================
-// Middleware setup
-// ===============================
+// ======================================================
+// ONLINE USERS TRACKER (in-memory)
+// ======================================================
+const onlineUsers = new Set();
+app.set("onlineUsers", onlineUsers);
+
+// ======================================================
+// Middleware
+// ======================================================
 app.use(express.json());
 app.use(cors());
 app.use(passport.initialize());
 
-// ===============================
+// ======================================================
 // Routes
-// ===============================
+// ======================================================
 const userAuth = require('./routes/authRouter');
 app.use('/api/userAuth', userAuth);
 
@@ -96,16 +102,16 @@ app.use("/api/seller-request", requestApproval);
 const Approval = require("./routes/adminRoutes");
 app.use("/api/approval", Approval);
 
-// ===============================
+// ======================================================
 // MongoDB Connection
-// ===============================
+// ======================================================
 mongoose.connect(process.env.MONGO_URI)
   .then(() => logger.info('✅ Connected to MongoDB'))
-  .catch(err => logger.error("❌ MongoDB connection error", err));
+  .catch(err => logger.error('❌ MongoDB connection error', err));
 
-// ===============================
+// ======================================================
 // HTTP + Socket.IO Setup
-// ===============================
+// ======================================================
 const { verifySocketAuth } = require("./middleware/authMiddleware");
 const server = http.createServer(app);
 
@@ -117,15 +123,41 @@ const io = socketIo(server, {
   },
 });
 
+// expose socket instance to routes
 app.set("io", io);
+
+// authenticate sockets
 io.use(verifySocketAuth);
 
+// ======================================================
+// Monitoring Namespace for SuperAdmin
+// ======================================================
+const monitorNamespace = io.of("/monitor");
+
+monitorNamespace.on("connection", (socket) => {
+  logger.info(`📡 Monitor connected: ${socket.id}`);
+  socket.emit("monitor:onlineUsers", Array.from(onlineUsers));
+});
+
+// ======================================================
+// Main Socket Handling (chat + tracking online users)
+// ======================================================
 io.on("connection", (socket) => {
   const userId = socket.user?.id;
-  logger(`✅ User connected: ${userId} (socket: ${socket.id})`);
 
-  if (userId) socket.join(userId.toString());
+  logger.info(`🟢 User connected: ${userId} (socket ${socket.id})`);
 
+  if (userId) {
+    // register online
+    onlineUsers.add(userId.toString());
+
+    io.emit("monitor:onlineUsers", Array.from(onlineUsers));
+    monitorNamespace.emit("monitor:onlineUsers", Array.from(onlineUsers));
+
+    socket.join(userId.toString());
+  }
+
+  // CHAT EVENTS
   socket.on("send_message", (data) => {
     if (data.receiver) {
       io.to(data.receiver.toString()).emit("new_message", {
@@ -136,14 +168,22 @@ io.on("connection", (socket) => {
     }
   });
 
+  // DISCONNECT HANDLER
   socket.on("disconnect", () => {
-    logger.warn(`❌ Disconnected: ${socket.id} (User: ${userId})`);
+    if (userId) {
+      onlineUsers.delete(userId.toString());
+
+      io.emit("monitor:onlineUsers", Array.from(onlineUsers));
+      monitorNamespace.emit("monitor:onlineUsers", Array.from(onlineUsers));
+    }
+
+    logger.warn(`🔴 Disconnected: ${socket.id} (User: ${userId})`);
   });
 });
 
-// ===============================
+// ======================================================
 // Start Server
-// ===============================
+// ======================================================
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   logger.info(`🚀 Server running on port ${PORT}`);

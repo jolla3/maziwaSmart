@@ -31,8 +31,8 @@ const User = mongoose.model('User', userSchema);
 // ---------------------------
 const farmerSchema = new Schema({
   fullname: { type: String, required: true },
-  farmer_code: { type: Number, required: true, unique: true },
-  phone: { type: Number, required: true },
+  farmer_code: { type: Number,  unique: true },
+  phone: { type: Number },
   email: { type: String },
   password: { type: String },
   photo: { type: String },
@@ -326,8 +326,8 @@ const flagAnimalForListing = async (animalId) => {
     { animal_id: animalId },
     { flagged_for_anomaly: flagged, anomaly_count: anomalies },
     { upsert: true } // ensure listing exists
-  );
-};
+  )
+}
 
 // 📌 Post-save hook: update stats, detect anomalies, notify farmer, flag animal
 cowMilkRecordSchema.post('save', async function (doc, next) {
@@ -373,7 +373,7 @@ cowMilkRecordSchema.post('save', async function (doc, next) {
     const values = records.map(r => r.litres);
     const mean = values.reduce((a, b) => a + b, 0) / values.length || 0;
     const variance = values.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / (values.length || 1);
-    const stdDev = Math.sqrt(variance);
+    const stdDev = Math.sqrt(variance)
 
     const lowThreshold = mean - (stdDev * 2);
     const highThreshold = mean + (stdDev * 2);
@@ -390,7 +390,7 @@ cowMilkRecordSchema.post('save', async function (doc, next) {
         { animal_id: doc.animal_id, anomaly_date: doc.collection_date },
         { $push: { [`anomaly_slots.${doc.time_slot}`]: anomalyData } }, // 🔑 append, don’t overwrite
         { upsert: true, new: true, session }
-      );
+      )
 
       await Notification.create([{
         farmer_code: doc.farmer_code,
@@ -398,7 +398,7 @@ cowMilkRecordSchema.post('save', async function (doc, next) {
         type: 'milk_anomaly',
         message: `⚠️ Anomaly for ${doc.cow_name} (${doc.time_slot}): ${anomalyData.anomaly_type} (${doc.litres}L vs avg ${dailyAverage.toFixed(2)}L)`,
         sent_at: new Date()
-      }], { session });
+      }], { session })
     }
 
     await flagAnimalForListing(doc.animal_id);
@@ -411,8 +411,8 @@ cowMilkRecordSchema.post('save', async function (doc, next) {
     console.error('CowMilkRecord post-save transaction error:', err);
   }
 
-  next();
-});
+  next()
+})
 
 const CowMilkRecord = mongoose.model('CowMilkRecord', cowMilkRecordSchema);
 
@@ -474,11 +474,11 @@ inseminationSchema.post('save', async function (doc, next) {
 
     if (doc.outcome === 'pregnant') {
       const gestationDaysMap = { cow: 283, goat: 150, sheep: 152, pig: 114 };
-      const gestationDays = gestationDaysMap[cow.species] || 283;
+      const gestationDays = gestationDaysMap[cow.species] || 283
 
       let dueDate = doc.expected_due_date ? new Date(doc.expected_due_date) : new Date(doc.insemination_date);
       if (!doc.expected_due_date) {
-        dueDate.setDate(dueDate.getDate() + gestationDays);
+        dueDate.setDate(dueDate.getDate() + gestationDays)
         await Insemination.findByIdAndUpdate(doc._id, { $set: { expected_due_date: dueDate } });
       }
 
