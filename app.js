@@ -9,6 +9,10 @@ require('./cron/updateCowStages');
 const passport = require("./config/passport");
 const { logger } = require("./utils/logger");
 
+// ========== ADD THIS RIGHT HERE ==========
+const { logEvent } = require("./utils/eventLogger");  // ← THIS IS THE KEY
+// ======================================================
+
 const app = express();
 
 // ======================================================
@@ -16,6 +20,46 @@ const app = express();
 // ======================================================
 const onlineUsers = new Set();
 app.set("onlineUsers", onlineUsers);
+
+// ======================================================
+// GLOBAL REQUEST TRACKING MIDDLEWARE (MUST BE EARLY)
+// ======================================================
+app.use(async (req, res, next) => {
+  const start = Date.now();
+
+  res.on("finish", async () => {
+    const duration = Date.now() - start;
+
+    // Log ALL requests with status code
+    await logEvent(req, {
+      type: "http.request",
+      metadata: {
+        method: req.method,
+        path: req.originalUrl,
+        statusCode: res.statusCode,
+        durationMs: duration,
+        userAgent: req.headers['user-agent']
+      }
+    });
+
+    // Auto-log errors (4xx and 5xx)
+    if (res.statusCode >= 400) {
+      await logEvent(req, {
+        userId: req.user?.id || null,
+        role: req.user?.role || null,
+        type: "http.error",
+        metadata: {
+          statusCode: res.statusCode,
+          method: req.method,
+          path: req.originalUrl,
+          body: req.body || null
+        }
+      });
+    }
+  });
+
+  next();
+});
 
 // ======================================================
 // Middleware
@@ -123,10 +167,7 @@ const io = socketIo(server, {
   },
 });
 
-// expose socket instance to routes
 app.set("io", io);
-
-// authenticate sockets
 io.use(verifySocketAuth);
 
 // ======================================================
@@ -140,24 +181,32 @@ monitorNamespace.on("connection", (socket) => {
 });
 
 // ======================================================
-// Main Socket Handling (chat + tracking online users)
+// Main Socket Handling + Online Tracking
 // ======================================================
 io.on("connection", (socket) => {
   const userId = socket.user?.id;
+  const role = socket.user?.role;
 
-  logger.info(`🟢 User connected: ${userId} (socket ${socket.id})`);
+  logger.info(`🟢 User connected: ${userId} (${role}) – socket ${socket.id}`);
 
   if (userId) {
-    // register online
     onlineUsers.add(userId.toString());
 
+    // Notify monitor dashboard
     io.emit("monitor:onlineUsers", Array.from(onlineUsers));
     monitorNamespace.emit("monitor:onlineUsers", Array.from(onlineUsers));
 
     socket.join(userId.toString());
+
+    // Log socket connection as event
+    logEvent(null, {
+      userId,
+      role,
+      type: "socket.connect",
+      metadata: { socketId: socket.id, ip: socket.handshake.address }
+    });
   }
 
-  // CHAT EVENTS
   socket.on("send_message", (data) => {
     if (data.receiver) {
       io.to(data.receiver.toString()).emit("new_message", {
@@ -165,19 +214,31 @@ io.on("connection", (socket) => {
         fromSocket: userId,
         timestamp: new Date(),
       });
+
+      // Optional: log chat activity
+      logEvent(null, {
+        userId,
+        type: "chat.message.sent",
+        metadata: { receiver: data.receiver, hasImage: !!data.image }
+      });
     }
   });
 
-  // DISCONNECT HANDLER
-  socket.on("disconnect", () => {
+  socket.on("disconnect", async () => {
     if (userId) {
       onlineUsers.delete(userId.toString());
-
       io.emit("monitor:onlineUsers", Array.from(onlineUsers));
       monitorNamespace.emit("monitor:onlineUsers", Array.from(onlineUsers));
+
+      await logEvent(null, {
+        userId,
+        role,
+        type: "socket.disconnect",
+        metadata: { socketId: socket.id }
+      });
     }
 
-    logger.warn(`🔴 Disconnected: ${socket.id} (User: ${userId})`);
+    logger.warn(`🔴 User disconnected: ${userId} (socket ${socket.id})`);
   });
 });
 
@@ -187,4 +248,5 @@ io.on("connection", (socket) => {
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   logger.info(`🚀 Server running on port ${PORT}`);
+  logger.info(`🔥 Event tracking ACTIVE – monitor-worker will now see everything`);
 });
