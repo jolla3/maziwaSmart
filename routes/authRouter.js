@@ -23,7 +23,7 @@ router.post("/set-password", require("../controllers/authController").setPasswor
 
 // ✅ START GOOGLE OAUTH - capture role and pass via state
 router.get("/google", (req, res, next) => {
-  const role = req.query.role || "buyer";
+  const role = req.query.role 
   
   // Pass role through OAuth state parameter
   passport.authenticate("google", {
