@@ -318,32 +318,45 @@ exports.setPassword = async (req, res) => {
     // =====================================================================
     // FARMER REGISTRATION
     // =====================================================================
-    if (decoded.role === "farmer") {
-      const farmer = await Farmer.findById(decoded.id);
+    // FARMER FLOW
+if (decoded.role === "farmer") {
+  const farmer = await Farmer.findById(decoded.id);
 
-      if (!farmer) {
-        return res.status(404).json({ message: "Farmer not found" });
-      }
+  if (!farmer) {
+    return res.status(404).json({ message: "Farmer not found" });
+  }
 
-      if (!phone || !farmer_code) {
-        return res.status(400).json({
-          message: "Phone and farmer_code required for farmers"
-        });
-      }
+  if (!phone || !farmer_code) {
+    return res.status(400).json({
+      message: "Phone and farmer_code required for farmers"
+    });
+  }
 
-      farmer.password = hashedPassword;
-      farmer.phone = phone;
-      farmer.farmer_code = farmer_code;
+  // PREVENT DUPLICATE FARMER CODE
+  const existing = await Farmer.findOne({
+    farmer_code,
+    _id: { $ne: farmer._id }
+  });
 
-      if (location) farmer.location = location;
+  if (existing) {
+    return res.status(409).json({
+      message: `Farmer code ${farmer_code} already exists. Choose another one.`
+    });
+  }
 
-      await farmer.save();
+  // UPDATE FARMER
+  farmer.password = hashedPassword;
+  farmer.phone = phone;
+  farmer.farmer_code = farmer_code;
+  if (location) farmer.location = location;
 
-      return res.json({
-        message: "Farmer registration complete",
-        success: true
-      });
-    }
+  await farmer.save();
+
+  return res.json({
+    message: "Farmer registration complete",
+    success: true
+  });
+}
 
     // =====================================================================
     // NORMAL USERS (buyer, seller, manager, porter, admin, etc.)
