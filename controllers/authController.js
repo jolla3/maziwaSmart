@@ -293,74 +293,88 @@ exports.setPassword = async (req, res) => {
   try {
     const { token, password, phone, location, farmer_code } = req.body;
 
+    console.log("DEBUG: Incoming body:", req.body);
+
     if (!token || !password) {
       return res.status(400).json({ message: "Missing token or password" });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const hashed = await bcrypt.hash(password, 10);
+    // Decode token
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (err) {
+      console.error("JWT ERROR:", err);
+      if (err.name === "TokenExpiredError") {
+        return res.status(401).json({ message: "Token expired" });
+      }
+      return res.status(401).json({ message: "Invalid token" });
+    }
 
-    // ------------------------------------------------------------------
-    // FARMER FLOW
-    // ------------------------------------------------------------------
+    console.log("DEBUG: JWT Decoded:", decoded);
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // =====================================================================
+    // FARMER REGISTRATION
+    // =====================================================================
     if (decoded.role === "farmer") {
       const farmer = await Farmer.findById(decoded.id);
-      if (!farmer)
-        return res.status(404).json({ message: "Farmer not found" });
 
-      if (!phone || !farmer_code) {
-        return res
-          .status(400)
-          .json({ message: "Phone and farmer_code required" });
+      if (!farmer) {
+        return res.status(404).json({ message: "Farmer not found" });
       }
 
-      farmer.password = hashed;
+      if (!phone || !farmer_code) {
+        return res.status(400).json({
+          message: "Phone and farmer_code required for farmers"
+        });
+      }
+
+      farmer.password = hashedPassword;
       farmer.phone = phone;
       farmer.farmer_code = farmer_code;
+
       if (location) farmer.location = location;
 
       await farmer.save();
 
       return res.json({
         message: "Farmer registration complete",
-        success: true,
+        success: true
       });
     }
 
-    // ------------------------------------------------------------------
-    // USER FLOW
-    // ------------------------------------------------------------------
+    // =====================================================================
+    // NORMAL USERS (buyer, seller, manager, porter, admin, etc.)
+    // =====================================================================
     const user = await User.findById(decoded.id);
-    if (!user)
-      return res.status(404).json({ message: "User not found" });
 
-    user.password = hashed;
-    if (phone) user.phone = phone;
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    user.password = hashedPassword;
+
+    if (phone) {
+      user.phone = phone;
+    }
 
     await user.save();
 
     return res.json({
       message: "Registration complete",
-      success: true,
+      success: true
     });
+
   } catch (err) {
-    console.error("setPassword error:", err);
-
-    if (err.name === "JsonWebTokenError") {
-      return res.status(401).json({ message: "Invalid token" });
-    }
-
-    if (err.name === "TokenExpiredError") {
-      return res.status(401).json({ message: "Token expired" });
-    }
-
+    console.error("SET PASSWORD CONTROLLER ERROR:", err);
     return res.status(500).json({
       message: "Server error",
-      error: err.message,
+      error: err.message
     });
   }
 };
-
 // 🧩 Register Farmer Controller
 exports.registerFarmer = async (req, res) => {
   try {
