@@ -1,38 +1,27 @@
 // app.js
-const express = require("express");
-const mongoose = require("mongoose");
-const cors = require("cors");
-const http = require("http");
-const socketIo = require("socket.io");
-require("dotenv").config();
-require("./cron/updateCowStages");
+const express = require('express');
+const mongoose = require('mongoose');
+const cors = require('cors');
+const http = require('http');
+const socketIo = require('socket.io');
+require('dotenv').config();
+require('./cron/updateCowStages');
 const passport = require("./config/passport");
 const { logger } = require("./utils/logger");
 
 const app = express();
 
 // ======================================================
+// ONLINE USERS TRACKER (in-memory)
+// ======================================================
+const onlineUsers = new Set();
+app.set("onlineUsers", onlineUsers);
+
+// ======================================================
 // Middleware
 // ======================================================
 app.use(express.json());
-
-// *************** FIXED CORS (THE REAL FIX) ***************
-app.use(
-  cors({
-    origin: [
-      "https://maziwa-smart.vercel.app",
-      "http://localhost:3000",
-    ],
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-    credentials: true,
-  })
-);
-
-// Fix for Render OPTIONS 405
-app.options("*", cors());
-
-// Passport
+app.use(cors());
 app.use(passport.initialize());
 
 // ======================================================
@@ -116,10 +105,9 @@ app.use("/api/approval", Approval);
 // ======================================================
 // MongoDB Connection
 // ======================================================
-mongoose
-  .connect(process.env.MONGO_URI)
-  .then(() => logger.info("Connected to MongoDB"))
-  .catch((err) => logger.error("MongoDB error", err));
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => logger.info('✅ Connected to MongoDB'))
+  .catch(err => logger.error('❌ MongoDB connection error', err));
 
 // ======================================================
 // HTTP + Socket.IO Setup
@@ -129,10 +117,7 @@ const server = http.createServer(app);
 
 const io = socketIo(server, {
   cors: {
-    origin: [
-      "https://maziwa-smart.vercel.app",
-      "http://localhost:3000",
-    ],
+    origin: ["https://maziwa-smart.vercel.app", "http://localhost:3000"],
     methods: ["GET", "POST"],
     credentials: true,
   },
@@ -141,32 +126,38 @@ const io = socketIo(server, {
 // expose socket instance to routes
 app.set("io", io);
 
-// track online users
-const onlineUsers = new Set();
-app.set("onlineUsers", onlineUsers);
-
 // authenticate sockets
 io.use(verifySocketAuth);
 
-// Monitoring Namespace
+// ======================================================
+// Monitoring Namespace for SuperAdmin
+// ======================================================
 const monitorNamespace = io.of("/monitor");
 
 monitorNamespace.on("connection", (socket) => {
-  logger.info(`Monitor connected: ${socket.id}`);
+  logger.info(`📡 Monitor connected: ${socket.id}`);
   socket.emit("monitor:onlineUsers", Array.from(onlineUsers));
 });
 
-// Main socket logic
+// ======================================================
+// Main Socket Handling (chat + tracking online users)
+// ======================================================
 io.on("connection", (socket) => {
   const userId = socket.user?.id;
 
+  logger.info(`🟢 User connected: ${userId} (socket ${socket.id})`);
+
   if (userId) {
+    // register online
     onlineUsers.add(userId.toString());
+
     io.emit("monitor:onlineUsers", Array.from(onlineUsers));
     monitorNamespace.emit("monitor:onlineUsers", Array.from(onlineUsers));
+
     socket.join(userId.toString());
   }
 
+  // CHAT EVENTS
   socket.on("send_message", (data) => {
     if (data.receiver) {
       io.to(data.receiver.toString()).emit("new_message", {
@@ -177,12 +168,16 @@ io.on("connection", (socket) => {
     }
   });
 
+  // DISCONNECT HANDLER
   socket.on("disconnect", () => {
     if (userId) {
       onlineUsers.delete(userId.toString());
+
       io.emit("monitor:onlineUsers", Array.from(onlineUsers));
       monitorNamespace.emit("monitor:onlineUsers", Array.from(onlineUsers));
     }
+
+    logger.warn(`🔴 Disconnected: ${socket.id} (User: ${userId})`);
   });
 });
 
@@ -191,5 +186,5 @@ io.on("connection", (socket) => {
 // ======================================================
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
-  logger.info(`Server running on port ${PORT}`);
+  logger.info(`🚀 Server running on port ${PORT}`);
 });
