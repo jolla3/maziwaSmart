@@ -555,11 +555,14 @@ const Payment = mongoose.model('Payment', paymentSchema);
 // Notification Schema
 // ---------------------------
 const notificationSchema = new mongoose.Schema({
-  user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // the recipient
-  user: { type: mongoose.Schema.Types.ObjectId, ref: 'Farmer' }, // the recipient
+ user: {
+  id: { type: mongoose.Schema.Types.ObjectId, required: true },
+  type: { type: String, enum: ['User', 'Farmer'], required: true }
+},
+
     farmer_code: { type: Number },
 
-  cow: { type: mongoose.Schema.Types.ObjectId, ref: 'Cow' }, // optional, only for animal-specific events
+  cow: { type: mongoose.Schema.Types.ObjectId, ref: 'Cow' }, // optional, only for animal-specific events  
   type: { 
     type: String, 
     enum: ['gestation_alert', 'calving_reminder', 'milk_anomaly', 'general', 'chat_message'], 
