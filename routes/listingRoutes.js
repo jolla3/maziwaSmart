@@ -12,6 +12,7 @@ const {
 
 const { verifyToken } = require("../middleware/authMiddleware");
 const makeUploader = require("../middleware/upload");
+const { logEvent } = require("../utils/eventLogger");  // ← THIS IS THE KEY
 
 // ✅ Cloudinary uploader for listings
 const upload = makeUploader("listings");
@@ -21,21 +22,21 @@ const upload = makeUploader("listings");
 // ---------------------------
 
 // Public: get all active listings
-router.get("/", getListings);
+router.get("/", logEvent ,getListings);
 
 // Protected: get your own listings
-router.get("/mylistings", verifyToken, getUserListings);
+router.get("/mylistings", logEvent ,verifyToken, getUserListings);
 
 // Public: get a single listing (increments views)
-router.get("/:id", getListingById);
+router.get("/:id", logEvent , getListingById);
 
 // Protected: create new listing (upload up to 10 images)
-router.post("/", verifyToken, upload.array("images", 10), createListing);
+router.post("/", verifyToken, logEvent , upload.array("images", 10), createListing);
 
 // ✅ PATCH instead of PUT for partial updates
-router.patch("/:id", verifyToken, upload.array("images", 10), updateListing);
+router.patch("/:id", verifyToken,logEvent , upload.array("images", 10), updateListing);
 
 // Protected: delete your own listing
-router.delete("/:id", verifyToken, deleteListing);
+router.delete("/:id", verifyToken,logEvent , deleteListing);
 
 module.exports = router;

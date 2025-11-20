@@ -2,7 +2,7 @@
 // FILE: controllers/authController.js
 // ============================
 const bcrypt = require("bcrypt");
-const { User, Porter, Farmer } = require("../models/model");
+const { User, Porter, Farmer , Manager } = require("../models/model");
 const jwt = require("jsonwebtoken");
 
 

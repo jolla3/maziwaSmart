@@ -146,6 +146,28 @@ app.use("/api/seller-request", requestApproval);
 const Approval = require("./routes/adminRoutes");
 app.use("/api/approval", Approval);
 
+
+
+const adminMonitor =require("./routes/adminMonitorRouter");
+app.use("/api/admin/monitor",adminMonitor)
+
+const adminAlert = require("./routes/adminAlertRouter")
+app.use("/api/admin/alerts", adminAlert );
+
+const adminEvent =  require("./routes/adminEventRouter")
+app.use("/api/admin/events",adminEvent);
+
+const adminAduit = require("./routes/adminAuditRouter")
+app.use("/api/admin/audit",adminAduit);
+
+const adminConfig = require("./routes/adminConfigRouter")
+app.use("/api/admin/monitor/config", adminConfig);
+
+const adminSession = require("./routes/adminSessionRouter")
+app.use("/api/admin/sessions", adminSession );
+
+
+
 // ======================================================
 // MongoDB Connection
 // ======================================================

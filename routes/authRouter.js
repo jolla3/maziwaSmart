@@ -11,6 +11,7 @@ const {
   registerFarmer,
 } = require("../controllers/authController");
 const { verifyToken } = require("../middleware/authMiddleware");
+const { logEvent } = require("../utils/eventLogger");  // ← THIS IS THE KEY
 
 // ----------------------------
 // NORMAL AUTH ROUTES
@@ -26,7 +27,7 @@ router.get("/google", (req, res, next) => {
   const role = req.query.role 
   
   // Pass role through OAuth state parameter
-  passport.authenticate("google", {
+  passport.authenticate("google",  {
     scope: ["profile", "email"],
     session: false,
     state: JSON.stringify({ role }) // encode role in state
@@ -35,7 +36,7 @@ router.get("/google", (req, res, next) => {
 
 // ✅ CALLBACK - extract role from state
 router.get(
-  "/google/callback",
+  "/google/callback", 
   (req, res, next) => {
     passport.authenticate("google", {
       failureRedirect: `${process.env.FRONTEND_URL || "https://maziwa-smart.vercel.app"}/google-callback?error=Google+auth+failed`,
