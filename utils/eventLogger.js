@@ -4,10 +4,17 @@ const geoip = require("geoip-lite"); // npm install geoip-lite   (free, works of
 
 const logEvent = async (req = null, { userId, role, type, metadata = {} }) => {
   try {
-    const ip = req?.ip || 
-                req?.headers['x-forwarded-for']?.split(',')[0]?.trim() || 
-                req?.connection?.remoteAddress ||
-                "unknown";
+    const getClientIp = (req) => {
+  // Cloudflare, Render, Vercel, Nginx all use this
+  if (req.headers['cf-connecting-ip']) return req.headers['cf-connecting-ip'];
+  if (req.headers['x-forwarded-for']) {
+    return req.headers['x-forwarded-for'].split(',')[0].trim();
+  }
+  if (req.headers['x-real-ip']) return req.headers['x-real-ip'];
+  return req.ip || req.connection?.remoteAddress || "unknown";
+};
+
+const ip = getClientIp(req);
 
     const userAgent = req?.headers['user-agent'] || "unknown";
 

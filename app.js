@@ -20,6 +20,7 @@ const app = express();
 // ======================================================
 const onlineUsers = new Set();
 app.set("onlineUsers", onlineUsers);
+app.set('trust proxy', true);
 
 // ======================================================
 // GLOBAL REQUEST TRACKING MIDDLEWARE (MUST BE EARLY)
