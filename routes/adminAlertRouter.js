@@ -6,11 +6,11 @@ const {
   deleteAlert
 } = require("../controllers/adminAlertController");
 
-const { authorizeRoles } = require("../middleware/authMiddleware");
+const { authorizeRoles , verifyToken} = require("../middleware/authMiddleware");
 
-router.get("/", authorizeRoles("superadmin"), getAlerts);
-router.get("/:id", authorizeRoles("superadmin"), getAlertById);
-router.patch("/:id", authorizeRoles("superadmin"), updateAlertStatus);
-router.delete("/:id", authorizeRoles("superadmin"), deleteAlert);
+router.get("/",verifyToken, authorizeRoles("superadmin"), getAlerts);
+router.get("/:id", verifyToken,authorizeRoles("superadmin"), getAlertById);
+router.patch("/:id",verifyToken, authorizeRoles("superadmin"), updateAlertStatus);
+router.delete("/:id", verifyToken,authorizeRoles("superadmin"), deleteAlert);
 
 module.exports = router;

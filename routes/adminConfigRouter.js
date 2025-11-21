@@ -1,8 +1,8 @@
 const router = require("express").Router();
-const { authorizeRoles } = require("../middleware/authMiddleware");
+const {verifyToken,authorizeRoles } = require("../middleware/authMiddleware");
 const { getConfig, updateConfig } = require("../controllers/adminConfigController");
 
-router.get("/", authorizeRoles("superadmin"), getConfig);
-router.patch("/", authorizeRoles, updateConfig);
+router.get("/", verifyToken,authorizeRoles("superadmin"), getConfig);
+router.patch("/",verifyToken, authorizeRoles('superadmin'), updateConfig);
 
 module.exports = router;

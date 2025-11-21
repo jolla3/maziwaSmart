@@ -1,8 +1,8 @@
 const router = require("express").Router();
-const { authorizeRoles } = require("../middleware/authMiddleware");
+const { verifyToken,authorizeRoles } = require("../middleware/authMiddleware");
 const { getAuditLogs, getAuditById } = require("../controllers/adminAuditController");
 
-router.get("/", authorizeRoles("superadmin"), getAuditLogs);
-router.get("/:id", authorizeRoles("superadmin"), getAuditById);
+router.get("/", verifyToken,authorizeRoles("superadmin"), getAuditLogs);
+router.get("/:id",verifyToken, authorizeRoles("superadmin"), getAuditById);
 
 module.exports = router;
