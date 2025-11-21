@@ -8,22 +8,30 @@ require('dotenv').config();
 require('./cron/updateCowStages');
 const passport = require("./config/passport");
 const { logger } = require("./utils/logger");
-
-// ========== ADD THIS RIGHT HERE ==========
-const { logEvent } = require("./utils/eventLogger");  // ← THIS IS THE KEY
-// ======================================================
+const Session = require("./models/Session");
+const { logEvent } = require("./utils/eventLogger");
 
 const app = express();
 
 // ======================================================
-// ONLINE USERS TRACKER (in-memory)
+// TRUST PROXY + ONLINE USERS MAP
 // ======================================================
-const onlineUsers = new Set();
-app.set("onlineUsers", onlineUsers);
 app.set('trust proxy', true);
 
+const onlineUsers = new Map(); // userId => { role, ip, connectedAt }
+app.set("onlineUsers", onlineUsers);
+
+// Cleanup dead sessions every 2 minutes
+setInterval(async () => {
+  const cutoff = new Date(Date.now() - 5 * 60 * 1000);
+  const dead = await Session.find({ updatedAt: { $lt: cutoff } });
+  dead.forEach(s => onlineUsers.delete(s.userId.toString()));
+  await Session.deleteMany({ updatedAt: { $lt: cutoff } });
+  broadcastOnlineList();
+}, 120000);
+
 // ======================================================
-// GLOBAL REQUEST TRACKING MIDDLEWARE (MUST BE EARLY)
+// GLOBAL REQUEST LOGGER
 // ======================================================
 app.use(async (req, res, next) => {
   const start = Date.now();
@@ -31,7 +39,6 @@ app.use(async (req, res, next) => {
   res.on("finish", async () => {
     const duration = Date.now() - start;
 
-    // Log ALL requests with status code
     await logEvent(req, {
       type: "http.request",
       metadata: {
@@ -43,7 +50,6 @@ app.use(async (req, res, next) => {
       }
     });
 
-    // Auto-log errors (4xx and 5xx)
     if (res.statusCode >= 400) {
       await logEvent(req, {
         userId: req.user?.id || null,
@@ -63,14 +69,14 @@ app.use(async (req, res, next) => {
 });
 
 // ======================================================
-// Middleware
+// MIDDLEWARE
 // ======================================================
 app.use(express.json());
 app.use(cors());
 app.use(passport.initialize());
 
 // ======================================================
-// Routes
+// ROUTES
 // ======================================================
 const userAuth = require('./routes/authRouter');
 app.use('/api/userAuth', userAuth);
@@ -147,37 +153,33 @@ app.use("/api/seller-request", requestApproval);
 const Approval = require("./routes/adminRoutes");
 app.use("/api/approval", Approval);
 
+const adminMonitor = require("./routes/adminMonitorRouter");
+app.use("/api/admin/monitor", adminMonitor);
 
+const adminAlert = require("./routes/adminAlertRouter");
+app.use("/api/admin/alerts", adminAlert);
 
-const adminMonitor =require("./routes/adminMonitorRouter");
-app.use("/api/admin/monitor",adminMonitor)
+const adminEvent = require("./routes/adminEventRouter");
+app.use("/api/admin/events", adminEvent);
 
-const adminAlert = require("./routes/adminAlertRouter")
-app.use("/api/admin/alerts", adminAlert );
+const adminAudit = require("./routes/adminAuditRouter");
+app.use("/api/admin/audit", adminAudit);
 
-const adminEvent =  require("./routes/adminEventRouter")
-app.use("/api/admin/events",adminEvent);
-
-const adminAduit = require("./routes/adminAuditRouter")
-app.use("/api/admin/audit",adminAduit);
-
-const adminConfig = require("./routes/adminConfigRouter")
+const adminConfig = require("./routes/adminConfigRouter");
 app.use("/api/admin/monitor/config", adminConfig);
 
-const adminSession = require("./routes/adminSessionRouter")
-app.use("/api/admin/sessions", adminSession );
-
-
+const adminSession = require("./routes/adminSessionRouter");
+app.use("/api/admin/sessions", adminSession);
 
 // ======================================================
-// MongoDB Connection
+// MONGO CONNECTION
 // ======================================================
 mongoose.connect(process.env.MONGO_URI)
-  .then(() => logger.info('✅ Connected to MongoDB'))
-  .catch(err => logger.error('❌ MongoDB connection error', err));
+  .then(() => logger.info('Connected to MongoDB'))
+  .catch(err => logger.error('MongoDB connection error', err));
 
 // ======================================================
-// HTTP + Socket.IO Setup
+// SOCKET.IO SETUP
 // ======================================================
 const { verifySocketAuth } = require("./middleware/authMiddleware");
 const server = http.createServer(app);
@@ -193,43 +195,77 @@ const io = socketIo(server, {
 app.set("io", io);
 io.use(verifySocketAuth);
 
-// ======================================================
-// Monitoring Namespace for SuperAdmin
-// ======================================================
+// Monitor namespace for superadmin dashboard
 const monitorNamespace = io.of("/monitor");
-
 monitorNamespace.on("connection", (socket) => {
-  logger.info(`📡 Monitor connected: ${socket.id}`);
-  socket.emit("monitor:onlineUsers", Array.from(onlineUsers));
+  logger.info(`Monitor dashboard connected: ${socket.id}`);
+  broadcastOnlineList();
 });
 
+// Broadcast helper
+const broadcastOnlineList = () => {
+  const list = Array.from(onlineUsers.entries()).map(([id, info]) => ({
+    userId: id,
+    role: info.role,
+    ip: info.ip,
+    connectedAt: info.connectedAt
+  }));
+
+  io.emit("monitor:onlineUsers", list);
+  monitorNamespace.emit("monitor:onlineUsers", list);
+};
+
 // ======================================================
-// Main Socket Handling + Online Tracking
+// MAIN SOCKET HANDLER – RICH ONLINE TRACKING
 // ======================================================
-io.on("connection", (socket) => {
-  const userId = socket.user?.id;
+io.on("connection", async (socket) => {
+  const userId = socket.user?.id?.toString();
   const role = socket.user?.role;
 
-  logger.info(`🟢 User connected: ${userId} (${role}) – socket ${socket.id}`);
-
-  if (userId) {
-    onlineUsers.add(userId.toString());
-
-    // Notify monitor dashboard
-    io.emit("monitor:onlineUsers", Array.from(onlineUsers));
-    monitorNamespace.emit("monitor:onlineUsers", Array.from(onlineUsers));
-
-    socket.join(userId.toString());
-
-    // Log socket connection as event
-    logEvent(null, {
-      userId,
-      role,
-      type: "socket.connect",
-      metadata: { socketId: socket.id, ip: socket.handshake.address }
-    });
+  if (!userId) {
+    logger.warn(`Socket rejected – no userId ${socket.id}`);
+    socket.disconnect(true);
+    return;
   }
 
+  const ip = socket.handshake.headers['cf-connecting-ip'] ||
+             socket.handshake.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+             socket.handshake.address || 'unknown';
+
+  const userAgent = socket.handshake.headers['user-agent'] || 'unknown';
+
+  // Add to map
+  onlineUsers.set(userId, { role, ip, connectedAt: new Date() });
+
+  // Persist session
+  await Session.findOneAndUpdate(
+    { userId },
+    {
+      role,
+      socketId: socket.id,
+      ip,
+      userAgent,
+      connectedAt: new Date(),
+      updatedAt: new Date()
+    },
+    { upsert: true }
+  );
+
+  broadcastOnlineList();
+
+  logger.info(`ONLINE → ${userId} (${role}) – ${ip} – Total: ${onlineUsers.size}`);
+
+  socket.join(userId);
+
+  // Log connect
+  await logEvent(null, {
+    userId,
+    role,
+    type: "socket.connect",
+    metadata: { socketId: socket.id, ip, userAgent }
+  });
+
+  // Chat handler (unchanged)
   socket.on("send_message", (data) => {
     if (data.receiver) {
       io.to(data.receiver.toString()).emit("new_message", {
@@ -238,7 +274,6 @@ io.on("connection", (socket) => {
         timestamp: new Date(),
       });
 
-      // Optional: log chat activity
       logEvent(null, {
         userId,
         type: "chat.message.sent",
@@ -248,28 +283,26 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", async () => {
-    if (userId) {
-      onlineUsers.delete(userId.toString());
-      io.emit("monitor:onlineUsers", Array.from(onlineUsers));
-      monitorNamespace.emit("monitor:onlineUsers", Array.from(onlineUsers));
+    onlineUsers.delete(userId);
+    await Session.deleteOne({ socketId: socket.id });
+    broadcastOnlineList();
 
-      await logEvent(null, {
-        userId,
-        role,
-        type: "socket.disconnect",
-        metadata: { socketId: socket.id }
-      });
-    }
+    await logEvent(null, {
+      userId,
+      role,
+      type: "socket.disconnect",
+      metadata: { socketId: socket.id }
+    });
 
-    logger.warn(`🔴 User disconnected: ${userId} (socket ${socket.id})`);
+    logger.warn(`OFFLINE → ${userId} – Total: ${onlineUsers.size}`);
   });
 });
 
 // ======================================================
-// Start Server
+// START SERVER
 // ======================================================
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
-  logger.info(`🚀 Server running on port ${PORT}`);
-  logger.info(`🔥 Event tracking ACTIVE – monitor-worker will now see everything`);
+  logger.info(`Server running on port ${PORT}`);
+  logger.info(`Rich online tracking ACTIVE`);
 });
