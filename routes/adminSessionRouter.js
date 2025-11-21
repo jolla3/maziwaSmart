@@ -1,5 +1,5 @@
 const router = require("express").Router();
-const { authorizeRoles } = require("../middleware/authMiddleware");
+const {verifyToken, authorizeRoles } = require("../middleware/authMiddleware");
 const { getSessions, killSession } = require("../controllers/adminSessionController");
 
 router.get("/",verifyToken, authorizeRoles("superadmin"), getSessions);
