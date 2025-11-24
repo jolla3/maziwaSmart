@@ -7,6 +7,6 @@ const { extractTextFromImage } = require('../controllers/ocrController');
 const ocrUpload = makeUploader('ocr'); // folder name "ocr"
 
 // POST /api/ocr/upload
-router.post('/upload', ocrUpload.single('image'), extractTextFromImage);
+router.post('/upload',  ocrUpload.single('image'), extractTextFromImage);
 
 module.exports = router;

@@ -8,7 +8,7 @@ const {
   getTrendingListings,
 } = require("../controllers/marketController");
 
-const {  authorizeRoles } = require('../middleware/authMiddleware');
+const {  authorizeRoles , verifyToken} = require('../middleware/authMiddleware');
 
 
 
@@ -17,8 +17,8 @@ const {  authorizeRoles } = require('../middleware/authMiddleware');
 // ---------------------------
 
 // controllers same, no change
-router.get("/extra/trending",  getTrendingListings);
-router.get("/",  getMarketListings);
-router.get("/:id",  getMarketListingById);
+router.get("/extra/trending", verifyToken,  getTrendingListings);
+router.get("/", verifyToken, getMarketListings);
+router.get("/:id", verifyToken, getMarketListingById);
 
 module.exports = router;
