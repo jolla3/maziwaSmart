@@ -27,51 +27,65 @@
 //   }
 // }
 // middleware/authMiddleware.js
+// middleware/authMiddleware.js
 const jwt = require("jsonwebtoken");
+const logger = require("../utils/logger"); // assuming you have this for proper logging
 
-// ✅ Middleware for Express routes
 exports.verifyToken = (req, res, next) => {
   const authHeader = req.headers.authorization;
-  const token = authHeader && authHeader.split(" ")[1]; // "Bearer <token>"
+  const token = authHeader?.split(' ')[1];
 
   if (!token) {
-    return res.status(401).json({ message: "Access denied. No token provided." });
+    logger.warn(`No token - IP: ${req.ip} Path: ${req.originalUrl}`);
+    return res.status(401).json({ message: "No token provided" });
   }
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded; // attach user payload
+    req.user = { 
+      id: decoded.id, 
+      email: decoded.email, 
+      role: decoded.role, 
+      code: decoded.code || null 
+    };
     next();
   } catch (err) {
+    logger.error(`Token fail - IP: ${req.ip} Error: ${err.message}`);
     if (err.name === "TokenExpiredError") {
-      return res.status(401).json({ message: "Token expired. Please log in again." });
+      return res.status(401).json({ message: "Token expired" });
     }
-    return res.status(401).json({ message: "Invalid token", error: err.message });
-  }
-};
-
-// ✅ Middleware for Socket.io connections
-exports.verifySocketAuth = (socket, next) => {
-  try {
-    const token = socket.handshake.auth?.token || socket.handshake.headers?.authorization?.split(" ")[1];
-    if (!token) return next(new Error("Authentication error: No token provided"));
-
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    socket.user = decoded; // attach user data
-    next();
-  } catch (err) {
-    console.error("❌ Socket auth failed:", err.message);
-    next(new Error("Authentication error"));
+    if (err.name === "JsonWebTokenError") {
+      return res.status(403).json({ message: "Invalid token" });
+    }
+    res.status(500).json({ message: "Auth error" });
   }
 };
 
 exports.authorizeRoles = (...allowedRoles) => {
   return (req, res, next) => {
-    if (!req.user || !allowedRoles.includes(req.user.role)) {
-      return res.status(403).json({ message: "Access denied: Insufficient permissions" });
+    if (!req.user) {
+      logger.warn(`No user after token - IP: ${req.ip}`);
+      return res.status(403).json({ message: "Access denied: No user" });
+    }
+    if (!allowedRoles.includes(req.user.role)) {
+      logger.warn(`Role denied: ${req.user.role} - User: ${req.user.id} Path: ${req.originalUrl}`);
+      return res.status(403).json({ message: "Insufficient permissions" });
     }
     next();
   };
 };
 
+// Socket version unchanged - it's the only decent part
+exports.verifySocketAuth = (socket, next) => {
+  const token = socket.handshake.auth?.token || socket.handshake.headers?.authorization?.split(" ")[1];
+  if (!token) return next(new Error("No token"));
 
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    socket.user = { id: decoded.id, role: decoded.role };
+    next();
+  } catch (err) {
+    logger.error(`Socket token fail - IP: ${socket.handshake.address} Error: ${err.message}`);
+    next(new Error("Auth error"));
+  }
+};
