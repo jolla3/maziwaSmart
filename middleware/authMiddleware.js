@@ -28,8 +28,9 @@
 // }
 // middleware/authMiddleware.js
 // middleware/authMiddleware.js
+// middleware/authMiddleware.js  ← REPLACE ENTIRE FILE WITH THIS
 const jwt = require("jsonwebtoken");
-const logger = require("../utils/logger"); // assuming you have this for proper logging
+const { logger } = require("../utils/logger");  // FIXED: destructured import
 
 exports.verifyToken = (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -75,7 +76,6 @@ exports.authorizeRoles = (...allowedRoles) => {
   };
 };
 
-// Socket version unchanged - it's the only decent part
 exports.verifySocketAuth = (socket, next) => {
   const token = socket.handshake.auth?.token || socket.handshake.headers?.authorization?.split(" ")[1];
   if (!token) return next(new Error("No token"));
