@@ -187,7 +187,7 @@ const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
     origin: ["https://maziwa-smart.vercel.app", "http://localhost:3000"],
-    methods: ["GET", "POST"],
+    methods: ["GET", "POST","DELETE" , "PATCH", "PUT"],
     credentials: true,
   },
 });

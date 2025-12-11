@@ -228,7 +228,7 @@ cowSchema.post('save', async function (doc, next) {
     const Cow = mongoose.model('Cow');
 
     // 🔥 Enforce calves to always default properly
-    if (doc.is_calf && !doc.stage) {
+    if (doc.stage) {
       doc.stage = '';
       await doc.save(); // one-time correction
     }
@@ -474,7 +474,7 @@ inseminationSchema.post('save', async function (doc, next) {
 
     if (doc.outcome === 'pregnant') {
       const gestationDaysMap = { cow: 283, goat: 150, sheep: 152, pig: 114 };
-      const gestationDays = gestationDaysMap[cow.species] || 283
+      const gestationDays = gestationDaysMap[cow.species] 
 
       let dueDate = doc.expected_due_date ? new Date(doc.expected_due_date) : new Date(doc.insemination_date);
       if (!doc.expected_due_date) {
@@ -557,7 +557,7 @@ const Payment = mongoose.model('Payment', paymentSchema);
 const notificationSchema = new mongoose.Schema({
  user: {
   id: { type: mongoose.Schema.Types.ObjectId, required: true },
-  type: { type: String, enum: ['User', 'Farmer'], required: true }
+  type: { type: String, enum: ['User', 'Farmer' , 'seller' , 'superadmin'], required: true }
 },
 
     farmer_code: { type: Number },
