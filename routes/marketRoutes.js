@@ -17,8 +17,8 @@ const {  authorizeRoles , verifyToken} = require('../middleware/authMiddleware')
 // ---------------------------
 
 // controllers same, no change
-router.get("/extra/trending", verifyToken,  getTrendingListings);
-router.get("/", verifyToken, getMarketListings);
-router.get("/:id", verifyToken, getMarketListingById);
+router.get("/extra/trending",   getTrendingListings);
+router.get("/",  getMarketListings);
+router.get("/:id",  getMarketListingById);
 
 module.exports = router;

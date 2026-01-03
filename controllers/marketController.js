@@ -49,7 +49,7 @@ exports.getMarketListings = async (req, res) => {
 // GET full details for a single listing
 exports.getMarketListingById = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { id } = req.params
 
     // Fetch listing + deeply populate related fields
     const listing = await Listing.findById(id)
