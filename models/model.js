@@ -153,7 +153,7 @@ const cowSchema = new Schema({
   animal_code: { type: String }, // e.g., COW-2025-0001
   species: { 
     type: String, 
-    enum: ['cow', 'bull', 'goat', 'sheep', 'pig'], 
+    enum: ['cow', 'goat', 'sheep', 'pig'], 
     required: true 
   },
   cow_name: { type: String }, 
@@ -227,12 +227,6 @@ cowSchema.post('save', async function (doc, next) {
   try {
     const Cow = mongoose.model('Cow');
 
-    // 🔥 Enforce calves to always default properly
-    if (doc.stage) {
-      doc.stage = '';
-      await doc.save(); // one-time correction
-    }
-
     if (doc.mother_id) {
       await Cow.findByIdAndUpdate(doc.mother_id, {
         $addToSet: { offspring_ids: doc._id },
@@ -252,7 +246,6 @@ cowSchema.post('save', async function (doc, next) {
   next();
 });
 const Cow = mongoose.model('Cow', cowSchema);
-
 // ---------------------------
 // Milk Record Schema
 // ---------------------------
