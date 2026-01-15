@@ -152,13 +152,16 @@ const cowSchema = new Schema({
   // General identification
   animal_code: { type: String }, // e.g., COW-2025-0001
   species: { 
-    type: String, 
-    enum: ['cow', 'goat', 'sheep', 'pig'], 
-    required: true 
-  },
+  type: String, 
+  enum: ['cow', 'bull', 'goat', 'sheep', 'pig'], 
+  required: true 
+},
   cow_name: { type: String }, 
+  // Remove cow_name, add:
+name: { type: String },
   cow_code: { type: Number },
   farmer_code: { type: Number, required: true },
+  breed: { type: String },
   breed_id: { type: Schema.Types.ObjectId, ref: 'Breed' },
   cow_id: { type: Schema.Types.ObjectId, ref: 'Cow' },
   farmer_id: { type: Schema.Types.ObjectId, ref: 'Farmer' },
@@ -246,6 +249,21 @@ cowSchema.post('save', async function (doc, next) {
   }
   next();
 });
+
+cowSchema.pre('save', function(next) {
+  const validStages = {
+    cow: ['calf', 'heifer', 'cow'],
+    bull: ['bull_calf', 'young_bull', 'mature_bull'],
+    goat: ['kid', 'doeling', 'buckling', 'nanny', 'buck'],
+    sheep: ['lamb', 'ewe', 'ram'],
+    pig: ['piglet', 'gilt', 'sow', 'boar'],
+  };
+  if (this.stage && !validStages[this.species]?.includes(this.stage)) {
+    return next(new Error(`Invalid stage '${this.stage}' for species '${this.species}'`));
+  }
+  next();
+});
+
 const Cow = mongoose.model('Cow', cowSchema);
 // ---------------------------
 // Milk Record Schema

@@ -3,113 +3,69 @@ const {Cow} = require("../models/model");
 
 exports.createAnimal = async (req, res) => {
   try {
-    const { species } = req.body;
     const farmer_id = req.user.id;
     const farmer_code = req.user.code;
+    const { species, name, breed, gender, birth_date, stage, mother_id, bull_code, bull_name, origin_farm, country } = req.body; // Use name, add species-specific
 
-    if (!species) {
-      return res.status(400).json({ message: "Species is required" });
-    }
-    const photos = req.files?.map(file => `/uploads/animals/${file.filename}`) || [];
-
-
-    let newAnimal;
-
-    // 🐄 Cow block
-    if (species === "cow") {
-      const { cow_name, breed_id, breed, gender, birth_date,  mother_id } = req.body;
-      newAnimal = new Cow({
-        species,
-        cow_name,
-        breed,
-        breed_id,
-        gender,
-        birth_date,
-        farmer_id,
-        farmer_code,
-        mother_id,
-        photos,
-        is_calf: false
-      });
+    if (!species || !name || !stage) {
+      return res.status(400).json({ message: "Species, name, and stage are required" });
     }
 
-    // 🐐 Goat block
-    else if (species === "goat") {
-      const { cow_name, breed, gender, birth_date } = req.body;
-      newAnimal = new Cow({
-        species,
-        cow_name, // reuse field
-        breed,
-        gender,
-        birth_date,
-        farmer_id,
-        farmer_code,
-        photos
-      });
+    // Validate stage per species (mirror frontend, but backend enforce)
+    const validStages = {
+      cow: ['calf', 'heifer', 'cow'],
+      bull: ['bull_calf', 'young_bull', 'mature_bull'],
+      goat: ['kid', 'doeling', 'buckling', 'nanny', 'buck'],
+      sheep: ['lamb', 'ewe', 'ram'],
+      pig: ['piglet', 'gilt', 'sow', 'boar'],
+    };
+    if (!validStages[species]?.includes(stage)) {
+      return res.status(400).json({ message: `Invalid stage '${stage}' for species '${species}'` });
     }
 
-    // 🐑 Sheep block
-    else if (species === "sheep") {
-      const { cow_name, breed, gender, birth_date } = req.body;
-      newAnimal = new Cow({
-        species,
-        cow_name,
-        breed,
-        gender,
-        birth_date,
-        farmer_id,
-        farmer_code,
-        photos
+    const photos = req.files?.map(file => file.path || file.filename || file.secure_url) || []; // Handle Cloudinary or local
 
-      });
+    const newAnimalData = {
+      species,
+      cow_name, // Renamed from cow_name
+      breed, // String, assuming schema fix
+      gender: species === 'bull' ? 'male' : gender, // Force for bull
+      birth_date,
+      stage,
+      farmer_id,
+      farmer_code,
+      photos,
+      is_calf: species === 'cow' && stage === 'calf' ? true : false, // Derive if needed
+    };
+
+    // Species-specific fields
+    if (species === 'cow') {
+      newAnimalData.mother_id = mother_id;
+      // Add bull_code/name if sent for cows too? Assume not.
+    } else if (species === 'bull') {
+      newAnimalData.origin_farm = origin_farm;
+      newAnimalData.country = country;
+      newAnimalData.bull_code = bull_code; // If applicable
+      newAnimalData.bull_name = bull_name;
+    } else {
+      // For goat/sheep/pig, add bull_code/name if breeding info needed (e.g., sire)
+      newAnimalData.bull_code = bull_code;
+      newAnimalData.bull_name = bull_name;
     }
 
-    // 🐖 Pig block
-    else if (species === "pig") {
-      const { cow_name, breed, gender, birth_date } = req.body;
-      newAnimal = new Cow({
-        species,
-        cow_name,
-        breed,
-        gender,
-        birth_date,
-        farmer_id,
-        farmer_code,
-        photos
-      });
-    }
-
-    // 🐂 Bull block
-    else if (species === "bull") {
-      const { cow_name, breed, birth_date } = req.body;
-      newAnimal = new Cow({
-        species,
-        cow_name,
-        breed,
-        gender: "male", // fixed
-        birth_date,
-        farmer_id,
-        farmer_code,
-        photos
-      });
-    }
-
-    else {
-      return res.status(400).json({ message: "Invalid species type" });
-    }
-
+    const newAnimal = new Cow(newAnimalData); // Rename model to Animal eventually
     await newAnimal.save();
 
     res.status(201).json({
-      message: `✅ ${species} registered successfully`,
+      success: true,
+      message: `✅ ${species.charAt(0).toUpperCase() + species.slice(1)} added successfully`,
       animal: newAnimal
-    })
+    });
   } catch (error) {
     console.error("❌ Animal creation error:", error);
-    res.status(500).json({ message: "Failed to register animal", error: error.message });
+    res.status(500).json({ success: false, message: "Failed to add animal", error: error.message });
   }
 };
-
 // GET /api/farmer/animals
 exports.getMyAnimals = async (req, res) => { 
   try {
