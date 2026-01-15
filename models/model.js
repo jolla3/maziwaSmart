@@ -152,13 +152,11 @@ const cowSchema = new Schema({
   // General identification
   animal_code: { type: String }, // e.g., COW-2025-0001
   species: { 
-  type: String, 
-  enum: ['cow', 'bull', 'goat', 'sheep', 'pig'], 
-  required: true 
-},
-  cow_name: { type: String }, 
-  // Remove cow_name, add:
-name: { type: String },
+    type: String, 
+    enum: ['cow', 'bull', 'goat', 'sheep', 'pig'], 
+    required: true 
+  },
+  cow_name: { type: String, required: true },  // Add required to enforce
   cow_code: { type: Number },
   farmer_code: { type: Number, required: true },
   breed: { type: String },
@@ -264,8 +262,7 @@ cowSchema.pre('save', function(next) {
   next();
 });
 
-const Cow = mongoose.model('Cow', cowSchema);
-// ---------------------------
+const Cow = mongoose.model('Cow', cowSchema);// ---------------------------
 // Milk Record Schema
 // ---------------------------
 const milkRecordSchema = new mongoose.Schema({

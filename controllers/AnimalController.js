@@ -5,9 +5,9 @@ exports.createAnimal = async (req, res) => {
   try {
     const farmer_id = req.user.id;
     const farmer_code = req.user.code;
-    const { species, name, breed, gender, birth_date, stage, mother_id, bull_code, bull_name, origin_farm, country } = req.body; // Use name, add species-specific
+    const { species, cow_name, breed, gender, birth_date, stage, mother_id, bull_code, bull_name, origin_farm, country } = req.body; // Use cow_name
 
-    if (!species || !name || !stage) {
+    if (!species || !cow_name || !stage) {
       return res.status(400).json({ message: "Species, name, and stage are required" });
     }
 
@@ -27,7 +27,7 @@ exports.createAnimal = async (req, res) => {
 
     const newAnimalData = {
       species,
-      cow_name, // Renamed from cow_name
+      cow_name, // Keep as cow_name
       breed, // String, assuming schema fix
       gender: species === 'bull' ? 'male' : gender, // Force for bull
       birth_date,
@@ -65,8 +65,7 @@ exports.createAnimal = async (req, res) => {
     console.error("❌ Animal creation error:", error);
     res.status(500).json({ success: false, message: "Failed to add animal", error: error.message });
   }
-};
-// GET /api/farmer/animals
+};// GET /api/farmer/animals
 exports.getMyAnimals = async (req, res) => { 
   try {
     const farmer_code = req.user.code;
