@@ -164,6 +164,7 @@ const cowSchema = new Schema({
   farmer_id: { type: Schema.Types.ObjectId, ref: 'Farmer' },
   gender: { type: String, enum: ['male', 'female', 'unknown'] },
   birth_date: { type: Date },
+  age: { type: String, default: '' }, // Computed age string, e.g., "2 years, 3 months, 5 days"
 
   // status / stage
   status: { 

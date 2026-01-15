@@ -237,6 +237,7 @@ io.on("connection", async (socket) => {
   // Add to map
   onlineUsers.set(userId, { role, ip, connectedAt: new Date() });
 
+  
   // Persist session
   await Session.findOneAndUpdate(
     { userId },

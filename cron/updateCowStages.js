@@ -1,6 +1,6 @@
 // /cron/updateAnimalStages.js
 // ================================
-// Daily stage promotions + pregnancy reminders + auto-calving
+// Daily stage corrections + age updates + pregnancy reminders + auto-calving
 // ================================
 
 const cron = require("node-cron");
@@ -15,153 +15,115 @@ const gestationDaysMap = {
   pig: 115
 };
 
+// Helper: Compute age string (e.g., "2 years, 3 months, 5 days")
+const getAgeString = (birth_date) => {
+  try {
+    const now = moment();
+    const years = now.diff(birth_date, "years");
+    now.subtract(years, "years");
+    const months = now.diff(birth_date, "months");
+    now.subtract(months, "months");
+    const days = now.diff(birth_date, "days");
+    return `${years} years, ${months} months, ${days} days`;
+  } catch (err) {
+    console.error("Error computing age string:", err.message);
+    return "";
+  }
+};
+
+// Helper: Compute target stage based on species, gender, birth_date
+const getTargetStage = (species, gender, birth_date) => {
+  try {
+    const now = moment();
+    const ageInMonths = now.diff(birth_date, "months");
+
+    switch (species) {
+      case "cow":
+        if (gender === "female") {
+          if (ageInMonths < 12) return "calf";
+          if (ageInMonths < 24) return "heifer";
+          return "cow";
+        } else if (gender === "male") {
+          if (ageInMonths < 12) return "calf";
+          if (ageInMonths < 36) return "bull_calf";
+          if (ageInMonths < 48) return "young_bull";
+          return "mature_bull";
+        }
+        return null; // Unknown gender
+
+      case "goat":
+        if (ageInMonths < 6) return "kid";
+        if (gender === "female") {
+          return ageInMonths < 12 ? "doeling" : "nanny";
+        } else if (gender === "male") {
+          return ageInMonths < 12 ? "buckling" : "buck";
+        }
+        return null;
+
+      case "sheep":
+        if (ageInMonths < 6) return "lamb";
+        if (gender === "female") return "ewe";
+        if (gender === "male") return "ram";
+        return null;
+
+      case "pig":
+        if (ageInMonths < 6) return "piglet";
+        if (gender === "female") {
+          return ageInMonths < 12 ? "gilt" : "sow";
+        } else if (gender === "male") {
+          return "boar";
+        }
+        return null;
+
+      default:
+        return null;
+    }
+  } catch (err) {
+    console.error("Error computing target stage:", err.message);
+    return null;
+  }
+};
+
 const updateStagesAndPregnancies = async () => {
   try {
     const today = moment();
 
     /** ================================
-     * 🐮 Stage promotions
+     * 🐮 Stage corrections + age updates (all species)
      * ================================ */
-
-    // 🔹 Cow / Bull
-    const calves = await Cow.find({
-      stage: "calf",
-      birth_date: { $lte: moment().subtract(1, "years").toDate() }
+    const animalsWithBirthDate = await Cow.find({
+      birth_date: { $exists: true, $ne: null }
     });
-    for (const calf of calves) {
-      try {
-        if (calf.gender === "female") calf.stage = "heifer";
-        else if (calf.gender === "male") calf.stage = "bull_calf";
-        calf.is_calf = false;
-        await calf.save();
-      } catch (err) {
-        console.error(`Error updating calf ${calf._id}:`, err.message);
-      }
-    }
 
-    const heifers = await Cow.find({
-      stage: "heifer",
-      birth_date: { $lte: moment().subtract(2, "years").toDate() }
-    });
-    for (const h of heifers) {
-      try {
-        h.stage = "cow";
-        await h.save();
-      } catch (err) {
-        console.error(`Error updating heifer ${h._id}:`, err.message);
-      }
-    }
+    let stageChanges = {
+      cow: 0, bull: 0, goat: 0, sheep: 0, pig: 0
+    };
 
-    const youngBulls = await Cow.find({
-      stage: "bull_calf",
-      birth_date: { $lte: moment().subtract(3, "years").toDate() }
-    });
-    for (const b of youngBulls) {
+    for (const animal of animalsWithBirthDate) {
       try {
-        b.stage = "young_bull";
-        await b.save();
-      } catch (err) {
-        console.error(`Error updating young bull ${b._id}:`, err.message);
-      }
-    }
+        const ageStr = getAgeString(animal.birth_date);
+        const targetStage = getTargetStage(animal.species, animal.gender, animal.birth_date);
 
-    const matureBulls = await Cow.find({
-      stage: "young_bull",
-      birth_date: { $lte: moment().subtract(4, "years").toDate() }
-    });
-    for (const mb of matureBulls) {
-      try {
-        mb.stage = "mature_bull";
-        await mb.save();
-      } catch (err) {
-        console.error(`Error updating mature bull ${mb._id}:`, err.message);
-      }
-    }
+        let changed = false;
+        if (animal.age !== ageStr) {
+          animal.age = ageStr;
+          changed = true;
+        }
+        if (targetStage && animal.stage !== targetStage) {
+          animal.stage = targetStage;
+          changed = true;
+          stageChanges[animal.species]++;
+        }
+        // Handle legacy is_calf for cows
+        if (animal.species === "cow") {
+          animal.is_calf = animal.stage === "calf";
+        }
 
-    // 🔹 Goats
-    const kids = await Cow.find({
-      species: "goat",
-      stage: "kid",
-      birth_date: { $lte: moment().subtract(6, "months").toDate() }
-    });
-    for (const g of kids) {
-      try {
-        g.stage = g.gender === "female" ? "doeling" : "buckling";
-        await g.save();
+        if (changed) {
+          await animal.save();
+        }
       } catch (err) {
-        console.error(`Error updating kid ${g._id}:`, err.message);
-      }
-    }
-
-    const doelings = await Cow.find({
-      species: "goat",
-      stage: "doeling",
-      birth_date: { $lte: moment().subtract(1, "years").toDate() }
-    });
-    for (const d of doelings) {
-      try {
-        d.stage = "nanny";
-        await d.save();
-      } catch (err) {
-        console.error(`Error updating doeling ${d._id}:`, err.message);
-      }
-    }
-
-    const bucklings = await Cow.find({
-      species: "goat",
-      stage: "buckling",
-      birth_date: { $lte: moment().subtract(1, "years").toDate() }
-    });
-    for (const b of bucklings) {
-      try {
-        b.stage = "buck";
-        await b.save();
-      } catch (err) {
-        console.error(`Error updating buckling ${b._id}:`, err.message);
-      }
-    }
-
-    // 🔹 Sheep
-    const lambs = await Cow.find({
-      species: "sheep",
-      stage: "lamb",
-      birth_date: { $lte: moment().subtract(6, "months").toDate() }
-    });
-    for (const s of lambs) {
-      try {
-        s.stage = s.gender === "female" ? "ewe" : "ram";
-        await s.save();
-      } catch (err) {
-        console.error(`Error updating lamb ${s._id}:`, err.message);
-      }
-    }
-
-    // 🔹 Pigs
-    const piglets = await Cow.find({
-      species: "pig",
-      stage: "piglet",
-      birth_date: { $lte: moment().subtract(6, "months").toDate() }
-    });
-    for (const p of piglets) {
-      try {
-        p.stage = p.gender === "female" ? "gilt" : "boar";
-        await p.save();
-      } catch (err) {
-        console.error(`Error updating piglet ${p._id}:`, err.message);
-      }
-    }
-
-    const gilts = await Cow.find({
-      species: "pig",
-      stage: "gilt",
-      birth_date: { $lte: moment().subtract(1, "years").toDate() }
-    });
-    for (const g of gilts) {
-      try {
-        g.stage = "sow";
-        await g.save();
-      } catch (err) {
-        console.error(`Error updating gilt ${g._id}:`, err.message);
+        console.error(`Error updating animal ${animal._id}:`, err.message);
       }
     }
 
@@ -173,6 +135,7 @@ const updateStagesAndPregnancies = async () => {
       "pregnancy.expected_due_date": { $exists: true }
     });
 
+    
     for (const animal of pregnantAnimals) {
       try {
         const dueDate = moment(animal.pregnancy.expected_due_date);
@@ -216,16 +179,8 @@ const updateStagesAndPregnancies = async () => {
     }
 
     console.log(`✅ Cron complete:
-      ${calves.length} calves ➜ heifer/bull_calf,
-      ${heifers.length} heifers ➜ cow,
-      ${youngBulls.length} bull_calves ➜ young_bull,
-      ${matureBulls.length} young_bulls ➜ mature_bull,
-      ${kids.length} kids ➜ doeling/buckling,
-      ${doelings.length} doelings ➜ nanny,
-      ${bucklings.length} bucklings ➜ buck,
-      ${lambs.length} lambs ➜ ewe/ram,
-      ${piglets.length} piglets ➜ gilt/boar,
-      ${gilts.length} gilts ➜ sow,
+      Stage changes: cows/bulls=${stageChanges.cow}, goats=${stageChanges.goat}, sheep=${stageChanges.sheep}, pigs=${stageChanges.pig},
+      Ages updated for ${animalsWithBirthDate.length} animals,
       ${pregnantAnimals.length} pregnancies checked.`);
   } catch (err) {
     console.error("❌ Error in stage/pregnancy cron:", err.message);
@@ -233,4 +188,4 @@ const updateStagesAndPregnancies = async () => {
 }
 
 // Run every day at midnight (00:00)
-cron.schedule("0 0 * * *", updateStagesAndPregnancies)
+cron.schedule("0 0 * * *", updateStagesAndPregnancies);

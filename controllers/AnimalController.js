@@ -17,10 +17,11 @@ exports.createAnimal = async (req, res) => {
 
     // 🐄 Cow block
     if (species === "cow") {
-      const { cow_name, breed_id, gender, birth_date,  mother_id } = req.body;
+      const { cow_name, breed_id, breed, gender, birth_date,  mother_id } = req.body;
       newAnimal = new Cow({
         species,
         cow_name,
+        breed,
         breed_id,
         gender,
         birth_date,
@@ -34,11 +35,11 @@ exports.createAnimal = async (req, res) => {
 
     // 🐐 Goat block
     else if (species === "goat") {
-      const { goat_name, breed_id, gender, birth_date } = req.body;
+      const { cow_name, breed, gender, birth_date } = req.body;
       newAnimal = new Cow({
         species,
-        cow_name: goat_name, // reuse field
-        breed_id,
+        cow_name, // reuse field
+        breed,
         gender,
         birth_date,
         farmer_id,
@@ -49,11 +50,11 @@ exports.createAnimal = async (req, res) => {
 
     // 🐑 Sheep block
     else if (species === "sheep") {
-      const { sheep_name, breed_id, gender, birth_date } = req.body;
+      const { cow_name, breed, gender, birth_date } = req.body;
       newAnimal = new Cow({
         species,
-        cow_name: sheep_name,
-        breed_id,
+        cow_name,
+        breed,
         gender,
         birth_date,
         farmer_id,
@@ -65,11 +66,11 @@ exports.createAnimal = async (req, res) => {
 
     // 🐖 Pig block
     else if (species === "pig") {
-      const { pig_name, breed_id, gender, birth_date } = req.body;
+      const { cow_name, breed, gender, birth_date } = req.body;
       newAnimal = new Cow({
         species,
-        cow_name: pig_name,
-        breed_id,
+        cow_name,
+        breed,
         gender,
         birth_date,
         farmer_id,
@@ -80,11 +81,11 @@ exports.createAnimal = async (req, res) => {
 
     // 🐂 Bull block
     else if (species === "bull") {
-      const { bull_name, breed_id, birth_date } = req.body;
+      const { cow_name, breed, birth_date } = req.body;
       newAnimal = new Cow({
         species,
-        cow_name: bull_name,
-        breed_id,
+        cow_name,
+        breed,
         gender: "male", // fixed
         birth_date,
         farmer_id,
