@@ -1,6 +1,8 @@
 const mongoose = require("mongoose");
 const { User, Farmer, ChatMessage, Listing, Notification } = require("../models/model");
 
+/* ---------------- HELPERS ---------------- */
+
 function maskPhone(phone) {
   if (!phone) return null;
   return phone.toString().replace(/\d(?=\d{2})/g, "*");
@@ -16,98 +18,119 @@ function getDisplayName(user) {
   return user.username || user.fullname || user.name || "Unknown User";
 }
 
+function resolveChatType(role) {
+  return role === "farmer" ? "farmer" : "user";
+}
+
+/* ---------------- SEND MESSAGE ---------------- */
+
 exports.sendMessage = async (req, res) => {
   try {
     const { receiverId, message, listingId } = req.body;
     const senderId = req.user.id || req.user._id;
-    const senderRole = req.user.role;
 
-    // Validate inputs
-    if (!mongoose.Types.ObjectId.isValid(senderId)) {
-      return res.status(400).json({ success: false, message: "Invalid sender ID" });
+    if (!receiverId || !message || !message.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Receiver and non-empty message are required",
+      });
     }
-    if (!receiverId || !mongoose.Types.ObjectId.isValid(receiverId) || !message || message.trim().length === 0) {
-      return res.status(400).json({ success: false, message: "Valid receiver ID and non-empty message are required" });
-    }
-    if (listingId && !mongoose.Types.ObjectId.isValid(listingId)) {
-      return res.status(400).json({ success: false, message: "Invalid listing ID" });
-    }
+
     if (senderId.toString() === receiverId.toString()) {
-      return res.status(400).json({ success: false, message: "Cannot message yourself" });
-    }
-    if (message.length > 2000) { // Arbitrary limit to prevent abuse
-      return res.status(400).json({ success: false, message: "Message too long" });
+      return res.status(400).json({
+        success: false,
+        message: "Cannot message yourself",
+      });
     }
 
-    const senderType = senderRole === "farmer" ? "farmer" : "user";
+    if (message.length > 2000) {
+      return res.status(400).json({
+        success: false,
+        message: "Message too long",
+      });
+    }
 
-    // Find receiver
+    const senderType = resolveChatType(req.user.role);
+
+    /* ---- resolve receiver ---- */
     let receiver = await User.findById(receiverId).select("role").lean();
     let receiverType = "user";
+
     if (!receiver) {
-      receiver = await Farmer.findById(receiverId).select("farmer_code fullname").lean();
-      if (receiver) receiverType = "farmer";
-    }
-    if (!receiver) {
-      return res.status(404).json({ success: false, message: "Receiver not found" });
+      receiver = await Farmer.findById(receiverId)
+        .select("farmer_code fullname")
+        .lean();
+
+      if (!receiver) {
+        return res.status(404).json({
+          success: false,
+          message: "Receiver not found",
+        });
+      }
+
+      receiverType = "farmer";
+    } else {
+      receiverType = resolveChatType(receiver.role);
     }
 
-    // Create message
+    /* ---- persist message ---- */
     const chatMessage = await ChatMessage.create({
       sender: { id: senderId, type: senderType },
       receiver: { id: receiverId, type: receiverType },
-      listing: listingId ? new mongoose.Types.ObjectId(listingId) : null,
+      listing: listingId || null,
       message: message.trim(),
       deliveredAt: new Date(),
     });
 
-    // Build notification
+    /* ---- notification ---- */
     let notifMsg = `💬 New message from ${getDisplayName(req.user)}`;
+
     if (listingId) {
-      const listing = await Listing.findById(listingId).select("title price").lean();
+      const listing = await Listing.findById(listingId)
+        .select("title price")
+        .lean();
+
       if (listing) {
         notifMsg += ` about "${listing.title}" (Ksh ${listing.price})`;
-      } else {
-        notifMsg += " about a listing";
-        // Optional: Delete message if listing invalid, but assume soft delete
       }
     }
 
     await Notification.create({
       user: receiverType === "user" ? receiverId : null,
       farmer: receiverType === "farmer" ? receiverId : null,
-      farmer_code: receiverType === "farmer" ? receiver.farmer_code : (senderRole === "farmer" ? req.user.farmer_code : null),
+      farmer_code:
+        receiverType === "farmer"
+          ? receiver.farmer_code
+          : senderType === "farmer"
+          ? req.user.farmer_code
+          : null,
       type: "chat_message",
       message: notifMsg,
     });
 
-    // Emit socket
+    /* ---- socket ---- */
     const io = req.app.get("io");
     if (io) {
-      const room = receiverType === "farmer" ? `farmer_${receiverId}` : `user_${receiverId}`;
-      io.to(room).emit("new_message", chatMessage);
+      io.to(`${receiverType}_${receiverId}`).emit("new_message", chatMessage);
     }
 
     res.status(201).json({ success: true, message: chatMessage });
   } catch (err) {
-    console.error("❌ Chat send error:", err.message, err.stack);
-    res.status(500).json({ success: false, message: "Failed to send message" });
+    console.error("❌ Chat send error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to send message",
+    });
   }
 };
+
+/* ---------------- GET CONVERSATION ---------------- */
 
 exports.getConversation = async (req, res) => {
   try {
     const counterpartId = req.params.id;
     const { listingId, page = 1, limit = 50 } = req.query;
     const currentUserId = req.user.id || req.user._id;
-    const currentUserType = req.user.role === "farmer" ? "farmer" : "user";
-
-    if (!mongoose.Types.ObjectId.isValid(currentUserId) || !mongoose.Types.ObjectId.isValid(counterpartId)) {
-      return res.status(400).json({ success: false, message: "Invalid user IDs" });
-    }
-    if (listingId && !mongoose.Types.ObjectId.isValid(listingId)) {
-      return res.status(400).json({ success: false, message: "Invalid listing ID" });
-    }
 
     const filter = {
       $or: [
@@ -115,108 +138,125 @@ exports.getConversation = async (req, res) => {
         { "sender.id": counterpartId, "receiver.id": currentUserId },
       ],
     };
-    if (listingId) filter.listing = new mongoose.Types.ObjectId(listingId);
 
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    if (listingId) filter.listing = listingId;
+
+    const skip = (Number(page) - 1) * Number(limit);
+
     const messages = await ChatMessage.find(filter)
       .sort({ created_at: 1 })
       .skip(skip)
-      .limit(parseInt(limit))
-      .populate("listing", "title price location status")
+      .limit(Number(limit))
+      .populate("listing", "title price")
       .lean();
 
-    // Mark unread as read atomically
     await ChatMessage.updateMany(
-      { "receiver.id": currentUserId, "sender.id": counterpartId, isRead: false },
+      {
+        "receiver.id": currentUserId,
+        "sender.id": counterpartId,
+        isRead: false,
+      },
       { $set: { isRead: true, readAt: new Date() } }
     );
 
-    // Fetch counterpart with masking
-    let counterpart = await Farmer.findById(counterpartId).lean() || await User.findById(counterpartId).lean();
+    const counterpart =
+      (await Farmer.findById(counterpartId).lean()) ||
+      (await User.findById(counterpartId).lean());
+
     if (counterpart) {
       counterpart.phone = maskPhone(counterpart.phone);
       counterpart.email = maskEmail(counterpart.email);
     }
 
-    const chatHistory = messages.map((m) => ({
-      id: m._id,
-      from: m.sender.id.toString() === currentUserId.toString() ? "me" : "them",
-      text: m.message,
-      isRead: m.isRead,
-      createdAt: m.created_at,
-      listing: m.listing ? { title: m.listing.title, price: m.listing.price } : null, // Include minimal listing info
-    }));
-
     res.json({
       success: true,
-      me: currentUserId.toString(),
-      counterpart: counterpart ? {
-        displayName: counterpart.username || counterpart.fullname,
-        phone: counterpart.phone,
-        email: counterpart.email,
-      } : null,
-      messages: chatHistory,
-      hasMore: messages.length === parseInt(limit), // For pagination
+      messages: messages.map((m) => ({
+        id: m._id,
+        from:
+          m.sender.id.toString() === currentUserId.toString()
+            ? "me"
+            : "them",
+        text: m.message,
+        isRead: m.isRead,
+        createdAt: m.created_at,
+        listing: m.listing
+          ? { title: m.listing.title, price: m.listing.price }
+          : null,
+      })),
+      counterpart: counterpart
+        ? {
+            displayName: counterpart.username || counterpart.fullname,
+            phone: counterpart.phone,
+            email: counterpart.email,
+          }
+        : null,
     });
   } catch (err) {
-    console.error("❌ Chat fetch error:", err.message, err.stack);
-    res.status(500).json({ success: false, message: "Failed to fetch conversation" });
+    console.error("❌ Chat fetch error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch conversation",
+    });
   }
 };
+
+/* ---------------- UNREAD COUNT ---------------- */
 
 exports.getUnreadCount = async (req, res) => {
   try {
     const currentUserId = req.user.id || req.user._id;
-    if (!mongoose.Types.ObjectId.isValid(currentUserId)) {
-      return res.status(400).json({ success: false, message: "Invalid user ID" });
-    }
-    const count = await ChatMessage.countDocuments({ "receiver.id": currentUserId, isRead: false });
+
+    const count = await ChatMessage.countDocuments({
+      "receiver.id": currentUserId,
+      isRead: false,
+    });
+
     res.json({ success: true, unread: count });
   } catch (err) {
-    console.error("❌ Unread count error:", err.message, err.stack);
-    res.status(500).json({ success: false, message: "Failed to fetch unread count" });
+    console.error("❌ Unread count error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch unread count",
+    });
   }
 };
 
+/* ---------------- RECENT CHATS ---------------- */
+
 exports.getRecentChats = async (req, res) => {
   try {
-    const userId = new mongoose.Types.ObjectId(req.user.id || req.user._id);
+    const userId = req.user.id || req.user._id;
 
     const messages = await ChatMessage.aggregate([
-      { $match: { $or: [{ "sender.id": userId }, { "receiver.id": userId }] } },
+      {
+        $match: {
+          $or: [{ "sender.id": userId }, { "receiver.id": userId }],
+        },
+      },
       { $sort: { created_at: -1 } },
-      { $addFields: { otherUserId: { $cond: [{ $eq: ["$sender.id", userId] }, "$receiver.id", "$sender.id"] } } },
-      { $group: { _id: "$otherUserId", lastMessage: { $first: "$message" }, createdAt: { $first: "$created_at" } } },
-      { $sort: { createdAt: -1 } },
-      { $limit: 30 }
+      {
+        $group: {
+          _id: {
+            $cond: [
+              { $eq: ["$sender.id", userId] },
+              "$receiver.id",
+              "$sender.id",
+            ],
+          },
+          lastMessage: { $first: "$message" },
+          lastAt: { $first: "$created_at" },
+        },
+      },
+      { $sort: { lastAt: -1 } },
+      { $limit: 30 },
     ]);
 
-    if (!messages.length) {
-      return res.json({ success: true, recent: [] });
-    }
-
-    const enriched = await Promise.all(messages.map(async (m) => {
-      const uid = m._id;
-      let participant = await Farmer.findById(uid).select("fullname farmer_code phone email").lean() ||
-                        await User.findById(uid).select("fullname username role phone email").lean();
-      if (!participant) return null;
-      return {
-        _id: uid,
-        name: participant.fullname || participant.username || "Unknown",
-        role: participant.role || (participant.farmer_code ? "farmer" : "user"),
-        farmer_code: participant.farmer_code || null,
-        phone: maskPhone(participant.phone),
-        email: maskEmail(participant.email),
-        lastMessage: m.lastMessage,
-        lastActive: m.createdAt,
-      };
-    }));
-
-    const cleaned = enriched.filter(Boolean);
-
-    res.json({ success: true, recent: cleaned });
+    res.json({ success: true, recent: messages });
   } catch (err) {
-    console.error("❌ Recent chats error:", err.message, err.stack);
-    res.status(500).json({ success: false, message: "Failed to load recent chat list" });
+    console.error("❌ Recent chats error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to load recent chat list",
+    });
   }
 };
