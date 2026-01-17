@@ -34,6 +34,15 @@ function resolveChatType(role) {
   }
 }
 
+
+function resolveChatType(role) {
+  if (!role) return "User";
+  if (role.toLowerCase() === "farmer") return "Farmer";
+  if (role.toLowerCase() === "seller") return "seller";
+  if (role.toLowerCase() === "superadmin") return "superadmin";
+  return "User";
+}
+
 /* ---------------- SEND MESSAGE ---------------- */
 
 exports.sendMessage = async (req, res) => {
@@ -107,18 +116,20 @@ exports.sendMessage = async (req, res) => {
       }
     }
 
-    await Notification.create({
-      user: receiverType === "User" ? receiverId : null,
-      farmer: receiverType === "Farmer" ? receiverId : null,
-      farmer_code:
-        receiverType === "Farmer"
-          ? receiver.farmer_code
-          : senderType === "Farmer"
-          ? req.user.farmer_code
-          : null,
-      type: "chat_message",
-      message: notifMsg,
-    });
+   await Notification.create({
+  user: {
+    id: receiverId,
+    type: receiverType, // "User" | "Farmer"
+  },
+  farmer_code:
+    receiverType === "Farmer"
+      ? receiver.farmer_code
+      : senderType === "Farmer"
+      ? req.user.farmer_code
+      : null,
+  type: "chat_message",
+  message: notifMsg,
+});
 
     /* ---- socket ---- */
     const io = req.app.get("io");
