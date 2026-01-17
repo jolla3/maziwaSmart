@@ -3,61 +3,46 @@ const { User, Farmer, ChatMessage, Listing, Notification } = require("../models/
 
 /* ---------------- HELPERS ---------------- */
 
-function maskPhone(phone) {
-  if (!phone) return null;
-  return phone.toString().replace(/\d(?=\d{2})/g, "*");
-}
-
-function maskEmail(email) {
-  if (!email) return null;
-  const [name, domain] = email.split("@");
-  return name[0] + "***@" + domain;
-}
-
-function getDisplayName(user) {
-  return user.username || user.fullname || user.name || "Unknown User";
+function getDisplayName(user = {}) {
+  return user.name || user.fullname || user.username || user.email || "Unknown User";
 }
 
 /**
  * MUST match ChatMessage enum exactly
- * enum: ["User", "Farmer", "Porter"]
+ * enum: ["User", "Farmer", "seller", "superadmin"]
  */
 function resolveChatType(role) {
   if (!role) return "User";
   switch (role.toLowerCase()) {
     case "farmer":
       return "Farmer";
-    case "porter":
-      return "Porter";
+    case "seller":
+      return "seller";
+    case "superadmin":
+      return "superadmin";
     default:
       return "User";
   }
 }
 
-
-function resolveChatType(role) {
-  if (!role) return "User";
-  if (role.toLowerCase() === "farmer") return "Farmer";
-  if (role.toLowerCase() === "seller") return "seller";
-  if (role.toLowerCase() === "superadmin") return "superadmin";
-  return "User";
-}
-
 /* ---------------- SEND MESSAGE ---------------- */
 
 exports.sendMessage = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
     const { receiverId, message, listingId } = req.body;
-    const senderId = req.user.id || req.user._id;
+    const senderId = req.user.id;
 
-    if (!receiverId || !message || !message.trim()) {
+    if (!receiverId || !message?.trim()) {
       return res.status(400).json({
         success: false,
         message: "Receiver and non-empty message are required",
       });
     }
 
-    if (senderId.toString() === receiverId.toString()) {
+    if (String(senderId) === String(receiverId)) {
       return res.status(400).json({
         success: false,
         message: "Cannot message yourself",
@@ -74,15 +59,21 @@ exports.sendMessage = async (req, res) => {
     const senderType = resolveChatType(req.user.role);
 
     /* ---- resolve receiver ---- */
-    let receiver = await User.findById(receiverId).select("role").lean();
+    let receiver = await User.findById(receiverId)
+      .select("role")
+      .session(session)
+      .lean();
+
     let receiverType = "User";
 
     if (!receiver) {
       receiver = await Farmer.findById(receiverId)
         .select("farmer_code fullname")
+        .session(session)
         .lean();
 
       if (!receiver) {
+        await session.abortTransaction();
         return res.status(404).json({
           success: false,
           message: "Receiver not found",
@@ -94,21 +85,27 @@ exports.sendMessage = async (req, res) => {
       receiverType = resolveChatType(receiver.role);
     }
 
-    /* ---- persist message ---- */
-    const chatMessage = await ChatMessage.create({
-      sender: { id: senderId, type: senderType },
-      receiver: { id: receiverId, type: receiverType },
-      listing: listingId || null,
-      message: message.trim(),
-      deliveredAt: new Date(),
-    });
+    /* ---- create message ---- */
+    const [chatMessage] = await ChatMessage.create(
+      [
+        {
+          sender: { id: senderId, type: senderType },
+          receiver: { id: receiverId, type: receiverType },
+          listing: listingId || null,
+          message: message.trim(),
+          deliveredAt: new Date(),
+        },
+      ],
+      { session }
+    );
 
-    /* ---- notification ---- */
+    /* ---- build notification text ---- */
     let notifMsg = `💬 New message from ${getDisplayName(req.user)}`;
 
     if (listingId) {
       const listing = await Listing.findById(listingId)
         .select("title price")
+        .session(session)
         .lean();
 
       if (listing) {
@@ -116,22 +113,32 @@ exports.sendMessage = async (req, res) => {
       }
     }
 
-   await Notification.create({
-  user: {
-    id: receiverId,
-    type: receiverType, // "User" | "Farmer"
-  },
-  farmer_code:
-    receiverType === "Farmer"
-      ? receiver.farmer_code
-      : senderType === "Farmer"
-      ? req.user.farmer_code
-      : null,
-  type: "chat_message",
-  message: notifMsg,
-});
+    /* ---- create notification ---- */
+    await Notification.create(
+      [
+        {
+          user: {
+            id: receiverId,
+            type: receiverType,
+          },
+          farmer_code:
+            receiverType === "Farmer"
+              ? receiver.farmer_code
+              : senderType === "Farmer"
+              ? req.user.code
+              : null,
+          type: "chat_message",
+          message: notifMsg,
+        },
+      ],
+      { session }
+    );
 
-    /* ---- socket ---- */
+    /* ---- commit ---- */
+    await session.commitTransaction();
+    session.endSession();
+
+    /* ---- socket emit AFTER commit ---- */
     const io = req.app.get("io");
     if (io) {
       io.to(`${receiverType.toLowerCase()}_${receiverId}`)
@@ -139,7 +146,11 @@ exports.sendMessage = async (req, res) => {
     }
 
     res.status(201).json({ success: true, message: chatMessage });
+
   } catch (err) {
+    await session.abortTransaction();
+    session.endSession();
+
     console.error("❌ Chat send error:", err);
     res.status(500).json({
       success: false,
