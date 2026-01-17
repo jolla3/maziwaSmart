@@ -18,8 +18,20 @@ function getDisplayName(user) {
   return user.username || user.fullname || user.name || "Unknown User";
 }
 
+/**
+ * MUST match ChatMessage enum exactly
+ * enum: ["User", "Farmer", "Porter"]
+ */
 function resolveChatType(role) {
-  return role === "farmer" ? "farmer" : "user";
+  if (!role) return "User";
+  switch (role.toLowerCase()) {
+    case "farmer":
+      return "Farmer";
+    case "porter":
+      return "Porter";
+    default:
+      return "User";
+  }
 }
 
 /* ---------------- SEND MESSAGE ---------------- */
@@ -54,7 +66,7 @@ exports.sendMessage = async (req, res) => {
 
     /* ---- resolve receiver ---- */
     let receiver = await User.findById(receiverId).select("role").lean();
-    let receiverType = "user";
+    let receiverType = "User";
 
     if (!receiver) {
       receiver = await Farmer.findById(receiverId)
@@ -68,7 +80,7 @@ exports.sendMessage = async (req, res) => {
         });
       }
 
-      receiverType = "farmer";
+      receiverType = "Farmer";
     } else {
       receiverType = resolveChatType(receiver.role);
     }
@@ -96,12 +108,12 @@ exports.sendMessage = async (req, res) => {
     }
 
     await Notification.create({
-      user: receiverType === "user" ? receiverId : null,
-      farmer: receiverType === "farmer" ? receiverId : null,
+      user: receiverType === "User" ? receiverId : null,
+      farmer: receiverType === "Farmer" ? receiverId : null,
       farmer_code:
-        receiverType === "farmer"
+        receiverType === "Farmer"
           ? receiver.farmer_code
-          : senderType === "farmer"
+          : senderType === "Farmer"
           ? req.user.farmer_code
           : null,
       type: "chat_message",
@@ -111,7 +123,8 @@ exports.sendMessage = async (req, res) => {
     /* ---- socket ---- */
     const io = req.app.get("io");
     if (io) {
-      io.to(`${receiverType}_${receiverId}`).emit("new_message", chatMessage);
+      io.to(`${receiverType.toLowerCase()}_${receiverId}`)
+        .emit("new_message", chatMessage);
     }
 
     res.status(201).json({ success: true, message: chatMessage });
