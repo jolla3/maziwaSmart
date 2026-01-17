@@ -3,27 +3,53 @@ const { User, Farmer, ChatMessage, Listing, Notification } = require("../models/
 
 /* ---------------- HELPERS ---------------- */
 
-function getDisplayName(user = {}) {
-  return user.name || user.fullname || user.username || user.email || "Unknown User";
+function maskPhone(phone) {
+  if (!phone) return null;
+  return phone.toString().replace(/\d(?=\d{2})/g, "*");
 }
+
+function maskEmail(email) {
+  if (!email) return null;
+  const [name, domain] = email.split("@");
+  return name[0] + "***@" + domain;
+}
+
+function getDisplayName(user = {}) {
+  return (
+    user.name ||
+    user.username ||
+    user.fullname ||
+    user.email ||
+    "Unknown User"
+  );
+}
+
 
 /**
  * MUST match ChatMessage enum exactly
- * enum: ["User", "Farmer", "seller", "superadmin"]
+ * enum: ["User", "Farmer", "Porter"]
  */
 function resolveChatType(role) {
   if (!role) return "User";
   switch (role.toLowerCase()) {
     case "farmer":
       return "Farmer";
-    case "seller":
-      return "seller";
-    case "superadmin":
-      return "superadmin";
+    case "porter":
+      return "Porter";
     default:
       return "User";
   }
 }
+
+
+function resolveChatType(role) {
+  if (!role) return "User";
+  if (role.toLowerCase() === "farmer") return "Farmer";
+  if (role.toLowerCase() === "seller") return "seller";
+  if (role.toLowerCase() === "superadmin") return "superadmin";
+  return "User";
+}
+
 
 /* ---------------- SEND MESSAGE ---------------- */
 
@@ -158,7 +184,6 @@ exports.sendMessage = async (req, res) => {
     });
   }
 };
-
 /* ---------------- GET CONVERSATION ---------------- */
 
 exports.getConversation = async (req, res) => {
