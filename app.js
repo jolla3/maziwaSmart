@@ -1,4 +1,4 @@
-// app.js
+// app.js  ← REPLACE ENTIRE FILE
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -21,7 +21,20 @@ app.set('trust proxy', true);
 const onlineUsers = new Map(); // userId => { role, ip, connectedAt }
 app.set("onlineUsers", onlineUsers);
 
-// Cleanup dead sessions every 2 minutes
+// Broadcast helper (defined early)
+const broadcastOnlineList = () => {
+  const list = Array.from(onlineUsers.entries()).map(([id, info]) => ({
+    userId: id,
+    role: info.role,
+    ip: info.ip,
+    connectedAt: info.connectedAt
+  }));
+
+  io.emit("monitor:onlineUsers", list);
+  monitorNamespace.emit("monitor:onlineUsers", list);
+};
+
+// Cleanup dead sessions every 2 min
 setInterval(async () => {
   const cutoff = new Date(Date.now() - 5 * 60 * 1000);
   const dead = await Session.find({ updatedAt: { $lt: cutoff } });
@@ -202,19 +215,6 @@ monitorNamespace.on("connection", (socket) => {
   broadcastOnlineList();
 });
 
-// Broadcast helper
-const broadcastOnlineList = () => {
-  const list = Array.from(onlineUsers.entries()).map(([id, info]) => ({
-    userId: id,
-    role: info.role,
-    ip: info.ip,
-    connectedAt: info.connectedAt
-  }));
-
-  io.emit("monitor:onlineUsers", list);
-  monitorNamespace.emit("monitor:onlineUsers", list);
-};
-
 // ======================================================
 // MAIN SOCKET HANDLER – RICH ONLINE TRACKING
 // ======================================================
@@ -237,7 +237,6 @@ io.on("connection", async (socket) => {
   // Add to map
   onlineUsers.set(userId, { role, ip, connectedAt: new Date() });
 
-  
   // Persist session
   await Session.findOneAndUpdate(
     { userId },
@@ -259,7 +258,7 @@ io.on("connection", async (socket) => {
   socket.join(userId);
 
   // Log connect
-  await logEvent(null, {
+  await logEvent(socket, {
     userId,
     role,
     type: "socket.connect",
@@ -274,8 +273,8 @@ io.on("connection", async (socket) => {
         fromSocket: userId,
         timestamp: new Date(),
       });
-
-      logEvent(null, {
+      
+      logEvent(socket, {
         userId,
         type: "chat.message.sent",
         metadata: { receiver: data.receiver, hasImage: !!data.image }
@@ -288,7 +287,7 @@ io.on("connection", async (socket) => {
     await Session.deleteOne({ socketId: socket.id });
     broadcastOnlineList();
 
-    await logEvent(null, {
+    await logEvent(socket, {
       userId,
       role,
       type: "socket.disconnect",
