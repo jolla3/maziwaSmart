@@ -29,9 +29,34 @@ function resolveChatType(role) {
       return "Farmer";
     case "porter":
       return "Porter";
+    case "seller":
+      return "seller";
+    case "superadmin":
+      return "superadmin";
     default:
       return "User";
   }
+}
+/**
+ * Normalize ChatMessage → API DTO
+ */
+function normalizeMessage(doc, currentUserId) {
+  return {
+    id: doc._id,
+    from:
+      doc.sender.id.toString() === currentUserId.toString()
+        ? "me"
+        : "them",
+    text: doc.message,
+    isRead: doc.isRead,
+    createdAt: doc.created_at,
+    listing: doc.listing
+      ? {
+          title: doc.listing.title,
+          price: doc.listing.price,
+        }
+      : null,
+  };
 }
 
 /* ---------------- SEND MESSAGE ---------------- */
