@@ -1,21 +1,21 @@
 const mongoose = require("mongoose");
 const { User, Farmer, ChatMessage, Listing, Notification } = require("../models/model");
+
 /* ---------------- HELPERS ---------------- */
-function maskPhone(phone) {
-  if (!phone) return null;
-  return phone.toString().replace(/\d(?=\d{2})/g, "*");
+
+function getDisplayName(user = {}) {
+  return (
+    user.name ||
+    user.username ||
+    user.fullname ||
+    user.email ||
+    "Unknown User"
+  );
 }
-function maskEmail(email) {
-  if (!email) return null;
-  const [name, domain] = email.split("@");
-  return name[0] + "***@" + domain;
-}
-function getDisplayName(user) {
-  return user.username || user.fullname || user.name || "Unknown User";
-}
+
 /**
  * MUST match ChatMessage enum exactly
- * enum: ["User", "Farmer", "Porter"]
+ * enum: ["User", "Farmer", "Porter", "seller", "superadmin"]
  */
 function resolveChatType(role) {
   if (!role) return "User";
@@ -24,78 +24,106 @@ function resolveChatType(role) {
       return "Farmer";
     case "porter":
       return "Porter";
+    case "seller":
+      return "seller";
+    case "superadmin":
+      return "superadmin";
     default:
       return "User";
   }
 }
+
+/**
+ * Normalize ChatMessage → API DTO
+ */
+function normalizeMessage(doc, currentUserId) {
+  return {
+    id: doc._id,
+    from:
+      doc.sender.id.toString() === currentUserId.toString()
+        ? "me"
+        : "them",
+    text: doc.message,
+    isRead: doc.isRead,
+    createdAt: doc.created_at,
+    listing: doc.listing
+      ? {
+          title: doc.listing.title,
+          price: doc.listing.price,
+        }
+      : null,
+  };
+}
+
 /* ---------------- SEND MESSAGE ---------------- */
+
 exports.sendMessage = async (req, res) => {
   try {
     const { receiverId, message, listingId } = req.body;
     const senderId = req.user.id || req.user._id;
-    if (!mongoose.Types.ObjectId.isValid(senderId)) {
-      return res.status(400).json({ success: false, message: "Invalid sender ID" });
-    }
-    if (!receiverId || !mongoose.Types.ObjectId.isValid(receiverId)) {
-      return res.status(400).json({ success: false, message: "Invalid receiver ID" });
-    }
-    if (!message || !message.trim()) {
+
+    if (!receiverId || !message || !message.trim()) {
       return res.status(400).json({
         success: false,
         message: "Receiver and non-empty message are required",
       });
     }
+
     if (senderId.toString() === receiverId.toString()) {
       return res.status(400).json({
         success: false,
         message: "Cannot message yourself",
       });
     }
+
     if (message.length > 2000) {
       return res.status(400).json({
         success: false,
         message: "Message too long",
       });
     }
+
     const senderType = resolveChatType(req.user.role);
+
     /* ---- resolve receiver ---- */
-    let receiver = await User.findById(receiverId).select("role username fullname phone email").lean();
-    let receiverType = "User";
+    let receiver =
+      (await User.findById(receiverId).select("role").lean()) ||
+      (await Farmer.findById(receiverId)
+        .select("role farmer_code fullname")
+        .lean());
+
     if (!receiver) {
-      receiver = await Farmer.findById(receiverId)
-        .select("farmer_code fullname phone email")
-        .lean();
-      if (!receiver) {
-        return res.status(404).json({
-          success: false,
-          message: "Receiver not found",
-        });
-      }
-      receiverType = "Farmer";
-    } else {
-      receiverType = resolveChatType(receiver.role);
+      return res.status(404).json({
+        success: false,
+        message: "Receiver not found",
+      });
     }
+
+    const receiverType = resolveChatType(receiver.role || "farmer");
+
     /* ---- persist message ---- */
     const chatMessage = await ChatMessage.create({
       sender: { id: senderId, type: senderType },
       receiver: { id: receiverId, type: receiverType },
-      listing: listingId && mongoose.Types.ObjectId.isValid(listingId) ? new mongoose.Types.ObjectId(listingId) : null,
+      listing: listingId || null,
       message: message.trim(),
       deliveredAt: new Date(),
     });
+
+    await chatMessage.populate("listing", "title price");
+
     /* ---- notification ---- */
     let notifMsg = `💬 New message from ${getDisplayName(req.user)}`;
-    if (listingId) {
-      const listing = await Listing.findById(listingId)
-        .select("title price")
-        .lean();
-      if (listing) {
-        notifMsg += ` about "${listing.title}" (Ksh ${listing.price})`;
-      }
+
+    if (listingId && chatMessage.listing) {
+      notifMsg += ` about "${chatMessage.listing.title}" (Ksh ${chatMessage.listing.price})`;
     }
+
     await Notification.create({
-      user: receiverType === "User" ? receiverId : null,
-      farmer: receiverType === "Farmer" ? receiverId : null,
+      user: {
+        id: receiverId,
+        type: receiverType,
+      },
       farmer_code:
         receiverType === "Farmer"
           ? receiver.farmer_code
@@ -105,46 +133,56 @@ exports.sendMessage = async (req, res) => {
       type: "chat_message",
       message: notifMsg,
     });
+
+    /* ---- normalize once ---- */
+    const normalized = normalizeMessage(chatMessage, senderId);
+
     /* ---- socket ---- */
     const io = req.app.get("io");
     if (io) {
-      io.to(`${receiverType.toLowerCase()}_${receiverId}`)
-        .emit("new_message", chatMessage);
+      io.to(`${receiverType.toLowerCase()}_${receiverId}`).emit(
+        "new_message",
+        normalized
+      );
     }
-    res.status(201).json({ success: true, message: chatMessage });
+
+    res.status(201).json({ success: true, message: normalized });
   } catch (err) {
-    console.error("❌ Chat send error:", err.message, err.stack);
+    console.error("❌ Chat send error:", err);
     res.status(500).json({
       success: false,
       message: "Failed to send message",
     });
   }
 };
-/* ---------------- GET CONVERSATION ---------------- */
+
+/* ---------------- GET CONVERSATION (CURSOR PAGINATION) ---------------- */
+
 exports.getConversation = async (req, res) => {
   try {
     const counterpartId = req.params.id;
-    const { listingId, page = 1, limit = 50 } = req.query;
+    const { listingId, cursor, limit = 30 } = req.query;
     const currentUserId = req.user.id || req.user._id;
-    if (!mongoose.Types.ObjectId.isValid(currentUserId) || !mongoose.Types.ObjectId.isValid(counterpartId)) {
-      return res.status(400).json({ success: false, message: "Invalid user IDs" });
-    }
+
     const filter = {
       $or: [
         { "sender.id": currentUserId, "receiver.id": counterpartId },
         { "sender.id": counterpartId, "receiver.id": currentUserId },
       ],
     };
-    if (listingId && mongoose.Types.ObjectId.isValid(listingId)) {
-      filter.listing = new mongoose.Types.ObjectId(listingId);
+
+    if (listingId) filter.listing = listingId;
+
+    if (cursor) {
+      filter.created_at = { $lt: new Date(cursor) };
     }
-    const skip = (Number(page) - 1) * Number(limit);
-    const messages = await ChatMessage.find(filter)
-      .sort({ created_at: 1 })
-      .skip(skip)
+
+    const docs = await ChatMessage.find(filter)
+      .sort({ created_at: -1 })
       .limit(Number(limit))
       .populate("listing", "title price")
       .lean();
+
     await ChatMessage.updateMany(
       {
         "receiver.id": currentUserId,
@@ -153,69 +191,73 @@ exports.getConversation = async (req, res) => {
       },
       { $set: { isRead: true, readAt: new Date() } }
     );
+
+    const messages = docs
+      .reverse()
+      .map((m) => normalizeMessage(m, currentUserId));
+
+    const nextCursor =
+      docs.length > 0 ? docs[docs.length - 1].created_at : null;
+
     const counterpart =
-      (await Farmer.findById(counterpartId).select("fullname farmer_code phone email").lean()) ||
-      (await User.findById(counterpartId).select("username fullname phone email").lean());
-    if (counterpart) {
-      counterpart.phone = maskPhone(counterpart.phone);
-      counterpart.email = maskEmail(counterpart.email);
-    }
+      (await Farmer.findById(counterpartId).lean()) ||
+      (await User.findById(counterpartId).lean());
+
     res.json({
       success: true,
-      messages: messages.map((m) => ({
-        id: m._id,
-        from:
-          m.sender.id.toString() === currentUserId.toString()
-            ? "me"
-            : "them",
-        text: m.message,
-        isRead: m.isRead,
-        createdAt: m.created_at,
-        listing: m.listing
-          ? { title: m.listing.title, price: m.listing.price }
-          : null,
-      })),
+      messages,
+      nextCursor,
       counterpart: counterpart
         ? {
-            displayName: counterpart.username || counterpart.fullname,
-            phone: counterpart.phone,
-            email: counterpart.email,
+            displayName:
+              counterpart.username ||
+              counterpart.fullname ||
+              counterpart.name,
+            phone: counterpart.phone || null, // ✅ UNMASKED
+            email: counterpart.email || null,
+            location:
+              counterpart.location ||
+              counterpart.location_description ||
+              null,
           }
         : null,
-      hasMore: messages.length === Number(limit),
     });
   } catch (err) {
-    console.error("❌ Chat fetch error:", err.message, err.stack);
+    console.error("❌ Chat fetch error:", err);
     res.status(500).json({
       success: false,
       message: "Failed to fetch conversation",
     });
   }
 };
+
 /* ---------------- UNREAD COUNT ---------------- */
+
 exports.getUnreadCount = async (req, res) => {
   try {
     const currentUserId = req.user.id || req.user._id;
-    if (!mongoose.Types.ObjectId.isValid(currentUserId)) {
-      return res.status(400).json({ success: false, message: "Invalid user ID" });
-    }
+
     const count = await ChatMessage.countDocuments({
       "receiver.id": currentUserId,
       isRead: false,
     });
+
     res.json({ success: true, unread: count });
   } catch (err) {
-    console.error("❌ Unread count error:", err.message, err.stack);
+    console.error("❌ Unread count error:", err);
     res.status(500).json({
       success: false,
       message: "Failed to fetch unread count",
     });
   }
 };
+
 /* ---------------- RECENT CHATS ---------------- */
+
 exports.getRecentChats = async (req, res) => {
   try {
-    const userId = new mongoose.Types.ObjectId(req.user.id || req.user._id);
+    const userId = req.user.id || req.user._id;
+
     const messages = await ChatMessage.aggregate([
       {
         $match: {
@@ -239,29 +281,10 @@ exports.getRecentChats = async (req, res) => {
       { $sort: { lastAt: -1 } },
       { $limit: 30 },
     ]);
-    if (!messages.length) {
-      return res.json({ success: true, recent: [] });
-    }
-    const enriched = await Promise.all(
-      messages.map(async (m) => {
-        const uid = m._id;
-        let participant =
-          (await Farmer.findById(uid).select("fullname farmer_code phone email").lean()) ||
-          (await User.findById(uid).select("username fullname phone email").lean());
-        if (!participant) return null;
-        return {
-          id: uid.toString(),
-          name: getDisplayName(participant),
-          phone: maskPhone(participant.phone),
-          email: maskEmail(participant.email),
-          lastMessage: m.lastMessage,
-          lastAt: m.lastAt,
-        };
-      })
-    );
-    res.json({ success: true, recent: enriched.filter(Boolean) });
+
+    res.json({ success: true, recent: messages });
   } catch (err) {
-    console.error("❌ Recent chats error:", err.message, err.stack);
+    console.error("❌ Recent chats error:", err);
     res.status(500).json({
       success: false,
       message: "Failed to load recent chat list",
