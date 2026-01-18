@@ -3,19 +3,24 @@ const { User, Farmer, ChatMessage, Listing, Notification } = require("../models/
 
 /* ---------------- HELPERS ---------------- */
 
-function getDisplayName(user = {}) {
-  return (
-    user.name ||
-    user.username ||
-    user.fullname ||
-    user.email ||
-    "Unknown User"
-  );
+function maskPhone(phone) {
+  if (!phone) return null;
+  return phone.toString().replace(/\d(?=\d{2})/g, "*");
+}
+
+function maskEmail(email) {
+  if (!email) return null;
+  const [name, domain] = email.split("@");
+  return name[0] + "***@" + domain;
+}
+
+function getDisplayName(user) {
+  return user.username || user.fullname || user.name || "Unknown User";
 }
 
 /**
  * MUST match ChatMessage enum exactly
- * enum: ["User", "Farmer", "Porter", "seller", "superadmin"]
+ * enum: ["User", "Farmer", "Porter"]
  */
 function resolveChatType(role) {
   if (!role) return "User";
@@ -24,35 +29,9 @@ function resolveChatType(role) {
       return "Farmer";
     case "porter":
       return "Porter";
-    case "seller":
-      return "seller";
-    case "superadmin":
-      return "superadmin";
     default:
       return "User";
   }
-}
-
-/**
- * Normalize ChatMessage → API DTO
- */
-function normalizeMessage(doc, currentUserId) {
-  return {
-    id: doc._id,
-    from:
-      doc.sender.id.toString() === currentUserId.toString()
-        ? "me"
-        : "them",
-    text: doc.message,
-    isRead: doc.isRead,
-    createdAt: doc.created_at,
-    listing: doc.listing
-      ? {
-          title: doc.listing.title,
-          price: doc.listing.price,
-        }
-      : null,
-  };
 }
 
 /* ---------------- SEND MESSAGE ---------------- */
@@ -86,20 +65,25 @@ exports.sendMessage = async (req, res) => {
     const senderType = resolveChatType(req.user.role);
 
     /* ---- resolve receiver ---- */
-    let receiver =
-      (await User.findById(receiverId).select("role").lean()) ||
-      (await Farmer.findById(receiverId)
-        .select("role farmer_code fullname")
-        .lean());
+    let receiver = await User.findById(receiverId).select("role").lean();
+    let receiverType = "User";
 
     if (!receiver) {
-      return res.status(404).json({
-        success: false,
-        message: "Receiver not found",
-      });
-    }
+      receiver = await Farmer.findById(receiverId)
+        .select("farmer_code fullname")
+        .lean();
 
-    const receiverType = resolveChatType(receiver.role || "farmer");
+      if (!receiver) {
+        return res.status(404).json({
+          success: false,
+          message: "Receiver not found",
+        });
+      }
+
+      receiverType = "Farmer";
+    } else {
+      receiverType = resolveChatType(receiver.role);
+    }
 
     /* ---- persist message ---- */
     const chatMessage = await ChatMessage.create({
@@ -110,43 +94,42 @@ exports.sendMessage = async (req, res) => {
       deliveredAt: new Date(),
     });
 
-    await chatMessage.populate("listing", "title price");
-
     /* ---- notification ---- */
     let notifMsg = `💬 New message from ${getDisplayName(req.user)}`;
 
-    if (listingId && chatMessage.listing) {
-      notifMsg += ` about "${chatMessage.listing.title}" (Ksh ${chatMessage.listing.price})`;
+    if (listingId) {
+      const listing = await Listing.findById(listingId)
+        .select("title price")
+        .lean();
+
+      if (listing) {
+        notifMsg += ` about "${listing.title}" (Ksh ${listing.price})`;
+      }
     }
 
-    await Notification.create({
-      user: {
-        id: receiverId,
-        type: receiverType,
-      },
-      farmer_code:
-        receiverType === "Farmer"
-          ? receiver.farmer_code
-          : senderType === "Farmer"
-          ? req.user.farmer_code
-          : null,
-      type: "chat_message",
-      message: notifMsg,
-    });
-
-    /* ---- normalize once ---- */
-    const normalized = normalizeMessage(chatMessage, senderId);
+   await Notification.create({
+  user: {
+    id: receiverId,
+    type: receiverType, // "User" | "Farmer"
+  },
+  farmer_code:
+    receiverType === "Farmer"
+      ? receiver.farmer_code
+      : senderType === "Farmer"
+      ? req.user.farmer_code
+      : null,
+  type: "chat_message",
+  message: notifMsg,
+});
 
     /* ---- socket ---- */
     const io = req.app.get("io");
     if (io) {
-      io.to(`${receiverType.toLowerCase()}_${receiverId}`).emit(
-        "new_message",
-        normalized
-      );
+      io.to(`${receiverType.toLowerCase()}_${receiverId}`)
+        .emit("new_message", chatMessage);
     }
 
-    res.status(201).json({ success: true, message: normalized });
+    res.status(201).json({ success: true, message: chatMessage });
   } catch (err) {
     console.error("❌ Chat send error:", err);
     res.status(500).json({
@@ -156,12 +139,12 @@ exports.sendMessage = async (req, res) => {
   }
 };
 
-/* ---------------- GET CONVERSATION (CURSOR PAGINATION) ---------------- */
+/* ---------------- GET CONVERSATION ---------------- */
 
 exports.getConversation = async (req, res) => {
   try {
     const counterpartId = req.params.id;
-    const { listingId, cursor, limit = 30 } = req.query;
+    const { listingId, cursor } = req.query;
     const currentUserId = req.user.id || req.user._id;
 
     const filter = {
@@ -171,18 +154,27 @@ exports.getConversation = async (req, res) => {
       ],
     };
 
-    if (listingId) filter.listing = listingId;
+    if (listingId) {
+      filter.listing = listingId;
+    }
 
+    // Cursor = fetch older messages only
     if (cursor) {
       filter.created_at = { $lt: new Date(cursor) };
     }
 
-    const docs = await ChatMessage.find(filter)
-      .sort({ created_at: -1 })
-      .limit(Number(limit))
+    /**
+     * IMPORTANT:
+     * - NO LIMIT
+     * - chronological order
+     * - frontend decides how much to render
+     */
+    const messagesRaw = await ChatMessage.find(filter)
+      .sort({ created_at: 1 })
       .populate("listing", "title price")
       .lean();
 
+    // Mark unread as read
     await ChatMessage.updateMany(
       {
         "receiver.id": currentUserId,
@@ -192,12 +184,14 @@ exports.getConversation = async (req, res) => {
       { $set: { isRead: true, readAt: new Date() } }
     );
 
-    const messages = docs
-      .reverse()
-      .map((m) => normalizeMessage(m, currentUserId));
+    const messages = messagesRaw.map((m) =>
+      normalizeMessage(m, currentUserId)
+    );
 
     const nextCursor =
-      docs.length > 0 ? docs[docs.length - 1].created_at : null;
+      messagesRaw.length > 0
+        ? messagesRaw[0].created_at // oldest message returned
+        : null;
 
     const counterpart =
       (await Farmer.findById(counterpartId).lean()) ||
@@ -213,7 +207,7 @@ exports.getConversation = async (req, res) => {
               counterpart.username ||
               counterpart.fullname ||
               counterpart.name,
-            phone: counterpart.phone || null, // ✅ UNMASKED
+            phone: counterpart.phone || null, // untouched, raw
             email: counterpart.email || null,
             location:
               counterpart.location ||
