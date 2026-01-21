@@ -24,15 +24,16 @@ function getDisplayName(user) {
  */
 function resolveChatType(role) {
   if (!role) return "User";
+
   switch (role.toLowerCase()) {
     case "farmer":
       return "Farmer";
     case "porter":
       return "Porter";
+
+    // seller & superadmin live in User collection
     case "seller":
-      return "seller";
     case "superadmin":
-      return "superadmin";
     default:
       return "User";
   }
