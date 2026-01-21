@@ -276,11 +276,12 @@ exports.getUnreadCount = async (req, res) => {
 exports.getRecentChats = async (req, res) => {
   try {
     const userId = req.user.id || req.user._id;
+    const userIdObj = new mongoose.Types.ObjectId(userId);
 
     const messages = await ChatMessage.aggregate([
       {
         $match: {
-          $or: [{ "sender.id": userId }, { "receiver.id": userId }],
+          $or: [{ "sender.id": userIdObj }, { "receiver.id": userIdObj }],
         },
       },
       { $sort: { created_at: -1 } },
@@ -288,7 +289,7 @@ exports.getRecentChats = async (req, res) => {
         $group: {
           _id: {
             $cond: [
-              { $eq: ["$sender.id", userId] },
+              { $eq: ["$sender.id", userIdObj] },
               "$receiver.id",
               "$sender.id",
             ],
@@ -301,7 +302,29 @@ exports.getRecentChats = async (req, res) => {
       { $limit: 30 },
     ]);
 
-    res.json({ success: true, recent: messages });
+    if (!messages.length) {
+      return res.json({ success: true, recent: [] });
+    }
+
+    const enriched = await Promise.all(
+      messages.map(async (m) => {
+        const uid = m._id;
+        let participant =
+          (await Farmer.findById(uid).select("fullname farmer_code phone email").lean()) ||
+          (await User.findById(uid).select("username fullname phone email").lean());
+        if (!participant) return null;
+        return {
+          id: uid.toString(),
+          name: getDisplayName(participant),
+          phone: maskPhone(participant.phone),
+          email: maskEmail(participant.email),
+          lastMessage: m.lastMessage,
+          lastAt: m.lastAt,
+        };
+      })
+    );
+
+    res.json({ success: true, recent: enriched.filter(Boolean) });
   } catch (err) {
     console.error("❌ Recent chats error:", err);
     res.status(500).json({
