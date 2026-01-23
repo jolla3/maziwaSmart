@@ -1,148 +1,114 @@
-const moment = require('moment');
-const { Cow } = require('../models/model'); // Adjust if needed
+const moment = require("moment");
+const { CowMilkRecord } = require("../models/model");
 
-exports.getFarmerDailySummary = async (req, res) => {
+exports.getFarmerMilkSummary = async (req, res) => {
   try {
-    const farmerCode = Number(req.user.code); // farmer_code is Number in schema
-    const today = moment().startOf("day");
-    const start = today.toDate();
-    const end = moment(today).endOf("day").toDate();
+    const farmerCode = Number(req.user.code);
 
-    // Check if farmer has cows
-    const cows = await Cow.find({ farmer_code: farmerCode }).select("_id cow_name").lean();
-    if (!cows.length) {
-      return res.status(200).json({
-        message: "🐄 You haven't added any cows yet.",
-        date: today.format("dddd, MMMM Do YYYY"),
-        cows: [],
-        total_litres_today: 0
-      });
-    }
+    const startOfYear = moment().startOf("year").toDate();
+    const endOfYear = moment().endOf("year").toDate();
 
-    // Aggregate CowMilkRecords for today
-    const agg = await CowMilkRecord.aggregate([
+    const summary = await CowMilkRecord.aggregate([
+      // 1️⃣ Farmer + time range
       {
         $match: {
           farmer_code: farmerCode,
-          collection_date: { $gte: start, $lte: end }
+          collection_date: { $gte: startOfYear, $lte: endOfYear }
         }
       },
+
+      // 2️⃣ Attach animal metadata
+      {
+        $lookup: {
+          from: "cows",
+          localField: "animal_id",
+          foreignField: "_id",
+          as: "animal"
+        }
+      },
+      { $unwind: "$animal" },
+
+      // 3️⃣ Time buckets
+      {
+        $addFields: {
+          year: { $year: "$collection_date" },
+          month: { $month: "$collection_date" },
+          week: { $isoWeek: "$collection_date" }
+        }
+      },
+
+      // 4️⃣ Per-animal per-period aggregation
       {
         $group: {
-          _id: { cow: "$animal_id", time_slot: "$time_slot" },
-          totalLitres: { $sum: "$litres" }
+          _id: {
+            animal_id: "$animal_id",
+            animal_name: "$cow_name",
+            species: "$animal.species",
+            year: "$year",
+            month: "$month",
+            week: "$week"
+          },
+          total_litres: { $sum: "$litres" }
+        }
+      },
+
+      // 5️⃣ Animal-level totals
+      {
+        $group: {
+          _id: "$_id.animal_id",
+          animal_name: { $first: "$_id.animal_name" },
+          species: { $first: "$_id.species" },
+
+          yearly_total: { $sum: "$total_litres" },
+
+          monthly: {
+            $push: {
+              year: "$_id.year",
+              month: "$_id.month",
+              litres: "$total_litres"
+            }
+          },
+
+          weekly: {
+            $push: {
+              year: "$_id.year",
+              week: "$_id.week",
+              litres: "$total_litres"
+            }
+          }
+        }
+      },
+
+      // 6️⃣ Grand totals
+      {
+        $group: {
+          _id: null,
+          animals: { $push: "$$ROOT" },
+          farm_year_total: { $sum: "$yearly_total" }
         }
       }
     ]);
 
-    // Transform aggregation into lookup structure
-    const cowMap = {};
-    for (const entry of agg) {
-      const cowId = entry._id.cow.toString();
-      const slot = entry._id.time_slot;
-      if (!cowMap[cowId]) {
-        cowMap[cowId] = { total: 0, slots: { morning: 0, midmorning: 0, afternoon: 0, evening: 0 } };
-      }
-      cowMap[cowId].total += entry.totalLitres;
-      if (cowMap[cowId].slots.hasOwnProperty(slot)) {
-        cowMap[cowId].slots[slot] += entry.totalLitres;
-      }
-    }
-
-    // Build cow summaries
-    const cowSummaries = cows.map(cow => {
-      const stats = cowMap[cow._id.toString()] || {
-        total: 0,
-        slots: { morning: 0, midmorning: 0, afternoon: 0, evening: 0 }
-      };
-      return {
-        cow_name: cow.cow_name,
-        litres_collected: stats.total,
-        timeslots: stats.slots
-      };
-    });
-
-    const totalLitresToday = cowSummaries.reduce((sum, c) => sum + c.litres_collected, 0);
-
-    return res.status(200).json({
-      message: "🥛 Here's your milk summary for today",
-      date: today.format("dddd, MMMM Do YYYY"),
-      cows: cowSummaries,
-      total_litres_today: totalLitresToday
-    });
-
-  } catch (error) {
-    console.error("❌ Error in getFarmerDailySummary:", error);
-    return res.status(500).json({
-      message: "Failed to fetch milk summary",
-      error: error.message
-    });
-  }
-};
-
-
-
-exports.getFarmerMilkRecords = async (req, res) => {
-  try {
-    const farmerCode = String(req.user.code);
-    const cows = await Cow.find({ farmer_code: farmerCode });
-
-    if (!cows.length) {
+    if (!summary.length) {
       return res.status(200).json({
-        message: "🐄 No cows found for this farmer.",
-        records: []
+        message: "No milk records found for this farmer.",
+        animals: [],
+        farm_year_total: 0
       });
     }
 
-    // Format records for frontend
-    const records = [];
-    for (const cow of cows) {
-      for (const rec of cow.litres_records || []) {
-        records.push({
-          cow_name: cow.cow_name,
-          litres: rec.litres,
-          time_slot: rec.time_slot,
-          date: rec.date
-        });
-      }
-    }
-
     return res.status(200).json({
-      message: "✅ All milk records fetched successfully.",
-      records
+      message: "Milk production summary generated.",
+      year: moment().year(),
+      animals: summary[0].animals,
+      farm_year_total: summary[0].farm_year_total
     });
 
   } catch (err) {
-    console.error("❌ Error in getFarmerMilkRecords:", err);
-    res.status(500).json({
-      message: "❌ Failed to fetch records.",
+    console.error("Milk summary error:", err);
+    return res.status(500).json({
+      message: "Failed to generate milk summary",
       error: err.message
     });
   }
 };
-
-// const cleanInvalidLitresRecords = async () => {
-//   try {
-//     const cows = await Cow.find();
-
-//     for (const cow of cows) {
-//       const originalLength = cow.litres_records.length;
-
-//       // Filter out invalid records (missing time_slot)
-//       cow.litres_records = cow.litres_records.filter(record => record.time_slot);
-
-//       const newLength = cow.litres_records.length;
-
-//       if (originalLength !== newLength) {
-//         await cow.save(); // save only if changes were made
-//         console.log(`✅ Cleaned ${originalLength - newLength} invalid record(s) for Cow: ${cow._id}`);
-//       }
-//     }
-
-//     console.log("🎉 Cleanup complete. All invalid litres_records removed.");
-//   } catch (error) {
-//     console.error("❌ Error cleaning records:", error);
-//   }
-// };
-
-// cleanInvalidLitresRecords();

@@ -113,7 +113,7 @@ const breedRoutes = require('./routes/breedRouter');
 app.use('/api/breed', breedRoutes);
 
 const cowSummaryRouter = require('./routes/cowSummaryRouter');
-app.use('/api/cows', cowSummaryRouter);
+app.use('/api/cowSummary', cowSummaryRouter);
 
 const addCalfRouter = require('./routes/addCalfRouter');
 app.use('/api/calf', addCalfRouter);
@@ -145,7 +145,7 @@ app.use('/api/notifications', notificationRoutes);
 const AnimalRouter = require('./routes/AnimalRouter');
 app.use('/api/animals', AnimalRouter);
 
-const anomalyRoutes = require('./routes/anomalyRoutes');
+const anomalyRoutes = require('./routes/anomalyRoutes')
 app.use('/api/anomalies', anomalyRoutes);
 
 const chatRoutes = require('./routes/chatRoutes');

@@ -1,5 +1,6 @@
 const { Cow, CowMilkRecord } = require("../models/model");
-const moment = require('moment')
+// const moment = require('moment')
+const moments = require('moment-timezone'); // Add this if not already required
 
 // POST /api/farmer/cows
 exports.createCow = async (req, res) => {
@@ -139,8 +140,9 @@ exports.addCowLitres = async (req, res) => {
       return res.status(401).json({ message: "❌ Unauthorized: farmer info missing" });
     }
 
-    // Determine current time slot (6 slots)
-    const currentHour = new Date().getHours();
+    // Use consistent EAT timezone for all time ops
+    const now = moment.tz("Africa/Nairobi");
+    const currentHour = now.hour();
     let time_slot = "";
     if (currentHour >= 4 && currentHour < 8) time_slot = "early_morning";
     else if (currentHour >= 8 && currentHour < 11) time_slot = "morning";
@@ -155,9 +157,9 @@ exports.addCowLitres = async (req, res) => {
       return res.status(404).json({ message: "🐄 Cow not found or unauthorized" });
     }
 
-    // Prevent duplicate milk entry for the same cow+slot+day
-    const todayStart = moment().startOf("day").toDate();
-    const todayEnd = moment().endOf("day").toDate();
+    // Prevent duplicate milk entry for the same cow+slot+day (TZ-aware)
+    const todayStart = now.clone().startOf("day").toDate();
+    const todayEnd = now.clone().endOf("day").toDate();
 
     const existingRecord = await CowMilkRecord.findOne({
       animal_id: cow._id,
@@ -172,7 +174,7 @@ exports.addCowLitres = async (req, res) => {
       });
     }
 
-    // Create milk record
+    // Create milk record (collection_date as UTC timestamp)
     const record = await CowMilkRecord.create({
       animal_id: cow._id,
       farmer: farmerId,         // store farmer _id
@@ -181,7 +183,7 @@ exports.addCowLitres = async (req, res) => {
       cow_code: cow.cow_code,
       litres,
       time_slot,
-      collection_date: new Date(),
+      collection_date: now.toDate(), // UTC equivalent
     });
 
     return res.status(200).json({
@@ -190,7 +192,7 @@ exports.addCowLitres = async (req, res) => {
       cow_name: cow.cow_name,
       litres: record.litres,
       time_slot: record.time_slot,
-      recorded_at: moment(record.collection_date).format("YYYY-MM-DD HH:mm:ss"),
+      recorded_at: now.format("YYYY-MM-DD HH:mm:ss"), // Local EAT format for response
     });
 
   } catch (err) {
@@ -198,6 +200,7 @@ exports.addCowLitres = async (req, res) => {
     return res.status(500).json({ message: "❌ Failed to record milk", error: err.message });
   }
 };
+
 // Get cow daily summary (group by date)
 exports.getCowLitresSummary = async (req, res) => {
   try {
@@ -210,19 +213,19 @@ exports.getCowLitresSummary = async (req, res) => {
       return res.status(404).json({ message: "Cow not found or unauthorized" });
     }
 
-    // Fetch all milk records for that cow
+    // Fetch all milk records for that cow (TZ-aware, but since stored UTC, fetch all and group in EAT)
     const records = await CowMilkRecord.find(
       { animal_id: cow._id, farmer_code },
       { litres: 1, time_slot: 1, collection_date: 1 }
     ).sort({ collection_date: -1 });
 
-    // Group data by date and slot
+    // Group data by EAT date
     const summary = {};
     records.forEach(r => {
-      const date = r.collection_date.toISOString().split("T")[0];
-      if (!summary[date]) summary[date] = [];
+      const eatDate = moment(r.collection_date).tz("Africa/Nairobi").format("YYYY-MM-DD");
+      if (!summary[eatDate]) summary[eatDate] = [];
 
-      summary[date].push({
+      summary[eatDate].push({
         time_slot: r.time_slot,
         litres: r.litres
       });
@@ -257,7 +260,8 @@ exports.getCowLast7Days = async (req, res) => {
     const cow = await Cow.findOne({ _id: id, farmer_code });
     if (!cow) return res.status(404).json({ message: "Cow not found or unauthorized" });
 
-    const start = moment().subtract(6, "days").startOf("day").toDate();
+    const now = moment.tz("Africa/Nairobi");
+    const start = now.clone().subtract(6, "days").startOf("day").toDate();
     const records = await CowMilkRecord.find({
       animal_id: cow._id,
       farmer_code,
@@ -268,7 +272,7 @@ exports.getCowLast7Days = async (req, res) => {
     const summary = {};
 
     records.forEach(r => {
-      const date = moment(r.collection_date).format("YYYY-MM-DD");
+      const date = moment(r.collection_date).tz("Africa/Nairobi").format("YYYY-MM-DD");
       if (!summary[date]) summary[date] = [];
       summary[date].push({ time_slot: r.time_slot, litres: r.litres });
       total += r.litres;
@@ -276,7 +280,7 @@ exports.getCowLast7Days = async (req, res) => {
 
     const weeklyData = Object.entries(summary).map(([date, slots]) => ({
       date,
-      day: moment(date).format("dddd"),
+      day: moment.tz(date, "Africa/Nairobi").format("dddd"),
       slots,
       total_litres: slots.reduce((sum, s) => sum + s.litres, 0)
     }));
@@ -302,8 +306,9 @@ exports.getCowMonthlyTotal = async (req, res) => {
     const cow = await Cow.findOne({ _id: id, farmer_code });
     if (!cow) return res.status(404).json({ message: "Cow not found" });
 
-    const start = moment().startOf("month").toDate();
-    const end = moment().endOf("month").toDate();
+    const now = moment.tz("Africa/Nairobi");
+    const start = now.clone().startOf("month").toDate();
+    const end = now.clone().endOf("month").toDate();
 
     const records = await CowMilkRecord.find({
       animal_id: cow._id,
@@ -314,7 +319,7 @@ exports.getCowMonthlyTotal = async (req, res) => {
     const weeks = {};
 
     records.forEach(r => {
-      const date = moment(r.collection_date);
+      const date = moment(r.collection_date).tz("Africa/Nairobi");
       const weekNum = `Week ${Math.ceil(date.date() / 7)}`;
       if (!weeks[weekNum]) weeks[weekNum] = { week: weekNum, slots: {} };
 
@@ -355,19 +360,34 @@ exports.getCowWeeklyTrend = async (req, res) => {
 
     const weekdayMap = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
     const trend = {};
+    const dayCounts = {};
 
     records.forEach(r => {
-      const day = weekdayMap[new Date(r.collection_date).getDay()];
-      if (!trend[day]) trend[day] = {};
+      const eatDate = moment(r.collection_date).tz("Africa/Nairobi");
+      const dayIndex = eatDate.day();
+      const day = weekdayMap[dayIndex];
+      if (!trend[day]) {
+        trend[day] = {};
+        dayCounts[day] = new Set(); // Track unique dates for average
+      }
+      dayCounts[day].add(eatDate.format("YYYY-MM-DD")); // Unique days
       if (!trend[day][r.time_slot]) trend[day][r.time_slot] = 0;
       trend[day][r.time_slot] += r.litres;
     });
 
-    const formattedTrend = Object.entries(trend).map(([day, slots]) => ({
-      day,
-      slots: Object.entries(slots).map(([time_slot, litres]) => ({ time_slot, litres })),
-      total_litres: Object.values(slots).reduce((a, b) => a + b, 0)
-    }));
+    const formattedTrend = Object.entries(trend).map(([day, slots]) => {
+      const slotTotals = Object.entries(slots).map(([time_slot, litres]) => ({ time_slot, litres }));
+      const total_litres = Object.values(slots).reduce((a, b) => a + b, 0);
+      const dayCount = dayCounts[day] ? dayCounts[day].size : 0;
+      const avg_litres = dayCount > 0 ? (total_litres / dayCount) : 0;
+      return {
+        day,
+        slots: slotTotals,
+        total_litres,
+        avg_litres: parseFloat(avg_litres.toFixed(2)), // Realistic average per day
+        day_count: dayCount
+      };
+    });
 
     res.status(200).json({
       cow_name: cow.cow_name,

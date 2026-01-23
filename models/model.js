@@ -5,6 +5,7 @@
 
 const mongoose = require('mongoose');
 const Schema = mongoose.Schema;
+const moment = require('moment-timezone');
 
 // ---------------------------
 // User Schema (Admin, Broker, Buyer, Vet, Manager)
@@ -281,34 +282,38 @@ const MilkRecord = mongoose.model('MilkRecord', milkRecordSchema);
 // ---------------------------
 // 🐄 Farmer-side cow milk record
 // ---------------------------
+
 const cowMilkRecordSchema = new mongoose.Schema({
   created_by: { type: mongoose.Schema.Types.ObjectId, ref: 'Farmer' },
   farmer: { type: mongoose.Schema.Types.ObjectId, ref: 'Farmer', required: true },
   farmer_code: { type: Number, required: true },
 
   cow_name: { type: String, required: true },
-  cow_code: { type: String,  },
+  cow_code: { type: String, required: true },
   animal_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Cow', required: true },
 
-  litres: { type: Number, required: true },
-  collection_date: { type: Date, default: Date.now },
+  litres: { type: Number, required: true, min: [0.1, 'Litres must be greater than 0'] },
+  collection_date: { type: Date, default: () => moment.tz("Africa/Nairobi").toDate() },
   time_slot: {
-  type: String,
-  enum: [
-    "early_morning",
-    "morning",
-    "midday",
-    "afternoon",
-    "evening",
-    "night"
-  ],
-  required: true
-}
-,
+    type: String,
+    enum: [
+      "early_morning",
+      "morning",
+      "midday",
+      "afternoon",
+      "evening",
+      "night"
+    ],
+    required: true
+  },
 
   update_count: { type: Number, default: 0 },
-  created_at: { type: Date, default: Date.now }
+  created_at: { type: Date, default: () => moment.tz("Africa/Nairobi").toDate() }
 });
+
+// Indexes for frequent queries
+cowMilkRecordSchema.index({ animal_id: 1, collection_date: -1 });
+cowMilkRecordSchema.index({ farmer_code: 1, animal_id: 1 });
 
 // Auto increment update_count
 cowMilkRecordSchema.pre('save', function (next) {
@@ -321,8 +326,7 @@ const flagAnimalForListing = async (animalId) => {
   const MilkAnomaly = mongoose.model('MilkAnomaly');
   const Listing = mongoose.model('Listing');
 
-  const thirtyDaysAgo = new Date();
-  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  const thirtyDaysAgo = moment.tz("Africa/Nairobi").subtract(30, 'days').startOf('day').toDate();
 
   const anomalies = await MilkAnomaly.countDocuments({
     animal_id: animalId,
@@ -335,8 +339,8 @@ const flagAnimalForListing = async (animalId) => {
     { animal_id: animalId },
     { flagged_for_anomaly: flagged, anomaly_count: anomalies },
     { upsert: true } // ensure listing exists
-  )
-}
+  );
+};
 
 // 📌 Post-save hook: update stats, detect anomalies, notify farmer, flag animal
 cowMilkRecordSchema.post('save', async function (doc, next) {
@@ -361,37 +365,66 @@ cowMilkRecordSchema.post('save', async function (doc, next) {
       return next();
     }
 
-    // 1️⃣ Update lifetime milk
-    await Cow.findByIdAndUpdate(doc.animal_id, { $inc: { lifetime_milk: doc.litres } }, { session });
+    // 1️⃣ Update lifetime milk and incremental stats
+    const prevTotalLitres = cow.running_total_litres || 0;
+    const prevTotalDays = cow.total_milk_days || 0;
+    const eatDate = moment(doc.collection_date).tz("Africa/Nairobi").format("YYYY-MM-DD");
 
-    // 2️⃣ Compute daily average
-    const agg = await CowMilkRecord.aggregate([
-      { $match: { animal_id: doc.animal_id } },
-      { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$collection_date" } }, daily_total: { $sum: "$litres" } } },
-      { $group: { _id: null, totalLitres: { $sum: "$daily_total" }, numDays: { $sum: 1 } } }
-    ]).session(session);
+    // Check if this is a new day
+    const lastMilkDate = cow.last_milk_date ? moment(cow.last_milk_date).tz("Africa/Nairobi").format("YYYY-MM-DD") : null;
+    const isNewDay = eatDate !== lastMilkDate;
 
-    const dailyAverage = (agg[0] && agg[0].numDays > 0)
-      ? agg[0].totalLitres / agg[0].numDays
-      : 0;
+    const newTotalLitres = prevTotalLitres + doc.litres;
+    const newTotalDays = isNewDay ? prevTotalDays + 1 : prevTotalDays;
+    const newDailyAverage = newTotalDays > 0 ? newTotalLitres / newTotalDays : 0;
 
-    await Cow.findByIdAndUpdate(doc.animal_id, { daily_average: dailyAverage }, { session });
+    // Incremental variance (Welford's online algorithm)
+    const prevMean = cow.running_mean || 0;
+    const prevM2 = cow.running_m2 || 0; // Sum of squared differences
+    const n = records.length; // Total records count (fetch once below, but approx with total_days for daily)
 
-    // 3️⃣ Dynamic anomaly detection
-    const records = await CowMilkRecord.find({ animal_id: doc.animal_id }).select('litres').lean();
-    const values = records.map(r => r.litres);
-    const mean = values.reduce((a, b) => a + b, 0) / values.length || 0;
-    const variance = values.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / (values.length || 1);
-    const stdDev = Math.sqrt(variance)
+    // For variance, need per-record update—fetch count
+    const recordCount = await CowMilkRecord.countDocuments({ animal_id: doc.animal_id }).session(session);
+    const delta = doc.litres - prevMean;
+    const newMean = prevMean + delta / recordCount;
+    const delta2 = doc.litres - newMean;
+    const newM2 = prevM2 + delta * delta2;
+    const newVariance = recordCount > 1 ? newM2 / (recordCount - 1) : 0; // Sample variance
+    const newStdDev = Math.sqrt(newVariance);
 
-    const lowThreshold = mean - (stdDev * 2);
-    const highThreshold = mean + (stdDev * 2);
+    await Cow.findByIdAndUpdate(doc.animal_id, {
+      $inc: { lifetime_milk: doc.litres },
+      running_total_litres: newTotalLitres,
+      total_milk_days: newTotalDays,
+      daily_average: newDailyAverage,
+      last_milk_date: doc.collection_date,
+      running_mean: newMean,
+      running_m2: newM2,
+      running_stddev: newStdDev
+    }, { session });
+
+    // 3️⃣ Dynamic anomaly detection (using cached stats)
+    const mean = cow.running_mean || 0;
+    const stdDev = cow.running_stddev || 0;
+
+    // Fallback for early records or zero stdDev: Use breed norms (stub—customize per species/breed)
+    const minExpected = cow.species === 'cow' ? 5 : 1; // Realistic min L/day for dairy cow/goat
+    const maxExpected = cow.species === 'cow' ? 50 : 10; // Max sane spike
+
+    let lowThreshold = Math.max(mean - (stdDev * 2), minExpected);
+    let highThreshold = Math.min(mean + (stdDev * 2), maxExpected);
+
+    // Seasonal adjustment stub (e.g., dry season lower yields—use farm data later)
+    const isDrySeason = moment(doc.collection_date).tz("Africa/Nairobi").month() >= 0 && moment(doc.collection_date).tz("Africa/Nairobi").month() <= 2; // Jan-Mar dry in Kenya
+    if (isDrySeason) {
+      lowThreshold *= 0.8; // 20% lower expectation
+    }
 
     let anomalyData = null;
-    if (mean > 0 && doc.litres < lowThreshold) {
-      anomalyData = { litres: doc.litres, daily_average: dailyAverage, anomaly_type: 'low_production', resolved: false, resolved_at: null };
-    } else if (mean > 0 && doc.litres > highThreshold) {
-      anomalyData = { litres: doc.litres, daily_average: dailyAverage, anomaly_type: 'sudden_spike', resolved: false, resolved_at: null };
+    if (doc.litres < lowThreshold) {
+      anomalyData = { litres: doc.litres, daily_average: newDailyAverage, anomaly_type: 'low_production', resolved: false, resolved_at: null };
+    } else if (doc.litres > highThreshold) {
+      anomalyData = { litres: doc.litres, daily_average: newDailyAverage, anomaly_type: 'sudden_spike', resolved: false, resolved_at: null };
     }
 
     if (anomalyData) {
@@ -399,15 +432,16 @@ cowMilkRecordSchema.post('save', async function (doc, next) {
         { animal_id: doc.animal_id, anomaly_date: doc.collection_date },
         { $push: { [`anomaly_slots.${doc.time_slot}`]: anomalyData } }, // 🔑 append, don’t overwrite
         { upsert: true, new: true, session }
-      )
+      );
 
       await Notification.create([{
         farmer_code: doc.farmer_code,
         cow: doc.animal_id,
         type: 'milk_anomaly',
-        message: `⚠️ Anomaly for ${doc.cow_name} (${doc.time_slot}): ${anomalyData.anomaly_type} (${doc.litres}L vs avg ${dailyAverage.toFixed(2)}L)`,
-        sent_at: new Date()
-      }], { session })
+        message: `⚠️ Anomaly for ${doc.cow_name} (${doc.time_slot}): ${anomalyData.anomaly_type} (${doc.litres}L vs avg ${newDailyAverage.toFixed(2)}L)`,
+        sent_at: moment.tz("Africa/Nairobi").toDate(),
+        read: false // Add status
+      }], { session });
     }
 
     await flagAnimalForListing(doc.animal_id);
@@ -420,11 +454,10 @@ cowMilkRecordSchema.post('save', async function (doc, next) {
     console.error('CowMilkRecord post-save transaction error:', err);
   }
 
-  next()
-})
+  next();
+});
 
 const CowMilkRecord = mongoose.model('CowMilkRecord', cowMilkRecordSchema);
-
 // ---------------------------
 // Daily Milk Summary Schema
 // ---------------------------
