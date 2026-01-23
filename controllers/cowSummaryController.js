@@ -1,31 +1,40 @@
-const moment = require("moment");
+const moment = require("moment-timezone");
 const { CowMilkRecord } = require("../models/model");
 
-exports.getFarmerMilkSummary = async (req, res) => {
+exports.getFarmerMilkIntelligence = async (req, res) => {
   try {
     const farmerCode = Number(req.user.code);
 
-    const year = Number(req.query.year) || moment().year();
-    const month = req.query.month ? Number(req.query.month) : null; // 1–12
+    const queryYear = Number(req.query.year);
+    const queryMonth = req.query.month ? Number(req.query.month) : null; // 1–12
+    const queryDay = req.query.day ? Number(req.query.day) : null;
 
-    const start = month
-      ? moment({ year, month: month - 1 }).startOf("month").toDate()
-      : moment({ year }).startOf("year").toDate();
+    // Determine start/end
+    let start, end;
 
-    const end = month
-      ? moment({ year, month: month - 1 }).endOf("month").toDate()
-      : moment({ year }).endOf("year").toDate();
+    if (queryYear && !queryMonth && !queryDay) {
+      start = moment.tz({ year: queryYear }, "Africa/Nairobi").startOf("year");
+      end = start.clone().endOf("year");
+    } else if (queryYear && queryMonth && !queryDay) {
+      start = moment.tz({ year: queryYear, month: queryMonth - 1 }, "Africa/Nairobi").startOf("month");
+      end = start.clone().endOf("month");
+    } else if (queryYear && queryMonth && queryDay) {
+      start = moment.tz({ year: queryYear, month: queryMonth - 1, day: queryDay }, "Africa/Nairobi").startOf("day");
+      end = start.clone().endOf("day");
+    } else {
+      // Default: today
+      start = moment.tz("Africa/Nairobi").startOf("day");
+      end = moment(start).endOf("day");
+    }
 
-    const data = await CowMilkRecord.aggregate([
-      // 1️⃣ Filter
+    // Mongo aggregation pipeline
+    const pipeline = [
       {
         $match: {
           farmer_code: farmerCode,
-          collection_date: { $gte: start, $lte: end }
+          collection_date: { $gte: start.toDate(), $lte: end.toDate() }
         }
       },
-
-      // 2️⃣ Join animal
       {
         $lookup: {
           from: "cows",
@@ -35,102 +44,80 @@ exports.getFarmerMilkSummary = async (req, res) => {
         }
       },
       { $unwind: "$animal" },
-
-      // 3️⃣ Time fields
-      {
-        $addFields: {
-          year: { $year: "$collection_date" },
-          month: { $month: "$collection_date" },
-          month_name: {
-            $dateToString: { format: "%B", date: "$collection_date" }
-          }
-        }
-      },
-
-      // 4️⃣ Per-animal + stage aggregation
       {
         $group: {
           _id: {
             animal_id: "$animal_id",
             animal_name: "$cow_name",
             species: "$animal.species",
-            month: "$month",
-            month_name: "$month_name",
             stage: "$time_slot"
           },
           litres: { $sum: "$litres" }
         }
       },
-
-      // 5️⃣ Per-animal monthly summary
-      {
-        $group: {
-          _id: {
-            animal_id: "$_id.animal_id",
-            animal_name: "$_id.animal_name",
-            species: "$_id.species",
-            month: "$_id.month",
-            month_name: "$_id.month_name"
-          },
-          stage_totals: {
-            $push: {
-              stage: "$_id.stage",
-              litres: "$litres"
-            }
-          },
-          monthly_total: { $sum: "$litres" }
-        }
-      },
-
-      // 6️⃣ Animal rollup
       {
         $group: {
           _id: "$_id.animal_id",
           animal_name: { $first: "$_id.animal_name" },
           species: { $first: "$_id.species" },
-          months: {
-            $push: {
-              month: "$_id.month",
-              month_name: "$_id.month_name",
-              total_litres: "$monthly_total",
-              stages: "$stage_totals"
-            }
-          },
-          animal_total: { $sum: "$monthly_total" }
-        }
-      },
-
-      // 7️⃣ Farm totals
-      {
-        $group: {
-          _id: null,
-          animals: { $push: "$$ROOT" },
-          farm_total_litres: { $sum: "$animal_total" }
+          rawStages: { $push: { stage: "$_id.stage", litres: "$litres" } },
+          total: { $sum: "$litres" }
         }
       }
-    ]);
+    ];
 
-    if (!data.length) {
-      return res.status(200).json({
-        message: "No milk records found.",
-        year,
-        animals: [],
-        farm_total_litres: 0
-      });
-    }
+    const animalsRaw = await CowMilkRecord.aggregate(pipeline);
+
+    const STAGE_ORDER = ["early_morning", "morning", "midday", "afternoon", "evening", "night"];
+
+    const animals = animalsRaw.map(animal => {
+      const stageMap = Object.fromEntries(animal.rawStages.map(s => [s.stage, s.litres]));
+      const stages = STAGE_ORDER.map(stage => ({ stage, litres: stageMap[stage] || 0 }));
+
+      return {
+        animal_id: animal._id,
+        animal_name: animal.animal_name,
+        species: animal.species,
+        stages,
+        daily_total: animal.total,
+        weekly_total: animal.total,
+        monthly_total: animal.total,
+        yearly_total: animal.total
+      };
+    });
+
+    const farmTotals = animals.reduce(
+      (acc, a) => {
+        acc.daily += a.daily_total;
+        acc.weekly += a.weekly_total;
+        acc.monthly += a.monthly_total;
+        acc.yearly += a.yearly_total;
+        return acc;
+      },
+      { daily: 0, weekly: 0, monthly: 0, yearly: 0 }
+    );
+
+    // HUMAN PERIOD: derive from the **real start date**
+    const periodMoment = start.clone();
+    const period = {
+      year: periodMoment.format("YYYY"),
+      month: periodMoment.format("MMMM"),
+      month_number: periodMoment.format("MM"),
+      day: periodMoment.format("dddd, MMMM Do YYYY"),
+      week: `Week ${periodMoment.isoWeek()}`
+    };
 
     return res.status(200).json({
-      message: "Milk summary generated successfully.",
-      year,
-      month: month ? moment().month(month - 1).format("MMMM") : "All Months",
-      animals: data[0].animals,
-      farm_total_litres: data[0].farm_total_litres
+      message: "Milk intelligence loaded.",
+      period,
+      animals,
+      totals: farmTotals
     });
 
   } catch (err) {
-    console.error("Milk summary error:", err);
+    console.error("Milk intelligence error:", err);
     return res.status(500).json({
-      message: "Failed to fetch milk summary",
+      message: "Failed to load milk intelligence",
       error: err.message
     });
   }
