@@ -289,7 +289,7 @@ const cowMilkRecordSchema = new mongoose.Schema({
   farmer_code: { type: Number, required: true },
 
   cow_name: { type: String, required: true },
-  cow_code: { type: String, required: true },
+  cow_code: { type: String },
   animal_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Cow', required: true },
 
   litres: { type: Number, required: true, min: [0.1, 'Litres must be greater than 0'] },
