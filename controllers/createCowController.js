@@ -1,6 +1,6 @@
 const { Cow, CowMilkRecord } = require("../models/model");
 // const moment = require('moment')
-const moments = require('moment-timezone'); // Add this if not already required
+const moment = require('moment-timezone'); // Add this if not already required
 
 // POST /api/farmer/cows
 exports.createCow = async (req, res) => {

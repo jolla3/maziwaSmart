@@ -5,19 +5,27 @@ exports.getFarmerMilkSummary = async (req, res) => {
   try {
     const farmerCode = Number(req.user.code);
 
-    const startOfYear = moment().startOf("year").toDate();
-    const endOfYear = moment().endOf("year").toDate();
+    const year = Number(req.query.year) || moment().year();
+    const month = req.query.month ? Number(req.query.month) : null; // 1–12
 
-    const summary = await CowMilkRecord.aggregate([
-      // 1️⃣ Farmer + time range
+    const start = month
+      ? moment({ year, month: month - 1 }).startOf("month").toDate()
+      : moment({ year }).startOf("year").toDate();
+
+    const end = month
+      ? moment({ year, month: month - 1 }).endOf("month").toDate()
+      : moment({ year }).endOf("year").toDate();
+
+    const data = await CowMilkRecord.aggregate([
+      // 1️⃣ Filter
       {
         $match: {
           farmer_code: farmerCode,
-          collection_date: { $gte: startOfYear, $lte: endOfYear }
+          collection_date: { $gte: start, $lte: end }
         }
       },
 
-      // 2️⃣ Attach animal metadata
+      // 2️⃣ Join animal
       {
         $lookup: {
           from: "cows",
@@ -28,86 +36,101 @@ exports.getFarmerMilkSummary = async (req, res) => {
       },
       { $unwind: "$animal" },
 
-      // 3️⃣ Time buckets
+      // 3️⃣ Time fields
       {
         $addFields: {
           year: { $year: "$collection_date" },
           month: { $month: "$collection_date" },
-          week: { $isoWeek: "$collection_date" }
+          month_name: {
+            $dateToString: { format: "%B", date: "$collection_date" }
+          }
         }
       },
 
-      // 4️⃣ Per-animal per-period aggregation
+      // 4️⃣ Per-animal + stage aggregation
       {
         $group: {
           _id: {
             animal_id: "$animal_id",
             animal_name: "$cow_name",
             species: "$animal.species",
-            year: "$year",
             month: "$month",
-            week: "$week"
+            month_name: "$month_name",
+            stage: "$time_slot"
           },
-          total_litres: { $sum: "$litres" }
+          litres: { $sum: "$litres" }
         }
       },
 
-      // 5️⃣ Animal-level totals
+      // 5️⃣ Per-animal monthly summary
+      {
+        $group: {
+          _id: {
+            animal_id: "$_id.animal_id",
+            animal_name: "$_id.animal_name",
+            species: "$_id.species",
+            month: "$_id.month",
+            month_name: "$_id.month_name"
+          },
+          stage_totals: {
+            $push: {
+              stage: "$_id.stage",
+              litres: "$litres"
+            }
+          },
+          monthly_total: { $sum: "$litres" }
+        }
+      },
+
+      // 6️⃣ Animal rollup
       {
         $group: {
           _id: "$_id.animal_id",
           animal_name: { $first: "$_id.animal_name" },
           species: { $first: "$_id.species" },
-
-          yearly_total: { $sum: "$total_litres" },
-
-          monthly: {
+          months: {
             $push: {
-              year: "$_id.year",
               month: "$_id.month",
-              litres: "$total_litres"
+              month_name: "$_id.month_name",
+              total_litres: "$monthly_total",
+              stages: "$stage_totals"
             }
           },
-
-          weekly: {
-            $push: {
-              year: "$_id.year",
-              week: "$_id.week",
-              litres: "$total_litres"
-            }
-          }
+          animal_total: { $sum: "$monthly_total" }
         }
       },
 
-      // 6️⃣ Grand totals
+      // 7️⃣ Farm totals
       {
         $group: {
           _id: null,
           animals: { $push: "$$ROOT" },
-          farm_year_total: { $sum: "$yearly_total" }
+          farm_total_litres: { $sum: "$animal_total" }
         }
       }
     ]);
 
-    if (!summary.length) {
+    if (!data.length) {
       return res.status(200).json({
-        message: "No milk records found for this farmer.",
+        message: "No milk records found.",
+        year,
         animals: [],
-        farm_year_total: 0
+        farm_total_litres: 0
       });
     }
 
     return res.status(200).json({
-      message: "Milk production summary generated.",
-      year: moment().year(),
-      animals: summary[0].animals,
-      farm_year_total: summary[0].farm_year_total
+      message: "Milk summary generated successfully.",
+      year,
+      month: month ? moment().month(month - 1).format("MMMM") : "All Months",
+      animals: data[0].animals,
+      farm_total_litres: data[0].farm_total_litres
     });
 
   } catch (err) {
     console.error("Milk summary error:", err);
     return res.status(500).json({
-      message: "Failed to generate milk summary",
+      message: "Failed to fetch milk summary",
       error: err.message
     });
   }
