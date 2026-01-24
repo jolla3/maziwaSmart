@@ -4,30 +4,77 @@ const { CowMilkRecord } = require("../models/model");
 exports.getFarmerMilkIntelligence = async (req, res) => {
   try {
     const farmerCode = Number(req.user.code);
-
-    const queryYear = Number(req.query.year);
-    const queryMonth = req.query.month ? Number(req.query.month) : null; // 1–12
-    const queryDay = req.query.day ? Number(req.query.day) : null;
-
-    // Determine start/end
-    let start, end;
-
-    if (queryYear && !queryMonth && !queryDay) {
-      start = moment.tz({ year: queryYear }, "Africa/Nairobi").startOf("year");
-      end = start.clone().endOf("year");
-    } else if (queryYear && queryMonth && !queryDay) {
-      start = moment.tz({ year: queryYear, month: queryMonth - 1 }, "Africa/Nairobi").startOf("month");
-      end = start.clone().endOf("month");
-    } else if (queryYear && queryMonth && queryDay) {
-      start = moment.tz({ year: queryYear, month: queryMonth - 1, day: queryDay }, "Africa/Nairobi").startOf("day");
-      end = start.clone().endOf("day");
-    } else {
-      // Default: today
-      start = moment.tz("Africa/Nairobi").startOf("day");
-      end = moment(start).endOf("day");
+    if (isNaN(farmerCode)) {
+      console.warn(`Invalid farmer code attempt: ${req.user.code}`);
+      return res.status(401).json({ message: "Invalid farmer code - must be a number" });
     }
 
-    // Mongo aggregation pipeline
+    let queryYear, queryMonth, queryDay;
+
+    if (req.query.year !== undefined) {
+      queryYear = Number(req.query.year);
+      if (isNaN(queryYear)) {
+        console.warn(`Invalid year query: ${req.query.year}`);
+        return res.status(400).json({ message: `Invalid year '${req.query.year}' - must be a number` });
+      }
+    }
+
+    if (req.query.month !== undefined) {
+      queryMonth = Number(req.query.month);
+      if (isNaN(queryMonth)) {
+        console.warn(`Invalid month query: ${req.query.month}`);
+        return res.status(400).json({ message: `Invalid month '${req.query.month}' - must be a number` });
+      }
+    }
+
+    if (req.query.day !== undefined) {
+      queryDay = Number(req.query.day);
+      if (isNaN(queryDay)) {
+        console.warn(`Invalid day query: ${req.query.day}`);
+        return res.status(400).json({ message: `Invalid day '${req.query.day}' - must be a number` });
+      }
+    }
+
+    // Validate only if provided
+    const currentYear = moment.tz("Africa/Nairobi").year();
+    if (queryYear !== undefined && (!Number.isInteger(queryYear) || queryYear < 1900 || queryYear > currentYear + 1)) {
+      console.warn(`Invalid year query: ${req.query.year} (range: 1900-${currentYear + 1})`);
+      return res.status(400).json({ message: `Invalid year '${req.query.year}' - must be integer between 1900 and ${currentYear + 1}` });
+    }
+    if (queryMonth !== undefined && (!Number.isInteger(queryMonth) || queryMonth < 1 || queryMonth > 12)) {
+      console.warn(`Invalid month query: ${req.query.month}`);
+      return res.status(400).json({ message: `Invalid month '${req.query.month}' - must be integer 1-12` });
+    }
+    if (queryDay !== undefined && (!Number.isInteger(queryDay) || queryDay < 1 || queryDay > 31)) {
+      console.warn(`Invalid day query: ${req.query.day}`);
+      return res.status(400).json({ message: `Invalid day '${req.query.day}' - must be integer 1-31` });
+    }
+
+    // Determine start/end with validation
+    let start, end, periodType;
+    if (queryYear !== undefined && queryMonth === undefined && queryDay === undefined) {
+      periodType = 'year';
+      start = moment.tz({ year: queryYear }, "Africa/Nairobi").startOf("year");
+      end = start.clone().endOf("year");
+    } else if (queryYear !== undefined && queryMonth !== undefined && queryDay === undefined) {
+      periodType = 'month';
+      start = moment.tz({ year: queryYear, month: queryMonth - 1 }, "Africa/Nairobi").startOf("month");
+      end = start.clone().endOf("month");
+    } else if (queryYear !== undefined && queryMonth !== undefined && queryDay !== undefined) {
+      periodType = 'day';
+      start = moment.tz({ year: queryYear, month: queryMonth - 1, day: queryDay }, "Africa/Nairobi").startOf("day");
+      end = start.clone().endOf("day");
+      if (!start.isValid()) {
+        console.warn(`Invalid specific date: ${queryYear}-${queryMonth}-${queryDay}`);
+        return res.status(400).json({ message: `Invalid date ${queryYear}-${queryMonth}-${queryDay} (e.g., non-existent like Feb 30)` });
+      }
+    } else {
+      periodType = 'day'; // Default: today
+      start = moment.tz("Africa/Nairobi").startOf("day");
+      end = start.clone().endOf("day");
+    }
+
+    // Mongo aggregation pipeline (with limit for scalability—tune as needed)
     const pipeline = [
       {
         $match: {
@@ -37,13 +84,13 @@ exports.getFarmerMilkIntelligence = async (req, res) => {
       },
       {
         $lookup: {
-          from: "cows",
+          from: "cows", // Assume general 'animals' if multi-species; rename if needed
           localField: "animal_id",
           foreignField: "_id",
           as: "animal"
         }
       },
-      { $unwind: "$animal" },
+      { $unwind: { path: "$animal", preserveNullAndEmptyArrays: true } }, // Handle missing animals
       {
         $group: {
           _id: {
@@ -61,12 +108,22 @@ exports.getFarmerMilkIntelligence = async (req, res) => {
           animal_name: { $first: "$_id.animal_name" },
           species: { $first: "$_id.species" },
           rawStages: { $push: { stage: "$_id.stage", litres: "$litres" } },
-          total: { $sum: "$litres" }
+          period_total: { $sum: "$litres" } // Single total for the queried period
         }
-      }
+      },
+      { $limit: 100 } // Cap results to prevent overload; paginate if needed
     ];
 
     const animalsRaw = await CowMilkRecord.aggregate(pipeline);
+
+    if (animalsRaw.length === 0) {
+      return res.status(200).json({
+        message: "No milk records found for the specified period.",
+        period: {},
+        animals: [],
+        totals: { period_total: 0 }
+      });
+    }
 
     const STAGE_ORDER = ["early_morning", "morning", "midday", "afternoon", "evening", "night"];
 
@@ -76,26 +133,14 @@ exports.getFarmerMilkIntelligence = async (req, res) => {
 
       return {
         animal_id: animal._id,
-        animal_name: animal.animal_name,
-        species: animal.species,
+        animal_name: animal.animal_name || "Unknown",
+        species: animal.species || "Unknown",
         stages,
-        daily_total: animal.total,
-        weekly_total: animal.total,
-        monthly_total: animal.total,
-        yearly_total: animal.total
+        period_total: animal.period_total
       };
     });
 
-    const farmTotals = animals.reduce(
-      (acc, a) => {
-        acc.daily += a.daily_total;
-        acc.weekly += a.weekly_total;
-        acc.monthly += a.monthly_total;
-        acc.yearly += a.yearly_total;
-        return acc;
-      },
-      { daily: 0, weekly: 0, monthly: 0, yearly: 0 }
-    );
+    const farmTotals = animals.reduce((acc, a) => acc + a.period_total, 0);
 
     // HUMAN PERIOD: derive from the **real start date**
     const periodMoment = start.clone();
@@ -103,21 +148,21 @@ exports.getFarmerMilkIntelligence = async (req, res) => {
       year: periodMoment.format("YYYY"),
       month: periodMoment.format("MMMM"),
       month_number: periodMoment.format("MM"),
-      day: periodMoment.format("dddd, MMMM Do YYYY"),
-      week: `Week ${periodMoment.isoWeek()}`
+      day: periodType === 'day' ? periodMoment.format("dddd, MMMM Do YYYY") : null,
+      week: `Week ${periodMoment.isoWeek()} of ${periodMoment.year()}`
     };
 
     return res.status(200).json({
       message: "Milk intelligence loaded.",
       period,
       animals,
-      totals: farmTotals
+      totals: { period_total: farmTotals, period_type: periodType }
     });
 
   } catch (err) {
     console.error("Milk intelligence error:", err);
     return res.status(500).json({
-      message: "Failed to load milk intelligence",
+      message: "Failed to load milk intelligence - server error",
       error: err.message
     });
   }
