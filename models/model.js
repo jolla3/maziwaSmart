@@ -170,7 +170,7 @@ const cowSchema = new Schema(
     birth_date: { type: Date },
 
     // computed externally (cron only)
-    age: { type: String, default: "" },
+    age: { type: String },
 
     status: {
       type: String,

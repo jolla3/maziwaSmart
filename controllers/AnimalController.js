@@ -1,5 +1,5 @@
 // controllers/animalController.js
-const Cow = require("../models/model"); // Assuming this exports Cow
+const Cow = require("../models/model"); // Correct import: assuming module.exports = Cow in model file
 
 exports.createAnimal = async (req, res) => {
   try {
@@ -71,15 +71,9 @@ exports.getMyAnimals = async (req, res) => {
       species,
       gender,
       stage,
-      page = 1,
-      limit = 20,
       sortBy = "created_at",
       order = "desc"
     } = req.query;
-
-    const safePage = Math.max(parseInt(page) || 1, 1);
-    const safeLimit = Math.min(parseInt(limit) || 20, 100);
-    const skip = (safePage - 1) * safeLimit;
 
     const filter = { farmer_code };
     if (species) filter.species = species;
@@ -100,8 +94,6 @@ exports.getMyAnimals = async (req, res) => {
         select: "cow_name species birth_date"
       })
       .sort(sort)
-      .skip(skip)
-      .limit(safeLimit)
       .lean();
 
     const total = await Cow.countDocuments(filter);
@@ -174,11 +166,6 @@ exports.getMyAnimals = async (req, res) => {
       success: true,
       meta: {
         total,
-        page: safePage,
-        limit: safeLimit,
-        totalPages: Math.ceil(total / safeLimit),
-        hasNextPage: safePage * safeLimit < total,
-        hasPrevPage: safePage > 1,
         stats
       },
       animals: formattedAnimals
