@@ -149,121 +149,134 @@ const Breed = mongoose.model('Breed', breedSchema);
 // NOTE: kept model name 'Cow' to remain backward-compatible with controllers.
 // Supports offspring auto-update, milk stats fields.
 // ---------------------------
-const cowSchema = new Schema({
-  // General identification
-  animal_code: { type: String }, // e.g., COW-2025-0001
-  species: { 
-    type: String, 
-    enum: ['cow', 'bull', 'goat', 'sheep', 'pig'], 
-    required: true 
+
+const cowSchema = new Schema(
+  {
+    animal_code: { type: String },
+
+    species: {
+      type: String,
+      enum: ["cow", "bull", "goat", "sheep", "pig"],
+      required: true
+    },
+
+    cow_name: { type: String, required: true },
+    cow_code: { type: Number },
+
+    farmer_code: { type: Number, required: true },
+    farmer_id: { type: Schema.Types.ObjectId, ref: "Farmer" },
+
+    gender: { type: String, enum: ["male", "female", "unknown"] },
+    birth_date: { type: Date },
+
+    // computed externally (cron only)
+    age: { type: String, default: "" },
+
+    status: {
+      type: String,
+      enum: ["active", "pregnant", "for_sale", "sold", "deceased"],
+      default: "active"
+    },
+
+    stage: {
+      type: String,
+      enum: [
+        "calf", "heifer", "cow",
+        "bull_calf", "young_bull", "mature_bull",
+        "kid", "doeling", "buckling", "nanny", "buck",
+        "lamb", "ewe", "ram",
+        "piglet", "gilt", "sow", "boar"
+      ],
+      default: null
+    },
+
+    is_calf: { type: Boolean, default: false },
+    from_birth: { type: Boolean, default: false },
+
+    mother_id: { type: Schema.Types.ObjectId, ref: "Cow", default: null },
+    father_id: { type: Schema.Types.ObjectId, ref: "Cow", default: null },
+
+    offspring_ids: [{ type: Schema.Types.ObjectId, ref: "Cow" }],
+    total_offspring: { type: Number, default: 0 },
+
+    lifetime_milk: { type: Number, default: 0 },
+    daily_average: { type: Number, default: 0 },
+
+    pregnancy: {
+      is_pregnant: { type: Boolean, default: false },
+      insemination_id: { type: Schema.Types.ObjectId, ref: "Insemination" },
+      expected_due_date: { type: Date, default: null }
+    }
   },
-  cow_name: { type: String, required: true },  // Add required to enforce
-  cow_code: { type: Number },
-  farmer_code: { type: Number, required: true },
-  breed: { type: String },
-  breed_id: { type: Schema.Types.ObjectId, ref: 'Breed' },
-  cow_id: { type: Schema.Types.ObjectId, ref: 'Cow' },
-  farmer_id: { type: Schema.Types.ObjectId, ref: 'Farmer' },
-  gender: { type: String, enum: ['male', 'female', 'unknown'] },
-  birth_date: { type: Date },
-  age: { type: String, default: '' }, // Computed age string, e.g., "2 years, 3 months, 5 days"
+  { timestamps: true }
+);
 
-  // status / stage
-  status: { 
-    type: String, 
-    enum: ['active', 'pregnant', 'for_sale', 'sold', 'deceased'], 
-    default: 'active' 
-  },
-  stage: { 
-    type: String,
-    enum: [
-      // Cows
-      'calf', 'heifer', 'cow',
-      // Bulls
-      'bull_calf', 'young_bull', 'mature_bull',
-      // Goats
-      'kid', 'doeling', 'buckling', 'nanny', 'buck',
-      // Sheep
-      'lamb', 'ewe', 'ram',
-      // Pigs
-      'piglet', 'gilt', 'sow', 'boar'
-    ],
-    default: null
-  },
-  is_calf: { type: Boolean, default: false },
-  from_birth: { type: Boolean, default: false },
-
-  // lineage
-  mother_id: { type: Schema.Types.ObjectId, ref: 'Cow', default: null },
-  father_id: { type: Schema.Types.ObjectId, ref: 'Cow', default: null },
-  bull_code: { type: String },
-  bull_name: { type: String },
-  offspring_ids: [{ type: Schema.Types.ObjectId, ref: 'Cow' }],
-  total_offspring: { type: Number, default: 0 },
-
-  // photos & notes
-  photos: [{ type: String }],
-  notes: { type: String },
-  speciesDetails: { type: Schema.Types.Mixed },
-
-  // milk stats
-  lifetime_milk: { type: Number, default: 0 },
-  daily_average: { type: Number, default: 0 },
-
-  // pregnancy meta
-  pregnancy: {
-    is_pregnant: { type: Boolean, default: false },
-    insemination_id: { type: Schema.Types.ObjectId, ref: 'Insemination' },
-    expected_due_date: { type: Date, default: null }
-  },
-
-  created_at: { type: Date, default: Date.now }
-}, { timestamps: true });
 // indexes
 cowSchema.index({ animal_code: 1 });
-cowSchema.index({ species: 1, farmer_id: 1 });
-cowSchema.index({ farmer_code: 1 });
+cowSchema.index({ farmer_code: 1, species: 1 });
 
-// Offspring auto-update: when a new cow/animal is saved with mother_id/father_id,
-// we push the new child's id into parent's offspring_ids and increment total_offspring.
-cowSchema.post('save', async function (doc, next) {
+/**
+ * Stage validation only. No mutation.
+ */
+cowSchema.pre("save", function (next) {
+  if (!this.stage) return next();
+
+  const validStages = {
+    cow: ["calf", "heifer", "cow"],
+    bull: ["bull_calf", "young_bull", "mature_bull"],
+    goat: ["kid", "doeling", "buckling", "nanny", "buck"],
+    sheep: ["lamb", "ewe", "ram"],
+    pig: ["piglet", "gilt", "sow", "boar"]
+  };
+
+  if (!validStages[this.species]?.includes(this.stage)) {
+    return next(
+      new Error(`Invalid stage '${this.stage}' for species '${this.species}'`)
+    );
+  }
+
+  next();
+});
+
+/**
+ * Offspring linking – ONLY on first creation
+ */
+cowSchema.post("save", async function (doc, next) {
+  if (!doc.isNew) return next();
+
   try {
-    const Cow = mongoose.model('Cow');
+    const Cow = model("Cow");
+
+    const updates = [];
 
     if (doc.mother_id) {
-      await Cow.findByIdAndUpdate(doc.mother_id, {
-        $addToSet: { offspring_ids: doc._id },
-        $inc: { total_offspring: 1 }
-      });
+      updates.push(
+        Cow.findByIdAndUpdate(doc.mother_id, {
+          $addToSet: { offspring_ids: doc._id },
+          $inc: { total_offspring: 1 }
+        })
+      );
     }
 
     if (doc.father_id) {
-      await Cow.findByIdAndUpdate(doc.father_id, {
-        $addToSet: { offspring_ids: doc._id },
-        $inc: { total_offspring: 1 }
-      });
+      updates.push(
+        Cow.findByIdAndUpdate(doc.father_id, {
+          $addToSet: { offspring_ids: doc._id },
+          $inc: { total_offspring: 1 }
+        })
+      );
     }
+
+    await Promise.all(updates);
   } catch (err) {
-    console.error('Cow post-save parent update error:', err);
+    console.error("Cow offspring link error:", err);
   }
+
   next();
 });
 
-cowSchema.pre('save', function(next) {
-  const validStages = {
-    cow: ['calf', 'heifer', 'cow'],
-    bull: ['bull_calf', 'young_bull', 'mature_bull'],
-    goat: ['kid', 'doeling', 'buckling', 'nanny', 'buck'],
-    sheep: ['lamb', 'ewe', 'ram'],
-    pig: ['piglet', 'gilt', 'sow', 'boar'],
-  };
-  if (this.stage && !validStages[this.species]?.includes(this.stage)) {
-    return next(new Error(`Invalid stage '${this.stage}' for species '${this.species}'`));
-  }
-  next();
-});
+const Cow = mongoose.model('Cow', cowSchema);
 
-const Cow = mongoose.model('Cow', cowSchema);// ---------------------------
 // Milk Record Schema
 // ---------------------------
 const milkRecordSchema = new mongoose.Schema({
