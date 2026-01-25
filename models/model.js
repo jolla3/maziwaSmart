@@ -154,22 +154,22 @@ const Breed = mongoose.model('Breed', breedSchema);
 const cowSchema = new Schema(
   {
     // identifiers
-    animal_code: { type: String, index: true },
+    animal_code: { type: String }, // indexed below
 
     species: {
       type: String,
-      enum: ["cow", "goat", "sheep", "pig"], // ❌ bull REMOVED (bull is a male cow)
-      required: true,
-      index: true
+      enum: ["cow", "goat", "sheep", "pig"], // bull is NOT a species
+      required: true
     },
 
     cow_name: { type: String, required: true },
     cow_code: { type: Number },
 
-    farmer_code: { type: Number, required: true, index: true },
+    farmer_code: { type: Number, required: true },
     farmer_id: { type: Schema.Types.ObjectId, ref: "Farmer", required: true },
 
-    breed: { type: String },
+    // breed
+    breed: { type: String }, // fallback / display
     breed_id: { type: Schema.Types.ObjectId, ref: "Breed" },
 
     gender: {
@@ -180,27 +180,29 @@ const cowSchema = new Schema(
 
     birth_date: { type: Date },
 
-    // ⛔ age is OWNED by cron, never computed here
+    // OWNED BY CRON — never mutated here
     age: { type: String, default: "" },
 
     status: {
       type: String,
       enum: ["active", "pregnant", "for_sale", "sold", "deceased"],
-      default: "active",
-      index: true
+      default: "active"
     },
 
     stage: {
       type: String,
       enum: [
+        // cow
         "calf", "heifer", "cow",
         "bull_calf", "young_bull", "mature_bull",
+        // goat
         "kid", "doeling", "buckling", "nanny", "buck",
+        // sheep
         "lamb", "ewe", "ram",
+        // pig
         "piglet", "gilt", "sow", "boar"
       ],
-      default: null,
-      index: true
+      default: null
     },
 
     // lineage
@@ -210,6 +212,7 @@ const cowSchema = new Schema(
     offspring_ids: [{ type: Schema.Types.ObjectId, ref: "Cow" }],
     total_offspring: { type: Number, default: 0 },
 
+    // external sire info (when no registered father)
     bull_code: { type: String },
     bull_name: { type: String },
 
@@ -218,6 +221,7 @@ const cowSchema = new Schema(
 
     speciesDetails: { type: Schema.Types.Mixed },
 
+    // milk
     lifetime_milk: { type: Number, default: 0 },
     daily_average: { type: Number, default: 0 },
 
@@ -230,13 +234,17 @@ const cowSchema = new Schema(
   { timestamps: true }
 );
 
-// indexes
-cowSchema.index({ animal_code: 1 });
-cowSchema.index({ species: 1, farmer_code: 1 });
+//
+// INDEX STRATEGY — ONE PLACE ONLY
+//
+cowSchema.index({ animal_code: 1 }, { unique: true, sparse: true });
+cowSchema.index({ farmer_code: 1, species: 1 });
+cowSchema.index({ farmer_code: 1, status: 1 });
+cowSchema.index({ farmer_code: 1, stage: 1 });
 
 /**
  * VALIDATION ONLY
- * No mutation. No age logic. No side effects.
+ * No mutation. No age math. No cleverness.
  */
 cowSchema.pre("save", function (next) {
   if (!this.stage) return next();
@@ -254,12 +262,20 @@ cowSchema.pre("save", function (next) {
     );
   }
 
+  // bulls must be male
+  if (
+    ["bull_calf", "young_bull", "mature_bull"].includes(this.stage) &&
+    this.gender !== "male"
+  ) {
+    return next(new Error("Bull stages require gender = male"));
+  }
+
   next();
 });
 
 /**
  * OFFSPRING LINKING — CREATION ONLY
- * No updates. No cron interference. No counter drift.
+ * No updates. No loops. No counter drift.
  */
 cowSchema.post("save", async function (doc, next) {
   if (!doc.isNew) return next();
@@ -267,10 +283,10 @@ cowSchema.post("save", async function (doc, next) {
   try {
     const Cow = mongoose.model("Cow");
 
-    const updates = [];
+    const ops = [];
 
     if (doc.mother_id) {
-      updates.push(
+      ops.push(
         Cow.findByIdAndUpdate(doc.mother_id, {
           $addToSet: { offspring_ids: doc._id },
           $inc: { total_offspring: 1 }
@@ -279,7 +295,7 @@ cowSchema.post("save", async function (doc, next) {
     }
 
     if (doc.father_id) {
-      updates.push(
+      ops.push(
         Cow.findByIdAndUpdate(doc.father_id, {
           $addToSet: { offspring_ids: doc._id },
           $inc: { total_offspring: 1 }
@@ -287,7 +303,7 @@ cowSchema.post("save", async function (doc, next) {
       );
     }
 
-    await Promise.all(updates);
+    await Promise.all(ops);
   } catch (err) {
     console.error("Cow offspring link error:", err);
   }
@@ -295,7 +311,7 @@ cowSchema.post("save", async function (doc, next) {
   next();
 });
 
-const Cow = mongoose.model("Cow", cowSchema);
+const Cow = mongoose.model("Cow", cowSchema)
 
 // --------------------------
 // Milk Record Schema
