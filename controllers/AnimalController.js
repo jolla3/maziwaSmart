@@ -1,25 +1,20 @@
-// controllers/animalController.js
-const Cow = require("../models/model"); // Correct import: assuming module.exports = Cow in model file
+const {Cow} = require("../models/model");  // Assumes models/Cow.js exports the Cow model correctly
 
 exports.createAnimal = async (req, res) => {
   try {
     const farmer_id = req.user.id;
     const farmer_code = req.user.code;
-    const { species, cow_name, breed, gender, birth_date, stage, mother_id, bull_code, bull_name, origin_farm, country } = req.body;
+    const { species, cow_name, breed, gender, birth_date, stage, mother_id, father_id, bull_code, bull_name } = req.body;
 
-    if (!species || !cow_name || !stage) {
-      return res.status(400).json({ message: "Species, name, and stage are required" });
+    // Basic required field check (let schema handle detailed validation)
+    if (!species || !cow_name || !gender) {
+      return res.status(400).json({ message: "Species, name, and gender are required" });
     }
 
-    const validStages = {
-      cow: ['calf', 'heifer', 'cow'],
-      bull: ['bull_calf', 'young_bull', 'mature_bull'],
-      goat: ['kid', 'doeling', 'buckling', 'nanny', 'buck'],
-      sheep: ['lamb', 'ewe', 'ram'],
-      pig: ['piglet', 'gilt', 'sow', 'boar'],
-    };
-    if (!validStages[species]?.includes(stage)) {
-      return res.status(400).json({ message: `Invalid stage '${stage}' for species '${species}'` });
+    // Reject invalid species (e.g., legacy "bull")
+    const validSpecies = ["cow", "goat", "sheep", "pig"];
+    if (!validSpecies.includes(species)) {
+      return res.status(400).json({ message: `Invalid species '${species}'. Must be one of: ${validSpecies.join(', ')}` });
     }
 
     const photos = req.files?.map(file => file.path || file.filename || file.secure_url) || [];
@@ -28,26 +23,17 @@ exports.createAnimal = async (req, res) => {
       species,
       cow_name,
       breed,
-      gender: species === 'bull' ? 'male' : gender,
+      gender,
       birth_date,
       stage,
       farmer_id,
       farmer_code,
       photos,
-      is_calf: species === 'cow' && stage === 'calf' ? true : false,
+      mother_id,  // Applies to any species
+      father_id,  // Applies to any species
+      bull_code,
+      bull_name
     };
-
-    if (species === 'cow') {
-      newAnimalData.mother_id = mother_id;
-    } else if (species === 'bull') {
-      newAnimalData.origin_farm = origin_farm;
-      newAnimalData.country = country;
-      newAnimalData.bull_code = bull_code;
-      newAnimalData.bull_name = bull_name;
-    } else {
-      newAnimalData.bull_code = bull_code;
-      newAnimalData.bull_name = bull_name;
-    }
 
     const newAnimal = new Cow(newAnimalData);
     await newAnimal.save();
@@ -71,7 +57,7 @@ exports.getMyAnimals = async (req, res) => {
       species,
       gender,
       stage,
-      sortBy = "created_at",
+      sortBy = "createdAt",  // Fixed: Matches schema timestamps
       order = "desc"
     } = req.query;
 
@@ -85,10 +71,11 @@ exports.getMyAnimals = async (req, res) => {
 
     const animals = await Cow.find(filter)
       .select(
-        "cow_name species gender stage status photos birth_date breed mother_id father_id bull_code bull_name offspring_ids pregnancy lifetime_milk daily_average created_at age"
+        "cow_name species gender stage status photos birth_date breed breed_id mother_id father_id bull_code bull_name offspring_ids pregnancy lifetime_milk daily_average createdAt age"
       )
       .populate("mother_id", "cow_name species")
       .populate("father_id", "cow_name species")
+      .populate("breed_id", "name")
       .populate({
         path: "offspring_ids",
         select: "cow_name species birth_date"
@@ -126,41 +113,44 @@ exports.getMyAnimals = async (req, res) => {
       }, {})
     }));
 
-    const formattedAnimals = animals.map(a => ({
-      id: a._id,
-      cow_name: a.cow_name,
-      species: a.species,
-      gender: a.gender,
-      stage: a.stage || null,
-      status: a.status || "active",
-      photos: a.photos || [],
-      birth_date: a.birth_date,
-      age: a.age,
-      breed: a.breed || null,
-      mother: a.mother_id
-        ? { id: a.mother_id._id, name: a.mother_id.cow_name, species: a.mother_id.species }
-        : null,
-      father: a.father_id
-        ? { id: a.father_id._id, name: a.father_id.cow_name, species: a.father_id.species }
-        : a.bull_name
-        ? { code: a.bull_code || null, name: a.bull_name }
-        : null,
-      offspring: a.offspring_ids?.map(o => ({
-        id: o._id,
-        name: o.cow_name,
-        species: o.species,
-        birth_date: o.birth_date
-      })),
-      pregnancy: a.pregnancy
-        ? {
-            is_pregnant: a.pregnancy.is_pregnant || false,
-            expected_due_date: a.pregnancy.expected_due_date || null
-          }
-        : { is_pregnant: false, expected_due_date: null },
-      lifetime_milk: a.lifetime_milk || 0,
-      daily_average: a.daily_average || 0,
-      created_at: a.created_at
-    }));
+    const formattedAnimals = animals.map(a => {
+      const animal = new Cow(a);  // Rehydrate for virtuals
+      return {
+        id: a._id,
+        cow_name: a.cow_name,
+        species: a.species,
+        gender: a.gender,
+        stage: a.stage || null,
+        status: a.status || "active",
+        photos: a.photos || [],
+        birth_date: a.birth_date,
+        age: animal.computedAge || a.age,  // Use computed age, fallback to stored
+        breed: a.breed_id ? a.breed_id.name : a.breed || null,
+        mother: a.mother_id
+          ? { id: a.mother_id._id, name: a.mother_id.cow_name, species: a.mother_id.species }
+          : null,
+        sire: a.father_id
+          ? { type: 'internal', id: a.father_id._id, name: a.father_id.cow_name, species: a.father_id.species }
+          : a.bull_name
+          ? { type: 'external', code: a.bull_code || null, name: a.bull_name }
+          : null,
+        offspring: a.offspring_ids?.map(o => ({
+          id: o._id,
+          name: o.cow_name,
+          species: o.species,
+          birth_date: o.birth_date
+        })),
+        pregnancy: a.pregnancy
+          ? {
+              is_pregnant: a.pregnancy.is_pregnant || false,
+              expected_due_date: a.pregnancy.expected_due_date || null
+            }
+          : { is_pregnant: false, expected_due_date: null },
+        lifetime_milk: a.lifetime_milk || 0,
+        daily_average: a.daily_average || 0,
+        created_at: a.createdAt
+      };
+    });
 
     res.status(200).json({
       success: true,
@@ -188,13 +178,26 @@ exports.getAnimalById = async (req, res) => {
 
     const animal = await Cow.findOne({ _id: id, farmer_code })
       .populate("mother_id", "cow_name species")
+      .populate("father_id", "cow_name species")
+      .populate("breed_id", "name")
       .populate({ path: "offspring_ids", select: "cow_name species birth_date" });
 
     if (!animal) {
       return res.status(404).json({ success: false, message: "Animal not found" });
     }
 
-    res.status(200).json({ success: true, animal });
+    res.status(200).json({ 
+      success: true, 
+      animal: {
+        ...animal.toObject(),
+        age: animal.computedAge || animal.age,  // Ensure age is included
+        sire: animal.father_id
+          ? { type: 'internal', id: animal.father_id._id, name: animal.father_id.cow_name, species: animal.father_id.species }
+          : animal.bull_name
+          ? { type: 'external', code: animal.bull_code || null, name: animal.bull_name }
+          : null
+      }
+    });
   } catch (error) {
     console.error("❌ Error fetching animal:", error);
     res.status(500).json({ success: false, message: "Failed to fetch animal", error: error.message });
@@ -209,9 +212,15 @@ exports.updateAnimal = async (req, res) => {
 
     let updates = { ...req.body };
 
+    // Reject invalid species in updates
+    if (updates.species && !["cow", "goat", "sheep", "pig"].includes(updates.species)) {
+      return res.status(400).json({ message: `Invalid species '${updates.species}'` });
+    }
+
     // Defensive: Prevent unsetting required fields
     if (!updates.species && updates.species !== '') delete updates.species;
     if (!updates.cow_name && updates.cow_name !== '') delete updates.cow_name;
+    if (!updates.gender && updates.gender !== '') delete updates.gender;
 
     const uploadedPhotos = req.files?.map(file => file.path || file.filename || file.secure_url) || [];
 
