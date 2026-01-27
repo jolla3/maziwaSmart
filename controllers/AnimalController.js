@@ -1,9 +1,20 @@
+const mongoose = require("mongoose");
 const { Cow, Breed } = require("../models/model");
+const cloudinary = require("cloudinary").v2; // ✅ Import cloudinary
+
 
 /**
  * Helper: Format sire data
  */
 const formatSire = (animal) => {
+  // Handle unpopulated case (ObjectId only)
+  if (animal.father_id && typeof animal.father_id !== "object") {
+    return {
+      type: "internal",
+      id: animal.father_id
+    };
+  }
+
   return animal.father_id
     ? {
         type: "internal",
@@ -23,10 +34,11 @@ const formatSire = (animal) => {
  * CREATE ANIMAL
  */
 exports.createAnimal = async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
-
+  let session;
   try {
+    session = await mongoose.startSession();
+    session.startTransaction();
+
     const farmer_id = req.user.id;
     const farmer_code = req.user.code;
 
@@ -62,21 +74,61 @@ exports.createAnimal = async (req, res) => {
       });
     }
 
-    // Validate refs if provided
-    if (mother_id && !(await Cow.exists({ _id: mother_id }).session(session))) {
+    // Enforce father_id XOR bull_*
+    if (father_id && (bull_code || bull_name)) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ message: "Cannot provide both father_id and bull_code/bull_name" });
+    }
+    if (!father_id && ((bull_code && !bull_name) || (!bull_code && bull_name))) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ message: "bull_code and bull_name must both be provided if either is" });
+    }
+
+    // Validate refs outside transaction (perf)
+    if (mother_id && !(await Cow.exists({ _id: mother_id }))) {
       await session.abortTransaction();
       session.endSession();
       return res.status(400).json({ message: "Invalid mother_id" });
     }
-    if (father_id && !(await Cow.exists({ _id: father_id }).session(session))) {
+    if (father_id && !(await Cow.exists({ _id: father_id }))) {
       await session.abortTransaction();
       session.endSession();
       return res.status(400).json({ message: "Invalid father_id" });
     }
-    if (breed_id && !(await Breed.exists({ _id: breed_id }).session(session))) {
+    if (breed_id && !(await Breed.exists({ _id: breed_id }))) {
       await session.abortTransaction();
       session.endSession();
       return res.status(400).json({ message: "Invalid breed_id" });
+    }
+
+    // Biology checks outside
+    if (mother_id) {
+      const mother = await Cow.findById(mother_id).select('gender species');
+      if (mother.gender !== 'female') {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({ message: "Mother must be female" });
+      }
+      if (mother.species !== species) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({ message: "Mother species mismatch" });
+      }
+    }
+    if (father_id) {
+      const father = await Cow.findById(father_id).select('gender species');
+      if (father.gender !== 'male') {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({ message: "Father must be male" });
+      }
+      if (father.species !== species) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({ message: "Father species mismatch" });
+      }
     }
 
     const photos =
@@ -148,8 +200,10 @@ exports.createAnimal = async (req, res) => {
       }
     });
   } catch (error) {
-    await session.abortTransaction();
-    session.endSession();
+    if (session) {
+      await session.abortTransaction();
+      session.endSession();
+    }
     console.error("❌ Create animal error:", error);
 
     if (error.name === "ValidationError") {
@@ -274,10 +328,11 @@ exports.getAnimalById = async (req, res) => {
 
 // PUT /api/farmer/animals/:id
 exports.updateAnimal = async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
-
+  let session;
   try {
+    session = await mongoose.startSession();
+    session.startTransaction();
+
     const farmer_code = req.user.code;
     const { id } = req.params;
 
@@ -295,25 +350,36 @@ exports.updateAnimal = async (req, res) => {
     if (!updates.cow_name && updates.cow_name !== '') delete updates.cow_name;
     if (!updates.gender && updates.gender !== '') delete updates.gender;
 
-    // Validate refs if updating
-    if (updates.mother_id && !(await Cow.exists({ _id: updates.mother_id }).session(session))) {
+    // Enforce father_id XOR bull_*
+    if (updates.father_id && (updates.bull_code || updates.bull_name)) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ message: "Cannot provide both father_id and bull_code/bull_name" });
+    }
+    if (!updates.father_id && ((updates.bull_code && !updates.bull_name) || (!updates.bull_code && updates.bull_name))) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ message: "bull_code and bull_name must both be provided if either is" });
+    }
+
+    // Validate refs outside transaction
+    if (updates.mother_id && !(await Cow.exists({ _id: updates.mother_id }))) {
       await session.abortTransaction();
       session.endSession();
       return res.status(400).json({ message: "Invalid mother_id" });
     }
-    if (updates.father_id && !(await Cow.exists({ _id: updates.father_id }).session(session))) {
+    if (updates.father_id && !(await Cow.exists({ _id: updates.father_id }))) {
       await session.abortTransaction();
       session.endSession();
       return res.status(400).json({ message: "Invalid father_id" });
     }
-    if (updates.breed_id && !(await Breed.exists({ _id: updates.breed_id }).session(session))) {
+    if (updates.breed_id && !(await Breed.exists({ _id: updates.breed_id }))) {
       await session.abortTransaction();
       session.endSession();
       return res.status(400).json({ message: "Invalid breed_id" });
     }
 
-    const uploadedPhotos = req.files?.map(file => file.path || file.filename || file.secure_url) || [];
-
+    // Fetch existing inside transaction
     const existing = await Cow.findOne({ _id: id, farmer_code }).session(session);
     if (!existing) {
       await session.abortTransaction();
@@ -324,41 +390,45 @@ exports.updateAnimal = async (req, res) => {
       });
     }
 
-    // Handle offspring unlink if changing parents
-    const ops = [];
-    if (updates.mother_id && updates.mother_id.toString() !== existing.mother_id?.toString()) {
-      if (existing.mother_id) {
-        ops.push(
-          Cow.findByIdAndUpdate(existing.mother_id, {
-            $pull: { offspring_ids: existing._id },
-            $inc: { total_offspring: -1 }
-          }, { session })
-        );
+    // Biology checks inside
+    if (updates.mother_id) {
+      const mother = await Cow.findById(updates.mother_id).select('gender species _id').session(session);
+      if (mother.gender !== 'female') {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({ message: "Mother must be female" });
       }
-      ops.push(
-        Cow.findByIdAndUpdate(updates.mother_id, {
-          $addToSet: { offspring_ids: existing._id },
-          $inc: { total_offspring: 1 }
-        }, { session })
-      );
-    }
-    if (updates.father_id && updates.father_id.toString() !== existing.father_id?.toString()) {
-      if (existing.father_id) {
-        ops.push(
-          Cow.findByIdAndUpdate(existing.father_id, {
-            $pull: { offspring_ids: existing._id },
-            $inc: { total_offspring: -1 }
-          }, { session })
-        );
+      if (mother.species !== (updates.species || existing.species)) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({ message: "Mother species mismatch" });
       }
-      ops.push(
-        Cow.findByIdAndUpdate(updates.father_id, {
-          $addToSet: { offspring_ids: existing._id },
-          $inc: { total_offspring: 1 }
-        }, { session })
-      );
+      if (updates.mother_id.toString() === id) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({ message: "Cannot be own parent" });
+      }
     }
-    await Promise.all(ops);
+    if (updates.father_id) {
+      const father = await Cow.findById(updates.father_id).select('gender species _id').session(session);
+      if (father.gender !== 'male') {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({ message: "Father must be male" });
+      }
+      if (father.species !== (updates.species || existing.species)) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({ message: "Father species mismatch" });
+      }
+      if (updates.father_id.toString() === id) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({ message: "Cannot be own parent" });
+      }
+    }
+
+    const uploadedPhotos = req.files?.map(file => file.path || file.filename || file.secure_url) || [];
 
     const existingPhotos = existing.photos || [];
     const bodyPhotos = Array.isArray(req.body.photos)
@@ -377,10 +447,36 @@ exports.updateAnimal = async (req, res) => {
           await cloudinary.uploader.destroy(`maziwasmart/animals/${publicId}`);
         } catch (err) {
           console.error(`❌ Failed to delete Cloudinary image: ${url}`, err);
-          // Continue – don't crash, but could notify admin
         }
       }
     }
+
+    // Handle offspring unlink if changing parents (loop for less verbose)
+    const parents = [
+      { field: 'mother_id', old: existing.mother_id, new: updates.mother_id },
+      { field: 'father_id', old: existing.father_id, new: updates.father_id }
+    ];
+
+    const ops = [];
+    for (const parent of parents) {
+      if (parent.new && parent.new.toString() !== parent.old?.toString()) {
+        if (parent.old) {
+          ops.push(
+            Cow.findByIdAndUpdate(parent.old, {
+              $pull: { offspring_ids: existing._id },
+              $inc: { total_offspring: -1 }
+            }, { session })
+          );
+        }
+        ops.push(
+          Cow.findByIdAndUpdate(parent.new, {
+            $addToSet: { offspring_ids: existing._id },
+            $inc: { total_offspring: 1 }
+          }, { session })
+        );
+      }
+    }
+    await Promise.all(ops);
 
     const updatedAnimal = await Cow.findOneAndUpdate(
       { _id: id, farmer_code },
@@ -418,8 +514,10 @@ exports.updateAnimal = async (req, res) => {
       }
     });
   } catch (error) {
-    await session.abortTransaction();
-    session.endSession();
+    if (session) {
+      await session.abortTransaction();
+      session.endSession();
+    }
     console.error("❌ Error updating animal:", error);
     if (error.name === "ValidationError") {
       return res.status(400).json({ message: error.message });
@@ -432,6 +530,8 @@ exports.updateAnimal = async (req, res) => {
   }
 };
 
+
+
 // DELETE /api/farmer/animals/:id
 exports.deleteAnimal = async (req, res) => {
   const session = await mongoose.startSession();
@@ -441,58 +541,52 @@ exports.deleteAnimal = async (req, res) => {
     const farmer_code = req.user.code;
     const { id } = req.params;
 
+    // 🔍 Find animal within session
     const animal = await Cow.findOne({ _id: id, farmer_code }).session(session);
     if (!animal) {
       await session.abortTransaction();
       session.endSession();
       return res.status(404).json({
         success: false,
-        message: "Animal not found or not yours"
+        message: "Animal not found or not yours",
       });
     }
 
-    // 1️⃣ Delete Cloudinary images (best-effort, outside DB truth)
+    // 1️⃣ Delete Cloudinary images (best-effort)
     if (Array.isArray(animal.photos)) {
       for (const url of animal.photos) {
         try {
           const publicId = url.split("/").pop().split(".")[0];
           await cloudinary.uploader.destroy(`maziwasmart/animals/${publicId}`);
         } catch (err) {
-          console.warn(`⚠️ Failed to delete Cloudinary image: ${url}`);
+          console.warn(`⚠️ Failed to delete Cloudinary image: ${url}`, err);
         }
       }
     }
 
     const ops = [];
 
-    // 2️⃣ Update parents (decrement counters + unlink)
+    // 2️⃣ Unlink from parents
     if (animal.mother_id) {
       ops.push(
         Cow.findByIdAndUpdate(
           animal.mother_id,
-          {
-            $pull: { offspring_ids: animal._id },
-            $inc: { total_offspring: -1 }
-          },
+          { $pull: { offspring_ids: animal._id }, $inc: { total_offspring: -1 } },
           { session }
         )
       );
     }
-
     if (animal.father_id) {
       ops.push(
         Cow.findByIdAndUpdate(
           animal.father_id,
-          {
-            $pull: { offspring_ids: animal._id },
-            $inc: { total_offspring: -1 }
-          },
+          { $pull: { offspring_ids: animal._id }, $inc: { total_offspring: -1 } },
           { session }
         )
       );
     }
 
-    // 3️⃣ Remove this animal from anyone who lists it as offspring (defensive)
+    // 3️⃣ Remove this animal from any other offspring arrays (defensive)
     ops.push(
       Cow.updateMany(
         { offspring_ids: animal._id },
@@ -503,7 +597,7 @@ exports.deleteAnimal = async (req, res) => {
 
     await Promise.all(ops);
 
-    // 4️⃣ Delete the animal itself
+    // 4️⃣ Delete the animal
     await Cow.deleteOne({ _id: animal._id }).session(session);
 
     await session.commitTransaction();
@@ -511,7 +605,7 @@ exports.deleteAnimal = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: "Animal deleted successfully"
+      message: "Animal deleted successfully",
     });
   } catch (error) {
     await session.abortTransaction();
@@ -521,7 +615,7 @@ exports.deleteAnimal = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Failed to delete animal",
-      error: error.message
+      error: error.message,
     });
   }
 };
