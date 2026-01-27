@@ -306,8 +306,7 @@ cowSchema.pre("save", function (next) {
  */
 cowSchema.post("save", async function (doc, next) {
   try {
-    const Cow = model("Cow");
-
+const Cow = mongoose.model("Cow");
     const ops = [];
 
     if (doc.mother_id && doc.isModified('mother_id')) {
