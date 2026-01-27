@@ -1,9 +1,31 @@
-const { Cow } = require("../models/model");
+const { Cow, Breed } = require("../models/model");
+
+/**
+ * Helper: Format sire data
+ */
+const formatSire = (animal) => {
+  return animal.father_id
+    ? {
+        type: "internal",
+        id: animal.father_id._id,
+        name: animal.father_id.cow_name
+      }
+    : animal.bull_name
+    ? {
+        type: "external",
+        code: animal.bull_code,
+        name: animal.bull_name
+      }
+    : null;
+};
 
 /**
  * CREATE ANIMAL
  */
 exports.createAnimal = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
     const farmer_id = req.user.id;
     const farmer_code = req.user.code;
@@ -24,6 +46,8 @@ exports.createAnimal = async (req, res) => {
 
     // Hard required checks
     if (!species || !cow_name || !gender || !stage) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(400).json({
         message: "species, cow_name, gender, and stage are required"
       });
@@ -31,32 +55,28 @@ exports.createAnimal = async (req, res) => {
 
     const validSpecies = ["cow", "goat", "sheep", "pig"];
     if (!validSpecies.includes(species)) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(400).json({
         message: `Invalid species '${species}'`
       });
     }
 
-    const validStages = {
-      cow: ["calf", "heifer", "cow", "bull_calf", "young_bull", "mature_bull"],
-      goat: ["kid", "doeling", "buckling", "nanny", "buck"],
-      sheep: ["lamb", "ewe", "ram"],
-      pig: ["piglet", "gilt", "sow", "boar"]
-    };
-
-    if (!validStages[species]?.includes(stage)) {
-      return res.status(400).json({
-        message: `Invalid stage '${stage}' for species '${species}'`
-      });
+    // Validate refs if provided
+    if (mother_id && !(await Cow.exists({ _id: mother_id }).session(session))) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ message: "Invalid mother_id" });
     }
-
-    // Enforce bull-stage + gender alignment
-    if (
-      ["bull_calf", "young_bull", "mature_bull"].includes(stage) &&
-      gender !== "male"
-    ) {
-      return res.status(400).json({
-        message: "Bull stages require gender = male"
-      });
+    if (father_id && !(await Cow.exists({ _id: father_id }).session(session))) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ message: "Invalid father_id" });
+    }
+    if (breed_id && !(await Breed.exists({ _id: breed_id }).session(session))) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ message: "Invalid breed_id" });
     }
 
     const photos =
@@ -70,7 +90,7 @@ exports.createAnimal = async (req, res) => {
       gender,
       birth_date,
       stage,
-      farmer_id,       // 🔥 REQUIRED — this was breaking everything
+      farmer_id,
       farmer_code,
       photos,
       mother_id: mother_id || null,
@@ -79,13 +99,57 @@ exports.createAnimal = async (req, res) => {
       bull_name: father_id ? null : bull_name || null
     });
 
-    await animal.save();
+    await animal.save({ session });
+
+    // Handle offspring linking
+    const ops = [];
+    if (mother_id) {
+      ops.push(
+        Cow.findByIdAndUpdate(mother_id, {
+          $addToSet: { offspring_ids: animal._id },
+          $inc: { total_offspring: 1 }
+        }, { session })
+      );
+    }
+    if (father_id) {
+      ops.push(
+        Cow.findByIdAndUpdate(father_id, {
+          $addToSet: { offspring_ids: animal._id },
+          $inc: { total_offspring: 1 }
+        }, { session })
+      );
+    }
+    await Promise.all(ops);
+
+    await session.commitTransaction();
+    session.endSession();
 
     res.status(201).json({
       success: true,
-      animal
+      animal: {
+        id: animal._id,
+        cow_name: animal.cow_name,
+        species: animal.species,
+        gender: animal.gender,
+        stage: animal.stage,
+        status: animal.status,
+        photos: animal.photos || [],
+        birth_date: animal.birth_date,
+        age: animal.age,
+        breed: animal.breed_id?.name || animal.breed || null,
+        sire: formatSire(animal),
+        offspring: animal.offspring_ids?.map(o => ({
+          id: o._id,
+          name: o.cow_name,
+          species: o.species,
+          birth_date: o.birth_date
+        })) || [],
+        created_at: animal.createdAt
+      }
     });
   } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
     console.error("❌ Create animal error:", error);
 
     if (error.name === "ValidationError") {
@@ -106,19 +170,22 @@ exports.createAnimal = async (req, res) => {
 exports.getMyAnimals = async (req, res) => {
   try {
     const farmer_code = req.user.code;
-    const { species, gender, stage } = req.query;
+    const { species, gender, stage, sortBy = "createdAt", order = "-1" } = req.query;
 
     const filter = { farmer_code };
     if (species) filter.species = species;
     if (gender) filter.gender = gender;
     if (stage) filter.stage = Array.isArray(stage) ? { $in: stage } : stage;
 
+    const sort = {};
+    sort[sortBy] = order === "1" ? 1 : -1;
+
     const animals = await Cow.find(filter)
       .populate("mother_id", "cow_name species")
       .populate("father_id", "cow_name species")
       .populate("breed_id", "name")
       .populate("offspring_ids", "cow_name species birth_date")
-      .sort({ createdAt: -1 })
+      .sort(sort)
       .lean();
 
     const formatted = animals.map(a => ({
@@ -130,21 +197,9 @@ exports.getMyAnimals = async (req, res) => {
       status: a.status,
       photos: a.photos || [],
       birth_date: a.birth_date,
-      age: a.age, // cron-owned
+      age: a.age,
       breed: a.breed_id?.name || a.breed || null,
-      sire: a.father_id
-        ? {
-            type: "internal",
-            id: a.father_id._id,
-            name: a.father_id.cow_name
-          }
-        : a.bull_name
-        ? {
-            type: "external",
-            code: a.bull_code,
-            name: a.bull_name
-          }
-        : null,
+      sire: formatSire(a),
       offspring: a.offspring_ids?.map(o => ({
         id: o._id,
         name: o.cow_name,
@@ -179,7 +234,8 @@ exports.getAnimalById = async (req, res) => {
       .populate("mother_id", "cow_name species")
       .populate("father_id", "cow_name species")
       .populate("breed_id", "name")
-      .populate("offspring_ids", "cow_name species birth_date");
+      .populate("offspring_ids", "cow_name species birth_date")
+      .lean();
 
     if (!animal) {
       return res.status(404).json({ message: "Animal not found" });
@@ -188,21 +244,24 @@ exports.getAnimalById = async (req, res) => {
     res.json({
       success: true,
       animal: {
-        ...animal.toObject(),
+        id: animal._id,
+        cow_name: animal.cow_name,
+        species: animal.species,
+        gender: animal.gender,
+        stage: animal.stage,
+        status: animal.status,
+        photos: animal.photos || [],
+        birth_date: animal.birth_date,
         age: animal.age,
-        sire: animal.father_id
-          ? {
-              type: "internal",
-              id: animal.father_id._id,
-              name: animal.father_id.cow_name
-            }
-          : animal.bull_name
-          ? {
-              type: "external",
-              code: animal.bull_code,
-              name: animal.bull_name
-            }
-          : null
+        breed: animal.breed_id?.name || animal.breed || null,
+        sire: formatSire(animal),
+        offspring: animal.offspring_ids?.map(o => ({
+          id: o._id,
+          name: o.cow_name,
+          species: o.species,
+          birth_date: o.birth_date
+        })) || [],
+        created_at: animal.createdAt
       }
     });
   } catch (error) {
@@ -215,6 +274,9 @@ exports.getAnimalById = async (req, res) => {
 
 // PUT /api/farmer/animals/:id
 exports.updateAnimal = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
     const farmer_code = req.user.code;
     const { id } = req.params;
@@ -223,6 +285,8 @@ exports.updateAnimal = async (req, res) => {
 
     // Reject invalid species in updates
     if (updates.species && !["cow", "goat", "sheep", "pig"].includes(updates.species)) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(400).json({ message: `Invalid species '${updates.species}'` });
     }
 
@@ -231,15 +295,70 @@ exports.updateAnimal = async (req, res) => {
     if (!updates.cow_name && updates.cow_name !== '') delete updates.cow_name;
     if (!updates.gender && updates.gender !== '') delete updates.gender;
 
+    // Validate refs if updating
+    if (updates.mother_id && !(await Cow.exists({ _id: updates.mother_id }).session(session))) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ message: "Invalid mother_id" });
+    }
+    if (updates.father_id && !(await Cow.exists({ _id: updates.father_id }).session(session))) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ message: "Invalid father_id" });
+    }
+    if (updates.breed_id && !(await Breed.exists({ _id: updates.breed_id }).session(session))) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ message: "Invalid breed_id" });
+    }
+
     const uploadedPhotos = req.files?.map(file => file.path || file.filename || file.secure_url) || [];
 
-    const existing = await Cow.findOne({ _id: id, farmer_code });
+    const existing = await Cow.findOne({ _id: id, farmer_code }).session(session);
     if (!existing) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(404).json({
         success: false,
         message: "Animal not found or not yours"
       });
     }
+
+    // Handle offspring unlink if changing parents
+    const ops = [];
+    if (updates.mother_id && updates.mother_id.toString() !== existing.mother_id?.toString()) {
+      if (existing.mother_id) {
+        ops.push(
+          Cow.findByIdAndUpdate(existing.mother_id, {
+            $pull: { offspring_ids: existing._id },
+            $inc: { total_offspring: -1 }
+          }, { session })
+        );
+      }
+      ops.push(
+        Cow.findByIdAndUpdate(updates.mother_id, {
+          $addToSet: { offspring_ids: existing._id },
+          $inc: { total_offspring: 1 }
+        }, { session })
+      );
+    }
+    if (updates.father_id && updates.father_id.toString() !== existing.father_id?.toString()) {
+      if (existing.father_id) {
+        ops.push(
+          Cow.findByIdAndUpdate(existing.father_id, {
+            $pull: { offspring_ids: existing._id },
+            $inc: { total_offspring: -1 }
+          }, { session })
+        );
+      }
+      ops.push(
+        Cow.findByIdAndUpdate(updates.father_id, {
+          $addToSet: { offspring_ids: existing._id },
+          $inc: { total_offspring: 1 }
+        }, { session })
+      );
+    }
+    await Promise.all(ops);
 
     const existingPhotos = existing.photos || [];
     const bodyPhotos = Array.isArray(req.body.photos)
@@ -257,7 +376,8 @@ exports.updateAnimal = async (req, res) => {
           const publicId = url.split("/").pop().split(".")[0];
           await cloudinary.uploader.destroy(`maziwasmart/animals/${publicId}`);
         } catch (err) {
-          console.warn(`⚠️ Failed to delete Cloudinary image: ${url}`);
+          console.error(`❌ Failed to delete Cloudinary image: ${url}`, err);
+          // Continue – don't crash, but could notify admin
         }
       }
     }
@@ -265,18 +385,45 @@ exports.updateAnimal = async (req, res) => {
     const updatedAnimal = await Cow.findOneAndUpdate(
       { _id: id, farmer_code },
       updates,
-      { new: true, runValidators: true }
+      { new: true, runValidators: true, session }
     );
+
+    await session.commitTransaction();
+    session.endSession();
 
     res.status(200).json({
       success: true,
       message: uploadedPhotos.length
         ? "✅ Animal updated successfully (new photos added)"
         : "✅ Animal updated successfully",
-      animal: updatedAnimal
+      animal: {
+        id: updatedAnimal._id,
+        cow_name: updatedAnimal.cow_name,
+        species: updatedAnimal.species,
+        gender: updatedAnimal.gender,
+        stage: updatedAnimal.stage,
+        status: updatedAnimal.status,
+        photos: updatedAnimal.photos || [],
+        birth_date: updatedAnimal.birth_date,
+        age: updatedAnimal.age,
+        breed: updatedAnimal.breed_id?.name || updatedAnimal.breed || null,
+        sire: formatSire(updatedAnimal),
+        offspring: updatedAnimal.offspring_ids?.map(o => ({
+          id: o._id,
+          name: o.cow_name,
+          species: o.species,
+          birth_date: o.birth_date
+        })) || [],
+        created_at: updatedAnimal.createdAt
+      }
     });
   } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
     console.error("❌ Error updating animal:", error);
+    if (error.name === "ValidationError") {
+      return res.status(400).json({ message: error.message });
+    }
     res.status(500).json({
       success: false,
       message: "Failed to update animal",
@@ -285,24 +432,27 @@ exports.updateAnimal = async (req, res) => {
   }
 };
 
-
 // DELETE /api/farmer/animals/:id
 exports.deleteAnimal = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
     const farmer_code = req.user.code;
     const { id } = req.params;
 
-    // 🔍 Find animal by ID and owner
-    const animal = await Cow.findOne({ _id: id, farmer_code });
+    const animal = await Cow.findOne({ _id: id, farmer_code }).session(session);
     if (!animal) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(404).json({
         success: false,
         message: "Animal not found or not yours"
       });
     }
 
-    // 🧹 1️⃣ Delete Cloudinary images
-    if (Array.isArray(animal.photos) && animal.photos.length > 0) {
+    // 1️⃣ Delete Cloudinary images (best-effort, outside DB truth)
+    if (Array.isArray(animal.photos)) {
       for (const url of animal.photos) {
         try {
           const publicId = url.split("/").pop().split(".")[0];
@@ -313,22 +463,61 @@ exports.deleteAnimal = async (req, res) => {
       }
     }
 
-    // 🧬 2️⃣ Clean up relationships (if needed)
-    // Remove this animal from offspring lists of others
-    await Cow.updateMany(
-      { offspring_ids: id },
-      { $pull: { offspring_ids: id } }
+    const ops = [];
+
+    // 2️⃣ Update parents (decrement counters + unlink)
+    if (animal.mother_id) {
+      ops.push(
+        Cow.findByIdAndUpdate(
+          animal.mother_id,
+          {
+            $pull: { offspring_ids: animal._id },
+            $inc: { total_offspring: -1 }
+          },
+          { session }
+        )
+      );
+    }
+
+    if (animal.father_id) {
+      ops.push(
+        Cow.findByIdAndUpdate(
+          animal.father_id,
+          {
+            $pull: { offspring_ids: animal._id },
+            $inc: { total_offspring: -1 }
+          },
+          { session }
+        )
+      );
+    }
+
+    // 3️⃣ Remove this animal from anyone who lists it as offspring (defensive)
+    ops.push(
+      Cow.updateMany(
+        { offspring_ids: animal._id },
+        { $pull: { offspring_ids: animal._id } },
+        { session }
+      )
     );
 
-    // 🗑️ 3️⃣ Delete the animal record
-    await Cow.deleteOne({ _id: id, farmer_code });
+    await Promise.all(ops);
+
+    // 4️⃣ Delete the animal itself
+    await Cow.deleteOne({ _id: animal._id }).session(session);
+
+    await session.commitTransaction();
+    session.endSession();
 
     res.status(200).json({
       success: true,
-      message: "🗑️ Animal deleted successfully (and photos cleaned up)"
+      message: "Animal deleted successfully"
     });
   } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
     console.error("❌ Error deleting animal:", error);
+
     res.status(500).json({
       success: false,
       message: "Failed to delete animal",
@@ -336,6 +525,7 @@ exports.deleteAnimal = async (req, res) => {
     });
   }
 };
+
 
 // PUT /api/farmer/animals/bulk
 // body: { ids: ["id1", "id2"], update: { gender: "female", stage: "heifer" } }
