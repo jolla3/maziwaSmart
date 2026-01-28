@@ -112,7 +112,7 @@ exports.handleOCRUpload = async (req, res) => {
 exports.addInseminationRecord = async (req, res) => {
   try {
     const {
-      animal_id,       // generic input id
+      animal_id,
       insemination_date,
       inseminator,
       bull_code,
@@ -124,108 +124,62 @@ exports.addInseminationRecord = async (req, res) => {
     const farmer_code = req.user.code;
     const farmer_id = req.user._id || req.user.id;
 
-    // ✅ Find the animal from Cow model
     const animal = await Cow.findOne({ _id: animal_id, farmer_code });
     if (!animal) {
-      return res.status(404).json({ message: "❌ Animal not found or unauthorized" });
+      return res.status(404).json({ message: "Animal not found or unauthorized" });
     }
 
-    // ✅ Validate insemination_date
-    const inseminationDate = insemination_date ? new Date(insemination_date) : new Date();
+    if (animal.gender !== "female") {
+      return res.status(400).json({ message: "Only female animals can be inseminated" });
+    }
+
+    const inseminationDate = insemination_date
+      ? new Date(insemination_date)
+      : new Date();
+
     if (isNaN(inseminationDate)) {
-      return res.status(400).json({ message: "❌ Invalid insemination_date format. Use YYYY-MM-DD." });
+      return res.status(400).json({ message: "Invalid insemination_date" });
     }
 
-    // ✅ Species-specific gestation periods
-    let gestationDays = 283; // cows
-    if (animal.species === "goat") gestationDays = 150;
-    if (animal.species === "sheep") gestationDays = 152;
-    if (animal.species === "pig") gestationDays = 115;
-    if (animal.species === "camel") gestationDays = 390;
-
-    const due = new Date(inseminationDate);
-    due.setDate(due.getDate() + gestationDays);
-
-    // ✅ Save insemination record
     const record = new Insemination({
-      cow_id: animal._id,       // store reference properly
+      cow_id: animal._id,
       farmer_code,
       cow_name: animal.cow_name,
-      species: animal.species,
       insemination_date: inseminationDate,
       inseminator,
       bull_code,
       bull_name,
       bull_breed,
       outcome: "pregnant",
-      expected_due_date: due,
       notes
     });
 
-    await record.save();
+    await record.save(); // 🔥 hook does the rest
 
-    // ✅ Update pregnancy status on the animal
-    animal.pregnancy = {
-      is_pregnant: true,
-      insemination_id: record._id,
-      expected_due_date: due
-    };
-    animal.status = "pregnant";
-    await animal.save();
-
-    // ✅ Notification
-    await Notification.create({
-      farmer_code,
-      cow: animal._id,
-      type: 'gestation_alert',
-      message: `${animal.species} ${animal.cow_name} is confirmed pregnant. Expected due: ${due.toDateString()}`
-    });
-
-    // ✅ Auto-add bull breed under the correct species
     if (bull_breed) {
-      const exists = await Breed.findOne({
-        farmer_id,
-        breed_name: bull_breed,
-        species: animal.species
-      });
-
-      if (!exists) {
-        await new Breed({
-          breed_name: bull_breed,
-          description: `Auto-added from insemination of ${animal.cow_name}`,
-          species: animal.species,
-          farmer_id
-        }).save();
-      }
+      await Breed.updateOne(
+        { farmer_id, breed_name: bull_breed, species: animal.species },
+        {
+          $setOnInsert: {
+            breed_name: bull_breed,
+            species: animal.species,
+            farmer_id,
+            description: `Auto-added from insemination`
+          }
+        },
+        { upsert: true }
+      );
     }
 
-    // ✅ Response (cleaned)
     res.status(201).json({
-      message: "✅ Insemination record added successfully",
-      data: {
-        _id: record._id,
-        animal_id: record.cow_id,
-        animal_name: record.cow_name,
-        species: record.species,
-        insemination_date: record.insemination_date,
-        bull_name: record.bull_name,
-        bull_breed: record.bull_breed,
-        expected_due_date: record.expected_due_date,
-        outcome: record.outcome,
-        notes: record.notes
-      },
-      animal: {
-        _id: animal._id,
-        name: animal.cow_name,
-        species: animal.species,
-        status: animal.status,
-        pregnancy: animal.pregnancy
-      }
+      success: true,
+      message: "Insemination recorded",
+      record_id: record._id
     });
 
   } catch (error) {
-    console.error("❌ Error in addInseminationRecord:", error);
-    res.status(500).json({ message: "❌ Failed to add insemination record", error: error.message });
+    console.error("❌ addInseminationRecord:", error);
+    res.status(500).json({ message: "Failed to add insemination record" });
   }
 };
 
@@ -274,41 +228,39 @@ exports.deleteInseminationRecord = async (req, res) => {
     const farmer_code = req.user.code;
     const { id } = req.params;
 
-    // 🔍 Check record
     const record = await Insemination.findOne({ _id: id, farmer_code });
     if (!record) {
-      return res.status(404).json({ message: "❌ Insemination record not found" });
+      return res.status(404).json({ message: "Record not found" });
     }
 
-    // ⛔ Prevent deleting after calving
     if (record.has_calved) {
-      return res.status(400).json({ message: "❌ Cannot delete insemination record after calving" });
+      return res.status(400).json({ message: "Cannot delete after calving" });
     }
 
-    // 🗑 Delete record
-    await Insemination.deleteOne({ _id: id });
+    // If this insemination is the active pregnancy
+    const cow = await Cow.findOne({
+      _id: record.cow_id,
+      "pregnancy.insemination_id": record._id
+    });
 
-    // 🐄 Reset pregnancy status only if this insemination is still active on the cow
-    await Cow.findOneAndUpdate(
-      { _id: record.cow_id, "pregnancy.insemination_id": record._id },
-      {
+    if (cow) {
+      await Cow.findByIdAndUpdate(cow._id, {
         $set: {
           "pregnancy.is_pregnant": false,
           "pregnancy.insemination_id": null,
           "pregnancy.expected_due_date": null,
           status: "active"
         }
-      }
-    );
+      });
+    }
 
-    res.status(200).json({ message: "✅ Insemination record deleted successfully" });
+    await Insemination.deleteOne({ _id: id });
+
+    res.status(200).json({ message: "Insemination record deleted" });
 
   } catch (error) {
-    console.error("❌ Error deleting insemination record:", error);
-    res.status(500).json({
-      message: "❌ Failed to delete insemination record",
-      error: error.message
-    });
+    console.error("❌ deleteInseminationRecord:", error);
+    res.status(500).json({ message: "Failed to delete record" });
   }
 };
 
