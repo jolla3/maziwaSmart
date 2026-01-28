@@ -6,6 +6,16 @@ const chrono = require('chrono-node');
 const sharp = require('sharp');
 
 
+function getMaleRole(species) {
+  const roleMap = {
+    'cow': 'bull',
+    'goat': 'buck',
+    'sheep': 'ram',
+    'pig': 'boar'
+  };
+  return roleMap[species] || 'bull';
+}
+
 exports.uploadInseminationImage = async (req, res) => {
   try {
     // Get the path of the uploaded image
@@ -108,16 +118,14 @@ exports.handleOCRUpload = async (req, res) => {
   }
 };
 
-
 exports.addInseminationRecord = async (req, res) => {
   try {
     const {
       animal_id,
       insemination_date,
       inseminator,
-      bull_code,
-      bull_name,
-      bull_breed,
+      bull_profile_id,
+      bull_manual,
       notes
     } = req.body;
 
@@ -126,11 +134,11 @@ exports.addInseminationRecord = async (req, res) => {
 
     const animal = await Cow.findOne({ _id: animal_id, farmer_code });
     if (!animal) {
-      return res.status(404).json({ message: "Animal not found or unauthorized" });
+      return res.status(404).json({ message: "Animal not found" });
     }
 
     if (animal.gender !== "female") {
-      return res.status(400).json({ message: "Only female animals can be inseminated" });
+      return res.status(400).json({ message: "Only females can be inseminated" });
     }
 
     const inseminationDate = insemination_date
@@ -138,7 +146,70 @@ exports.addInseminationRecord = async (req, res) => {
       : new Date();
 
     if (isNaN(inseminationDate)) {
-      return res.status(400).json({ message: "Invalid insemination_date" });
+      return res.status(400).json({ message: "Invalid date" });
+    }
+
+    let bullData = {};
+    let bullSource = null;
+
+    // Path A: Existing breed profile
+    if (bull_profile_id) {
+      const profile = await Breed.findOne({
+        _id: bull_profile_id,
+        farmer_id,
+        animal_species: animal.species,  // FIXED: Check animal_species
+        is_active: true
+      });
+
+      if (!profile) {
+        return res.status(400).json({ message: "Invalid breed profile" });
+      }
+
+      bullSource = "profile";
+      bullData = {
+        bull_breed: profile.breed_name,
+        bull_code: profile.bull_code || null,
+        bull_name: profile.bull_name || null
+      };
+    }
+
+    // Path B: Manual entry
+    if (!bull_profile_id && bull_manual) {
+      bullSource = "manual";
+      bullData = {
+        bull_breed: bull_manual.bull_breed || null,
+        bull_code: bull_manual.bull_code || null,
+        bull_name: bull_manual.bull_name || null
+      };
+
+      // FIXED: Auto-create breed with correct schema
+      if (bull_manual.bull_breed) {
+        await Breed.updateOne(
+          {
+            farmer_id,
+            breed_name: bull_manual.bull_breed,
+            animal_species: animal.species
+          },
+          {
+            $setOnInsert: {
+              breed_name: bull_manual.bull_breed,
+              animal_species: animal.species,  // FIXED
+              male_role: getMaleRole(animal.species),  // 'bull', 'buck', etc
+              bull_code: bull_manual.bull_code,
+              bull_name: bull_manual.bull_name,
+              farmer_id,
+              is_active: true
+            }
+          },
+          { upsert: true }
+        );
+      }
+    }
+
+    if (!bullSource) {
+      return res.status(400).json({
+        message: "Provide bull_profile_id or bull_manual"
+      });
     }
 
     const record = new Insemination({
@@ -147,29 +218,13 @@ exports.addInseminationRecord = async (req, res) => {
       cow_name: animal.cow_name,
       insemination_date: inseminationDate,
       inseminator,
-      bull_code,
-      bull_name,
-      bull_breed,
+      bull_source: bullSource,
+      ...bullData,
       outcome: "pregnant",
       notes
     });
 
-    await record.save(); // 🔥 hook does the rest
-
-    if (bull_breed) {
-      await Breed.updateOne(
-        { farmer_id, breed_name: bull_breed, species: animal.species },
-        {
-          $setOnInsert: {
-            breed_name: bull_breed,
-            species: animal.species,
-            farmer_id,
-            description: `Auto-added from insemination`
-          }
-        },
-        { upsert: true }
-      );
-    }
+    await record.save();
 
     res.status(201).json({
       success: true,
@@ -178,10 +233,13 @@ exports.addInseminationRecord = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("❌ addInseminationRecord:", error);
-    res.status(500).json({ message: "Failed to add insemination record" });
+    console.error("❌ Error:", error);
+    res.status(500).json({ message: "Failed to record insemination" });
   }
 };
+
+// Helper: Map species to male role
+
 
 
 exports.getInseminationRecords = async (req, res) => { 

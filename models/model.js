@@ -127,19 +127,32 @@ const PorterLog = mongoose.model('PorterLog', porterLogSchema);
 // Breed Schema
 // ---------------------------
 const breedSchema = new Schema({
-  breed_name: { type: String, required: true },         // e.g. Friesian, Large White
-  species: { type: String, required: true, enum: ['cow', 'bull', 'goat', 'pig'] },
+  breed_name: { type: String, required: true },
+  
+  // FIXED: Separate species from sex
+  animal_species: { 
+    type: String, 
+    required: true,
+    enum: ['cow', 'goat', 'sheep', 'pig']
+  },
+  male_role: {
+    type: String,
+    enum: ['bull', 'buck', 'ram', 'boar'],
+    required: true
+  },
 
-  // Generic
+  // Profile details
+  bull_code: { type: String },
+  bull_name: { type: String },
   description: { type: String },
+  origin_farm: { type: String },
+  country: { type: String },
+
   farmer_id: { type: Schema.Types.ObjectId, ref: 'Farmer', required: true },
   is_active: { type: Boolean, default: true },
 
-  // Bull-specific fields (only filled when species = bull)
-  bull_code: { type: String},  // catalog/stud code
-  bull_name: { type: String },                             // traceable name
-  origin_farm: { type: String },
-  country: { type: String }
+  // Deprecate this field
+  species: { type: String }
 }, { timestamps: true });
 
 const Breed = mongoose.model('Breed', breedSchema);
