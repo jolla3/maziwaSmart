@@ -129,115 +129,174 @@ exports.addInseminationRecord = async (req, res) => {
       notes
     } = req.body;
 
-    const farmer_code = req.user.code;
-    const farmer_id = req.user._id || req.user.id;
+    const farmerId = req.user._id || req.user.id;
+    const farmerCode = req.user.code;
 
-    const animal = await Cow.findOne({ _id: animal_id, farmer_code });
+    // Get animal
+    const animal = await Cow.findOne({
+      _id: animal_id,
+      farmer_code: farmerCode
+    });
+
     if (!animal) {
-      return res.status(404).json({ message: "Animal not found" });
+      return res.status(404).json({
+        success: false,
+        message: 'Animal not found'
+      });
     }
 
-    if (animal.gender !== "female") {
-      return res.status(400).json({ message: "Only females can be inseminated" });
+    if (animal.gender !== 'female') {
+      return res.status(400).json({
+        success: false,
+        message: 'Only female animals can be inseminated'
+      });
     }
 
+    // BIOLOGY GUARD: Validate reproductive stage
+    const REPRODUCTIVE_STAGES = {
+      cow: ['heifer', 'cow'],
+      goat: ['doe'],
+      sheep: ['ewe'],
+      pig: ['sow']
+    };
+
+    const allowedStages = REPRODUCTIVE_STAGES[animal.species] || [];
+    if (!allowedStages.includes(animal.stage)) {
+      return res.status(400).json({
+        success: false,
+        message: `${animal.stage} cannot be inseminated. Eligible stages for ${animal.species}: ${allowedStages.join(', ')}`
+      });
+    }
+
+    // Validate date
     const inseminationDate = insemination_date
       ? new Date(insemination_date)
       : new Date();
 
     if (isNaN(inseminationDate)) {
-      return res.status(400).json({ message: "Invalid date" });
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid insemination_date'
+      });
     }
 
     let bullData = {};
     let bullSource = null;
 
-    // Path A: Existing breed profile
+    // PATH A: Use existing breed profile
     if (bull_profile_id) {
       const profile = await Breed.findOne({
         _id: bull_profile_id,
-        farmer_id,
-        animal_species: animal.species,  // FIXED: Check animal_species
+        farmer_id: farmerId,
+        animal_species: animal.species,  // CRITICAL: Must match
         is_active: true
       });
 
       if (!profile) {
-        return res.status(400).json({ message: "Invalid breed profile" });
+        return res.status(400).json({
+          success: false,
+          message: 'Breed profile not found or species mismatch'
+        });
       }
 
-      bullSource = "profile";
+      bullSource = 'profile';
       bullData = {
         bull_breed: profile.breed_name,
         bull_code: profile.bull_code || null,
-        bull_name: profile.bull_name || null
+        bull_name: profile.bull_name || null,
+        bull_profile_id: profile._id
       };
     }
 
-    // Path B: Manual entry
+    // PATH B: Manual entry (auto-creates breed)
     if (!bull_profile_id && bull_manual) {
-      bullSource = "manual";
+      if (!bull_manual.bull_breed || !bull_manual.bull_breed.trim()) {
+        return res.status(400).json({
+          success: false,
+          message: 'bull_breed is required for manual entry'
+        });
+      }
+
+      bullSource = 'manual';
       bullData = {
-        bull_breed: bull_manual.bull_breed || null,
-        bull_code: bull_manual.bull_code || null,
-        bull_name: bull_manual.bull_name || null
+        bull_breed: bull_manual.bull_breed.trim(),
+        bull_code: bull_manual.bull_code?.trim() || null,
+        bull_name: bull_manual.bull_name?.trim() || null
       };
 
-      // FIXED: Auto-create breed with correct schema
-      if (bull_manual.bull_breed) {
-        await Breed.updateOne(
-          {
-            farmer_id,
-            breed_name: bull_manual.bull_breed,
-            animal_species: animal.species
-          },
-          {
-            $setOnInsert: {
-              breed_name: bull_manual.bull_breed,
-              animal_species: animal.species,  // FIXED
-              male_role: getMaleRole(animal.species),  // 'bull', 'buck', etc
-              bull_code: bull_manual.bull_code,
-              bull_name: bull_manual.bull_name,
-              farmer_id,
-              is_active: true
-            }
-          },
-          { upsert: true }
-        );
+      // Auto-create breed with CORRECT schema
+      const maleRoleMap = {
+        'cow': 'bull',
+        'goat': 'buck',
+        'sheep': 'ram',
+        'pig': 'boar'
+      };
+
+      // GUARD: Check for duplicate before upsert
+      const existingBreed = await Breed.findOne({
+        farmer_id: farmerId,
+        breed_name: bull_manual.bull_breed.trim(),
+        animal_species: animal.species,
+        is_active: true
+      });
+
+      if (!existingBreed) {
+        // Create new breed with schema validation
+        const newBreed = new Breed({
+          breed_name: bull_manual.bull_breed.trim(),
+          animal_species: animal.species,
+          male_role: maleRoleMap[animal.species],
+          bull_code: bull_manual.bull_code?.trim() || null,
+          bull_name: bull_manual.bull_name?.trim() || null,
+          farmer_id: farmerId,
+          is_active: true
+        });
+
+        await newBreed.save();
       }
     }
 
     if (!bullSource) {
       return res.status(400).json({
-        message: "Provide bull_profile_id or bull_manual"
+        success: false,
+        message: 'Provide either bull_profile_id or bull_manual with bull_breed'
       });
     }
 
+    // Create insemination record
     const record = new Insemination({
       cow_id: animal._id,
-      farmer_code,
+      farmer_code: farmerCode,
       cow_name: animal.cow_name,
       insemination_date: inseminationDate,
       inseminator,
       bull_source: bullSource,
       ...bullData,
-      outcome: "pregnant",
+      outcome: 'pending',
       notes
     });
 
     await record.save();
 
+    const message = bullSource === 'manual'
+      ? 'Insemination recorded. New breed saved.'
+      : 'Insemination recorded successfully.';
+
     res.status(201).json({
       success: true,
-      message: "Insemination recorded",
-      record_id: record._id
+      message: message,
+      record_id: record._id,
+      bull_source: bullSource
     });
 
   } catch (error) {
-    console.error("❌ Error:", error);
-    res.status(500).json({ message: "Failed to record insemination" });
+    console.error('❌ addInseminationRecord error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to record insemination'
+    });
   }
 };
-
 // Helper: Map species to male role
 
 

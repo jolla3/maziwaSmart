@@ -8,46 +8,101 @@ const { Breed } = require('../models/model');
 // ✅ Create a new breed
 exports.createBreed = async (req, res) => {
   try {
+    const {
+      breed_name,
+      animal_species,
+      bull_code,
+      bull_name,
+      origin_farm,
+      country,
+      description
+    } = req.body;
+
     const farmerId = req.user._id || req.user.id;
 
-    if (!farmerId) {
-      return res.status(401).json({ message: "Farmer ID not found in token" });
+    // Validate animal_species
+    const validSpecies = ['cow', 'goat', 'sheep', 'pig'];
+    if (!validSpecies.includes(animal_species)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid animal_species. Must be one of: ${validSpecies.join(', ')}`
+      });
     }
 
-    const { breed_name, description, species, bull_code, bull_name, origin_farm, country } = req.body;
-
-    if (!species) {
-      return res.status(400).json({ message: "Species is required" });
+    // Validate breed_name is provided
+    if (!breed_name || !breed_name.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'breed_name is required'
+      });
     }
 
-    // Check if breed already exists for this farmer + species
-    const exists = await Breed.findOne({ farmer_id: farmerId, breed_name, species, is_active: true });
-    if (exists) {
-      return res.status(400).json({ message: `${breed_name} already exists for ${species}` });
-    }
+    // GUARD: Check for duplicate breed
+    const maleRoleMap = {
+      'cow': 'bull',
+      'goat': 'buck',
+      'sheep': 'ram',
+      'pig': 'boar'
+    };
 
-    const newBreed = new Breed({
-      breed_name,
-      description,
-      species,
+    const existing = await Breed.findOne({
       farmer_id: farmerId,
-      ...(species === "bull" && {
-        bull_code,
-        bull_name,
-        origin_farm,
-        country
-      })
+      breed_name: breed_name.trim(),
+      animal_species: animal_species,
+      is_active: true
     });
 
-    await newBreed.save();
+    if (existing) {
+      return res.status(409).json({
+        success: false,
+        message: `Breed "${breed_name}" already exists for ${animal_species}. Cannot create duplicate.`
+      });
+    }
+
+    // Create breed
+    const breed = new Breed({
+      breed_name: breed_name.trim(),
+      animal_species,
+      male_role: maleRoleMap[animal_species],
+      bull_code: bull_code?.trim() || null,
+      bull_name: bull_name?.trim() || null,
+      origin_farm: origin_farm?.trim() || null,
+      country: country?.trim() || null,
+      description: description?.trim() || null,
+      farmer_id: farmerId
+    });
+
+    // Schema validation runs here and will reject biologically invalid combinations
+    await breed.save();
 
     res.status(201).json({
-      message: "Breed created successfully",
-      breed: newBreed
+      success: true,
+      message: 'Breed created successfully',
+      breed: {
+        _id: breed._id,
+        breed_name: breed.breed_name,
+        animal_species: breed.animal_species,
+        male_role: breed.male_role,
+        bull_code: breed.bull_code,
+        bull_name: breed.bull_name
+      }
     });
+
   } catch (error) {
-    console.error("❌ Error creating breed:", error);
-    res.status(500).json({ message: "Error creating breed", error: error.message });
+    console.error('❌ addBreed error:', error);
+    
+    // Schema validation error
+    if (error.name === 'ValidationError') {
+      return res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: 'Failed to create breed'
+    });
   }
 };
 
@@ -55,21 +110,45 @@ exports.createBreed = async (req, res) => {
 exports.getBreeds = async (req, res) => {
   try {
     const farmerId = req.user._id || req.user.id;
-    const { species } = req.query; // e.g. ?species=cow
+    const { animal_species } = req.query;
 
-    let query = { farmer_id: farmerId, is_active: true };
-    if (species) query.species = species;
+    let query = {
+      farmer_id: farmerId,
+      is_active: true
+    };
 
-    const breeds = await Breed.find(query).sort({ breed_name: 1 });
+    // Validate and apply species filter
+    if (animal_species) {
+      const validSpecies = ['cow', 'goat', 'sheep', 'pig'];
+      
+      if (!validSpecies.includes(animal_species)) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid animal_species. Must be one of: ${validSpecies.join(', ')}`
+        });
+      }
+      
+      query.animal_species = animal_species;
+    }
+
+    const breeds = await Breed.find(query)
+      .select('_id breed_name bull_code bull_name animal_species male_role')
+      .sort({ breed_name: 1 })
+      .lean();
 
     res.status(200).json({
+      success: true,
       count: breeds.length,
-      species: species || "all",
+      animal_species: animal_species || 'all',
       breeds
     });
+
   } catch (error) {
-    console.error("❌ Error fetching breeds:", error);
-    res.status(500).json({ message: "Failed to fetch breeds", error: error.message });
+    console.error('❌ getBreeds error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch breeds'
+    });
   }
 };
 

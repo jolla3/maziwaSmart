@@ -126,37 +126,102 @@ const PorterLog = mongoose.model('PorterLog', porterLogSchema);
 // ---------------------------
 // Breed Schema
 // ---------------------------
+
 const breedSchema = new Schema({
-  breed_name: { type: String, required: true },
-  
-  // FIXED: Separate species from sex
-  animal_species: { 
-    type: String, 
+  breed_name: {
+    type: String,
     required: true,
-    enum: ['cow', 'goat', 'sheep', 'pig']
+    trim: true
   },
+
+  // CRITICAL: Separate biology from reproductive role
+  animal_species: {
+    type: String,
+    enum: ['cow', 'goat', 'sheep', 'pig'],
+    required: true
+  },
+
   male_role: {
     type: String,
     enum: ['bull', 'buck', 'ram', 'boar'],
     required: true
   },
 
-  // Profile details
-  bull_code: { type: String },
-  bull_name: { type: String },
-  description: { type: String },
-  origin_farm: { type: String },
-  country: { type: String },
+  // Sire profile details
+  bull_code: {
+    type: String,
+    trim: true
+  },
+  bull_name: {
+    type: String,
+    trim: true
+  },
+  origin_farm: {
+    type: String,
+    trim: true
+  },
+  country: {
+    type: String,
+    trim: true
+  },
+  description: String,
 
-  farmer_id: { type: Schema.Types.ObjectId, ref: 'Farmer', required: true },
-  is_active: { type: Boolean, default: true },
+  // Farmer scope
+  farmer_id: {
+    type: Schema.Types.ObjectId,
+    ref: 'Farmer',
+    required: true,
+    index: true
+  },
 
-  // Deprecate this field
-  species: { type: String }
+  is_active: {
+    type: Boolean,
+    default: true,
+    index: true
+  },
+
+  // DEPRECATED: Legacy field - DO NOT USE in new code
+  // Will be removed in v2.0 after all data is migrated
+  species: {
+    type: String
+  }
+
 }, { timestamps: true });
 
-const Breed = mongoose.model('Breed', breedSchema);
+// ============================================================================
+// SCHEMA-LEVEL VALIDATION: Prevent biologically impossible combinations
+// ============================================================================
 
+breedSchema.pre('validate', function(next) {
+  // Map valid animal_species → male_role combinations
+  const validRoles = {
+    'cow': 'bull',
+    'goat': 'buck',
+    'sheep': 'ram',
+    'pig': 'boar'
+  };
+
+  // If both fields are set, validate they match biology
+  if (this.animal_species && this.male_role) {
+    const expectedRole = validRoles[this.animal_species];
+    
+    if (expectedRole !== this.male_role) {
+      return next(new Error(
+        `Invalid combination: male_role "${this.male_role}" ` +
+        `does not match animal_species "${this.animal_species}". ` +
+        `Expected male_role "${expectedRole}".`
+      ));
+    }
+  }
+
+  next();
+});
+
+// Indexes for performance
+breedSchema.index({ farmer_id: 1, animal_species: 1, is_active: 1 });
+breedSchema.index({ farmer_id: 1, breed_name: 1, animal_species: 1 }, { unique: false });
+
+const Breed = mongoose.model('Breed', breedSchema);
 // ---------------------------
 // Cow (flexible animal) Schema
 // NOTE: kept model name 'Cow' to remain backward-compatible with controllers.
