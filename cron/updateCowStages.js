@@ -1,23 +1,12 @@
-// /cron/updateAnimalStages.js
+// /utils/offspringUtil.js
 // ================================
-// Daily stage corrections + age updates + pregnancy reminders + auto-calving
+// Utility for auto-calving and offspring creation
 // ================================
 
-const cron = require("node-cron");
 const moment = require("moment");
-const { Cow, Notification, Insemination } = require("../models/model");
-const { createOffspring } = require("../utils/offspringUtil");
+const { Cow, Notification } = require("../models/model"); // Adjust path if needed
 
-const gestationDaysMap = {
-  cow: 283,
-  goat: 150,
-  sheep: 152,
-  pig: 115
-};
-
-/**
- * Compute age string safely (no moment mutation bugs)
- */
+// Reuse these from your cron file (or import if separated)
 const getAgeString = (birth_date) => {
   if (!birth_date) return "";
 
@@ -35,9 +24,6 @@ const getAgeString = (birth_date) => {
   return `${years} years, ${months} months, ${days} days`;
 };
 
-/**
- * Compute target stage based on species, gender, and age
- */
 const getTargetStage = (species, gender, birth_date) => {
   if (!birth_date) return null;
 
@@ -82,117 +68,61 @@ const getTargetStage = (species, gender, birth_date) => {
   }
 };
 
-const updateStagesAndPregnancies = async () => {
+const createOffspring = async (mother, birthDate) => {
+  const birthMoment = moment(birthDate);
+
+  // Random gender assignment (50/50) - replace with insemination logic if available
+  const genders = ["male", "female"];
+  const gender = genders[Math.floor(Math.random() * 2)];
+
+  const stage = getTargetStage(mother.species, gender, birthMoment.toDate());
+  if (!stage) {
+    throw new Error(`Invalid stage computation for species: ${mother.species}, gender: ${gender}`);
+  }
+
+  const offspring = new Cow({
+    farmer_id: mother.farmer_id, // Required: inherit from mother
+    species: mother.species,     // Required: inherit from mother
+    farmer_code: mother.farmer_code, // Assuming this exists and is needed for notifications
+    cow_name: `Offspring of ${mother.cow_name || "Unnamed"} (${birthMoment.format("YYYY-MM-DD")})`, // Sensible default
+    birth_date: birthMoment.toDate(),
+    gender,
+    stage,
+    age: getAgeString(birthMoment.toDate()),
+    is_calf: mother.species === "cow" && stage === "calf", // Align with your cron logic
+    status: "active", // Default
+    pregnancy: { is_pregnant: false }, // Init empty
+    // Add more fields as needed (e.g., mother_id: mother._id for lineage)
+  });
+
+  await offspring.save();
+
+  // Reset mother pregnancy
+  mother.pregnancy.is_pregnant = false;
+  mother.pregnancy.expected_due_date = null;
+  mother.pregnancy.insemination_id = null;
+  mother.status = "active";
+  await mother.save();
+
+  // Birth notification
+  await Notification.create({
+    farmer_code: mother.farmer_code,
+    cow: mother._id, // Links to mother
+    type: "calving",
+    message: `Auto-calving complete: ${mother.species} ${mother.cow_name || "animal"} gave birth to new offspring (ID: ${offspring._id}, Gender: ${gender}).`
+  });
+
+  return offspring; // For logging or further use if needed
+};
+
+// Wrap for error isolation in cron
+const safeCreateOffspring = async (mother, birthDate) => {
   try {
-    const today = moment();
-
-    /** ================================
-     * Stage + age updates
-     * ================================ */
-    const animals = await Cow.find({
-      birth_date: { $exists: true, $ne: null }
-    });
-
-    const stageChanges = {
-      cow: 0,
-      goat: 0,
-      sheep: 0,
-      pig: 0
-    };
-
-    for (const animal of animals) {
-      let changed = false;
-
-      const newAge = getAgeString(animal.birth_date);
-      if (animal.age !== newAge) {
-        animal.age = newAge;
-        changed = true;
-      }
-
-      const newStage = getTargetStage(
-        animal.species,
-        animal.gender,
-        animal.birth_date
-      );
-
-      if (newStage && animal.stage !== newStage) {
-        animal.stage = newStage;
-        changed = true;
-        stageChanges[animal.species]++;
-      }
-
-      if (animal.species === "cow") {
-        animal.is_calf = animal.stage === "calf";
-      }
-
-      if (changed) {
-        await animal.save();
-      }
-    }
-
-    /** ================================
-     * Pregnancy handling
-     * ================================ */
-    const pregnantAnimals = await Cow.find({
-      "pregnancy.is_pregnant": true,
-      "pregnancy.expected_due_date": { $exists: true }
-    });
-
-    for (const animal of pregnantAnimals) {
-      const dueDate = moment(animal.pregnancy.expected_due_date);
-      const daysLeft = dueDate.diff(today, "days");
-
-      // reminders
-      if ([90, 30, 7, 1].includes(daysLeft)) {
-        await Notification.create({
-          farmer_code: animal.farmer_code,
-          cow: animal._id,
-          type: "gestation_reminder",
-          message: `Reminder: Your ${animal.species} ${animal.cow_name || "animal"} is due in ${daysLeft} day(s).`
-        });
-      }
-
-      // auto-calving
-      if (today.isSameOrAfter(dueDate, "day")) {
-        await createOffspring(animal, today);
-      }
-
-      // overdue reset (20% buffer)
-      if (animal.pregnancy.insemination_id) {
-        const insemination = await Insemination.findById(
-          animal.pregnancy.insemination_id
-        );
-
-        if (insemination) {
-          const daysSince = today.diff(
-            moment(insemination.insemination_date),
-            "days"
-          );
-
-          const gestationDays =
-            gestationDaysMap[animal.species] || 283;
-
-          if (daysSince > Math.round(gestationDays * 1.2)) {
-            animal.pregnancy.is_pregnant = false;
-            animal.pregnancy.expected_due_date = null;
-            animal.pregnancy.insemination_id = null;
-            animal.status = "active";
-            await animal.save();
-          }
-        }
-      }
-    }
-
-    console.log(
-      `Cron complete:
-       Stage changes: ${JSON.stringify(stageChanges)}
-       Animals processed: ${animals.length}
-       Pregnancies checked: ${pregnantAnimals.length}`
-    );
+    await createOffspring(mother, birthDate);
   } catch (err) {
-    console.error("Cron failure:", err);
+    console.error(`Failed to create offspring for animal ${mother._id}:`, err);
+    // Optionally notify admin or log to DB - don't throw to avoid killing the whole cron
   }
 };
 
-// Run daily at midnight
-cron.schedule("0 0 * * *", updateStagesAndPregnancies);
+module.exports = { createOffspring: safeCreateOffspring }; // Export wrapped version
