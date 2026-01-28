@@ -119,7 +119,7 @@ exports.handleOCRUpload = async (req, res) => {
 };
 
 exports.addInseminationRecord = async (req, res) => {
-  try {
+   try {
     const {
       animal_id,
       insemination_date,
@@ -272,7 +272,7 @@ exports.addInseminationRecord = async (req, res) => {
       inseminator,
       bull_source: bullSource,
       ...bullData,
-      outcome: 'pending',
+      outcome: 'recorded',  // Changed from 'pending' - use your schema's valid enum value
       notes
     });
 
@@ -297,6 +297,7 @@ exports.addInseminationRecord = async (req, res) => {
     });
   }
 };
+
 // Helper: Map species to male role
 
 

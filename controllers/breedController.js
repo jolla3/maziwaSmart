@@ -7,7 +7,7 @@ const { Breed } = require('../models/model');
 
 // ✅ Create a new breed
 exports.createBreed = async (req, res) => {
-  try {
+ try {
     const {
       breed_name,
       animal_species,
@@ -105,10 +105,9 @@ exports.createBreed = async (req, res) => {
     });
   }
 };
-
 // ✅ Get all breeds for logged farmer
 exports.getBreeds = async (req, res) => {
-  try {
+   try {
     const farmerId = req.user._id || req.user.id;
     const { animal_species } = req.query;
 
@@ -151,7 +150,6 @@ exports.getBreeds = async (req, res) => {
     });
   }
 };
-
 
 
 // ✅ Update a breed
