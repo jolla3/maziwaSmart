@@ -634,7 +634,7 @@ const DailyMilkSummary = mongoose.model('DailyMilkSummary', dailyMilkSummarySche
 // - We set cow.pregnancy.is_pregnant = true and link insemination id
 // - Delivery (actual calf creation) should be triggered later (manual or scheduled) when dueDate reached
 // ---------------------------
-// Insemination schema (schema-level pregnancy handling + notifications)
+
 const inseminationSchema = new Schema({
   cow_id: { type: Schema.Types.ObjectId, ref: 'Cow', required: true },
   farmer_code: { type: Number },
@@ -642,23 +642,36 @@ const inseminationSchema = new Schema({
   insemination_date: { type: Date, required: true },
   inseminator: { type: String },
   method: { type: String, enum: ['AI', 'natural', 'other'], default: 'AI' },
+  
+  // Bull information - either from profile or manual
+  bull_profile_id: { type: Schema.Types.ObjectId, ref: 'Breed', default: null },
+  bull_source: { type: String, enum: ['profile', 'manual'], required: true },
   bull_code: { type: String },
   bull_name: { type: String },
   bull_breed: { type: String },
-  outcome: { type: String, enum: ['pregnant', 'not_pregnant', 'unknown'], default: 'unknown' },
+  
+  // Outcome
+  outcome: { 
+    type: String, 
+    enum: ['pregnant', 'not_pregnant', 'unknown'], 
+    default: 'unknown' 
+  },
   expected_due_date: { type: Date, default: null },
   notes: { type: String },
   has_calved: { type: Boolean, default: false },
   calf_id: { type: Schema.Types.ObjectId, ref: 'Cow', default: null },
 
-  // bookkeeping when this attempt resolves other attempts
+  // Bookkeeping
   resolved_by: { type: Schema.Types.ObjectId, ref: 'Insemination', default: null },
   resolved_at: { type: Date, default: null },
 
   created_at: { type: Date, default: Date.now }
 });
 
-// Post-save hook: handle pregnancy onset, immediate notification, and mark earlier attempts resolved
+// ============================================================================
+// POST-SAVE HOOK: Handle pregnancy, notifications, and resolution
+// ============================================================================
+
 inseminationSchema.post('save', async function (doc, next) {
   try {
     const Cow = mongoose.model('Cow');
@@ -666,18 +679,34 @@ inseminationSchema.post('save', async function (doc, next) {
     const Notification = mongoose.model('Notification');
 
     const cow = await Cow.findById(doc.cow_id);
-    if (!cow) return next();
+    if (!cow) {
+      console.log('Insemination: Cow not found, skipping post-save');
+      return next();
+    }
 
+    // === PREGNANCY CONFIRMED ===
     if (doc.outcome === 'pregnant') {
-      const gestationDaysMap = { cow: 283, goat: 150, sheep: 152, pig: 114 };
-      const gestationDays = gestationDaysMap[cow.species] 
+      const gestationDaysMap = { 
+        cow: 283, 
+        goat: 150, 
+        sheep: 152, 
+        pig: 114 
+      };
+      const gestationDays = gestationDaysMap[cow.species] || 280;
 
-      let dueDate = doc.expected_due_date ? new Date(doc.expected_due_date) : new Date(doc.insemination_date);
+      // Calculate due date if not provided
+      let dueDate = doc.expected_due_date 
+        ? new Date(doc.expected_due_date) 
+        : new Date(doc.insemination_date);
+      
       if (!doc.expected_due_date) {
-        dueDate.setDate(dueDate.getDate() + gestationDays)
-        await Insemination.findByIdAndUpdate(doc._id, { $set: { expected_due_date: dueDate } });
+        dueDate.setDate(dueDate.getDate() + gestationDays);
+        await Insemination.findByIdAndUpdate(doc._id, { 
+          $set: { expected_due_date: dueDate } 
+        });
       }
 
+      // Update cow pregnancy status
       await Cow.findByIdAndUpdate(cow._id, {
         $set: {
           'pregnancy.is_pregnant': true,
@@ -687,25 +716,45 @@ inseminationSchema.post('save', async function (doc, next) {
         }
       });
 
-      await Notification.create({
-        user: cow.farmer_id,   // 🔥 support user-based
-        farmer_code: cow.farmer_code,
-        cow: cow._id,
-        type: 'gestation_alert',
-        message: `${cow.species} ${cow.cow_name || cow.name || 'animal'} confirmed pregnant. Expected due: ${dueDate.toDateString()}`
-      });
+      // === FIXED: Create notification with proper user structure ===
+      try {
+        await Notification.create({
+          user: {
+            type: 'farmer',
+            id: cow.farmer_id
+          },
+          farmer_code: cow.farmer_code,
+          cow: cow._id,
+          notification_type: 'gestation_alert',
+          title: `${cow.cow_name || 'Animal'} Confirmed Pregnant`,
+          message: `${cow.species} ${cow.cow_name || cow.name || 'animal'} confirmed pregnant. Expected calving: ${dueDate.toDateString()}`,
+          status: 'unread'
+        });
+      } catch (notificationErr) {
+        console.error('Notification creation failed (non-blocking):', notificationErr.message);
+        // Don't fail the insemination save if notification fails
+      }
 
+      // Mark all earlier attempts on same animal as resolved
       await Insemination.updateMany(
         {
           cow_id: cow._id,
           _id: { $ne: doc._id },
           insemination_date: { $lte: doc.insemination_date },
-          outcome: { $ne: 'pregnant' }
+          outcome: { $nin: ['pregnant', 'not_pregnant'] }
         },
-        { $set: { outcome: 'not_pregnant', resolved_by: doc._id, resolved_at: new Date() } }
+        { 
+          $set: { 
+            outcome: 'not_pregnant', 
+            resolved_by: doc._id, 
+            resolved_at: new Date() 
+          } 
+        }
       );
-
-    } else if (doc.outcome === 'not_pregnant') {
+    } 
+    // === PREGNANCY FAILED ===
+    else if (doc.outcome === 'not_pregnant') {
+      // Only reset if this was the active pregnancy
       if (cow.pregnancy?.insemination_id?.toString() === doc._id.toString()) {
         await Cow.findByIdAndUpdate(cow._id, {
           $set: {
@@ -715,12 +764,33 @@ inseminationSchema.post('save', async function (doc, next) {
             status: 'active'
           }
         });
+
+        // Notify farmer
+        try {
+          await Notification.create({
+            user: {
+              type: 'farmer',
+              id: cow.farmer_id
+            },
+            farmer_code: cow.farmer_code,
+            cow: cow._id,
+            notification_type: 'pregnancy_failed',
+            title: `${cow.cow_name || 'Animal'} Not Pregnant`,
+            message: `${cow.species} ${cow.cow_name || cow.name || 'animal'} pregnancy test negative. Available for re-insemination.`,
+            status: 'unread'
+          });
+        } catch (notificationErr) {
+          console.error('Notification creation failed (non-blocking):', notificationErr.message);
+        }
       }
     }
+
+    next();
   } catch (err) {
     console.error('Insemination post-save error:', err);
+    // Don't throw - let the save complete even if hook fails
+    next();
   }
-  next();
 });
 
 const Insemination = mongoose.model('Insemination', inseminationSchema);
