@@ -117,7 +117,6 @@ exports.handleOCRUpload = async (req, res) => {
     res.status(500).json({ error: "Failed to process insemination card" });
   }
 };
-
 exports.addInseminationRecord = async (req, res) => {
    try {
     const {
@@ -246,6 +245,7 @@ exports.addInseminationRecord = async (req, res) => {
           breed_name: bull_manual.bull_breed.trim(),
           animal_species: animal.species,
           male_role: maleRoleMap[animal.species],
+          description: `Auto-created from insemination record`,
           bull_code: bull_manual.bull_code?.trim() || null,
           bull_name: bull_manual.bull_name?.trim() || null,
           farmer_id: farmerId,
@@ -264,6 +264,7 @@ exports.addInseminationRecord = async (req, res) => {
     }
 
     // Create insemination record
+    // FIXED: Use 'pregnant' instead of 'pending' or 'recorded'
     const record = new Insemination({
       cow_id: animal._id,
       farmer_code: farmerCode,
@@ -272,7 +273,7 @@ exports.addInseminationRecord = async (req, res) => {
       inseminator,
       bull_source: bullSource,
       ...bullData,
-      outcome: 'recorded',  // Changed from 'pending' - use your schema's valid enum value
+      outcome: 'pregnant',  // FIXED: Valid enum value from your schema
       notes
     });
 
@@ -298,19 +299,14 @@ exports.addInseminationRecord = async (req, res) => {
   }
 };
 
-// Helper: Map species to male role
-
-
-
 exports.getInseminationRecords = async (req, res) => { 
   try {
     const farmer_code = req.user.code;
 
     const records = await Insemination.find({ farmer_code })
-      .populate("cow_id", "cow_name tag_id status species") // ✅ use cow_id here
+      .populate("cow_id", "cow_name tag_id status species")
       .sort({ insemination_date: -1 });
 
-    // 🧹 Clean response
     const formatted = records.map(r => ({
       id: r._id,
       animal: r.cow_id ? {
@@ -340,7 +336,6 @@ exports.getInseminationRecords = async (req, res) => {
   }
 };
 
-// controllers/inseminationController.js
 exports.deleteInseminationRecord = async (req, res) => {
   try {
     const farmer_code = req.user.code;
@@ -410,7 +405,6 @@ exports.updateInseminationRecord = async (req, res) => {
   }
 };
 
-// 🟢 Get single insemination record
 exports.getInseminationRecordById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -423,7 +417,6 @@ exports.getInseminationRecordById = async (req, res) => {
       return res.status(404).json({ success: false, message: "Insemination record not found" });
     }
 
-    // 🧹 Clean response
     const formatted = {
       id: record._id,
       cow: record.cow_id ? {
@@ -453,3 +446,4 @@ exports.getInseminationRecordById = async (req, res) => {
     res.status(500).json({ success: false, message: "Failed to fetch insemination record", error: error.message });
   }
 };
+
