@@ -676,39 +676,99 @@ exports.getMyListingsViewsSummary = async (req, res) => {
   try {
     const userId = req.user._id;
 
-    const userListings = await Listing.find({ seller: userId }).select('_id').lean();
-    if (!userListings.length) return res.status(200).json({ total_views: 0, by_role: {}, per_listing: [] });
+    const userListings = await Listing.find({ seller: userId })
+      .select('_id title price category images')
+      .lean();
+    
+    if (!userListings.length) {
+      return res.status(200).json({ 
+        total_views: 0, 
+        total_listings: 0,
+        by_role: {}, 
+        per_listing: [],
+        top_viewed: [],
+        recent_views: []
+      });
+    }
 
     const listingIds = userListings.map(l => l._id);
 
-    const agg = await View.aggregate([
+    // Get total views by role
+    const roleAgg = await View.aggregate([
       { $match: { listing_id: { $in: listingIds } } },
       { $group: { _id: "$viewer_role", count: { $sum: 1 } } }
     ]);
 
     const byRole = {};
     let totalViews = 0;
-    agg.forEach(group => {
+    roleAgg.forEach(group => {
       byRole[group._id] = group.count;
       totalViews += group.count;
     });
 
+    // Get per-listing views with role breakdown
     const perListingAgg = await View.aggregate([
       { $match: { listing_id: { $in: listingIds } } },
-      { $group: { _id: "$listing_id", views: { $sum: 1 }, by_role: { $push: { role: "$viewer_role" } } } },
-      { $project: { views: 1, by_role: { $arrayToObject: { $map: { input: { $setUnion: "$by_role" }, as: "r", in: { k: "$$r", v: { $size: { $filter: { input: "$by_role", cond: { $eq: ["$$this", "$$r"] } } } } } } } } } }
+      { 
+        $group: { 
+          _id: { listing: "$listing_id", role: "$viewer_role" },
+          count: { $sum: 1 }
+        } 
+      },
+      {
+        $group: {
+          _id: "$_id.listing",
+          total_views: { $sum: "$count" },
+          by_role: {
+            $push: {
+              k: "$_id.role",
+              v: "$count"
+            }
+          }
+        }
+      },
+      {
+        $project: {
+          total_views: 1,
+          by_role: { $arrayToObject: "$by_role" }
+        }
+      },
+      { $sort: { total_views: -1 } }
     ]);
 
-    const perListing = perListingAgg.map(p => ({
-      listing_id: p._id,
-      total_views: p.views,
-      by_role: p.by_role
-    }));
+    // Merge listing details with view data
+    const perListing = perListingAgg.map(p => {
+      const listing = userListings.find(l => l._id.toString() === p._id.toString());
+      return {
+        listing_id: p._id,
+        title: listing?.title || 'Unknown',
+        price: listing?.price || 0,
+        category: listing?.category || 'Uncategorized',
+        image: listing?.images?.[0] || null,
+        total_views: p.total_views,
+        by_role: p.by_role
+      };
+    });
+
+    // Get recent views (last 10)
+    const recentViews = await View.find({ listing_id: { $in: listingIds } })
+      .sort({ viewed_at: -1 })
+      .limit(10)
+      .populate('listing_id', 'title')
+      .lean();
 
     const summary = {
       total_views: totalViews,
+      total_listings: userListings.length,
       by_role: byRole,
-      per_listing: perListing
+      per_listing: perListing,
+      top_viewed: perListing.slice(0, 5),
+      recent_views: recentViews.map(v => ({
+        listing_id: v.listing_id._id,
+        listing_title: v.listing_id.title,
+        viewer_role: v.viewer_role,
+        viewed_at: v.viewed_at
+      }))
     };
 
     res.status(200).json(summary);
@@ -717,7 +777,6 @@ exports.getMyListingsViewsSummary = async (req, res) => {
     res.status(500).json({ message: "Failed to fetch my views summary" });
   }
 };
-
 exports.getListingViews = async (req, res) => {
   try {
     const { id: listingId } = req.params;
