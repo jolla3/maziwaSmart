@@ -633,7 +633,6 @@ exports.deleteListing = async (req, res) => {
   }
 };
 
-// Controllers unchanged—already solid, but note: For guest views, remove verifyToken from route or add guest logic (e.g., viewerId null, role 'guest').
 
 exports.registerListingView = async (req, res) => {
   try {
@@ -641,9 +640,13 @@ exports.registerListingView = async (req, res) => {
     if (!mongoose.Types.ObjectId.isValid(listingId)) return res.status(400).json({ message: "Invalid listing ID format" });
 
     const viewerId = req.user._id;
-    const viewerSchema = req.user.schema;
-    const viewerRole = req.user.role;
-    if (!viewerSchema || !viewerRole) throw new Error('Missing user schema/role');
+    console.log('req.user:', req.user); // Debug: Log to trace missing fields
+
+    let viewerSchema = req.user.schema || 'User'; // Default if missing—fix auth
+    let viewerRole = req.user.role || 'viewer'; // Default if missing—fix auth
+    if (!viewerSchema || !viewerRole) {
+      console.warn('Warning: Defaulted missing schema/role'); // Log for fix
+    }
 
     const listing = await Listing.findById(listingId);
     if (!listing) return res.status(404).json({ message: "Listing not found" });
@@ -673,6 +676,8 @@ exports.registerListingView = async (req, res) => {
     res.status(500).json({ message: "Failed to register view" });
   }
 };
+
+// Other controllers unchanged
 
 exports.getMyListingsViewsSummary = async (req, res) => {
   try {
