@@ -1,48 +1,48 @@
-// routes/listingRoutes.js
-const express = require("express");
-const router = express.Router();
-const {
-  createListing,
-  getListings,
-  getUserListings,
-  getListingById,
-  updateListing,
-  deleteListing,
-  registerListingView,
-  getListingViewsSummary,
-  getListingViews,
-  getMyListingsViewsSummary,
-} = require("../controllers/listingController");
+  // routes/listingRoutes.js
+  const express = require("express");
+  const router = express.Router();
+  const {
+    createListing,
+    getListings,
+    getUserListings,
+    getListingById,
+    updateListing,
+    deleteListing,
+    registerListingView,
+    getListingViewsSummary,
+    getListingViews,
+    getMyListingsViewsSummary,
+  } = require("../controllers/listingController");
 
-const { verifyToken } = require("../middleware/authMiddleware");
-const makeUploader = require("../middleware/upload");
+  const { verifyToken } = require("../middleware/authMiddleware");
+  const makeUploader = require("../middleware/upload");
 
-// ✅ Cloudinary uploader for listings
-const upload = makeUploader("listings");
+  // ✅ Cloudinary uploader for listings
+  const upload = makeUploader("listings");
 
-// ---------------------------
-// Marketplace Routes
-// ---------------------------
+  // ---------------------------
+  // Marketplace Routes
+  // ---------------------------
 
-// Public: get all active listings
-router.get("/", getListings);
+  // Public: get all active listings
+  router.get("/", getListings);
 
-// Protected: get your own listings
-router.get("/mylistings", verifyToken, getUserListings);
+  // Protected: get your own listings
+  router.get("/mylistings", verifyToken, getUserListings);
 
-// Public: get a single listing (increments views)
-router.get("/:id",  getListingById);
+  // Public: get a single listing (increments views)
+  router.get("/:id",  getListingById);
 
-// Protected: create new listing (upload up to 10 images)
-router.post("/", verifyToken,  upload.array("images", 10), createListing);
+  // Protected: create new listing (upload up to 10 images)
+  router.post("/", verifyToken,  upload.array("images", 10), createListing);
 
-// ✅ PATCH instead of PUT for partial updates
-router.patch("/:id", verifyToken, upload.array("images", 10), updateListing);
+  // ✅ PATCH instead of PUT for partial updates
+  router.patch("/:id", verifyToken, upload.array("images", 10), updateListing);
 
-// Protected: delete your own listing
-router.delete("/:id", verifyToken, deleteListing);
-router.post("/views", verifyToken, registerListingView);
-router.get("/summary", verifyToken, getListingViews);
-router.get("/summary/:id", verifyToken, getMyListingsViewsSummary);
+  // Protected: delete your own listing
+  router.delete("/:id", verifyToken, deleteListing);
+  router.post("/views", verifyToken, registerListingView);
+  router.get("/summary", verifyToken, getListingViews);
+  router.get("/summary/:id", verifyToken, getMyListingsViewsSummary);
 
-module.exports = router;
+  module.exports = router;

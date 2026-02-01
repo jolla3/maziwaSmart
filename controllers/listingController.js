@@ -633,6 +633,8 @@ exports.deleteListing = async (req, res) => {
   }
 };
 
+// Controllers unchanged—already solid, but note: For guest views, remove verifyToken from route or add guest logic (e.g., viewerId null, role 'guest').
+
 exports.registerListingView = async (req, res) => {
   try {
     const listingId = req.params.id;
@@ -795,4 +797,3 @@ exports.getListingViews = async (req, res) => {
     res.status(500).json({ message: "Failed to fetch listing views" });
   }
 };
-
