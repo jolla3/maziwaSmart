@@ -796,7 +796,8 @@ exports.getMyListingsViewsSummary = async (req, res) => {
     console.error("❌ getMyListingsViewsSummary:", error);
     res.status(500).json({ message: "Failed to fetch my views summary", error: error.message });
   }
-};exports.getListingViews = async (req, res) => {
+};
+exports.getListingViews = async (req, res) => {
   try {
     const { id: listingId } = req.params;
     if (!mongoose.Types.ObjectId.isValid(listingId)) return res.status(400).json({ message: "Invalid listing ID format" });

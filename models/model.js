@@ -899,18 +899,7 @@ const listingSchema = new Schema({
   description: { type: String },
   photos: [{ type: String }],
   location: { type: String },
-  // Moved views to top-level
-  views: {
-    count: { type: Number, default: 0 },
-    viewed_by: [
-      {
-        viewer_id: { type: Schema.Types.ObjectId, required: true },
-        viewer_schema: { type: String, enum: ['Farmer', 'User'], required: true },
-        viewer_role: { type: String, required: true }, // Enforced required—no "unknown" slop
-        viewed_at: { type: Date, default: Date.now }
-      }
-    ]
-  },
+  
 
   // 🐄 Flexible details for seller-provided animals
   animal_details: {

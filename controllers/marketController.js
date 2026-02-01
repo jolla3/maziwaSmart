@@ -1,5 +1,5 @@
 // controllers/marketController.js
-const { Listing } = require('../models/model');
+const { Listing, View } = require('../models/model');
 
 // ---------------------------
 // GET market listings with filters + sorting
@@ -7,6 +7,8 @@ const { Listing } = require('../models/model');
 exports.getMarketListings = async (req, res) => {
   try {
     const { gender, species, minPrice, maxPrice, stage, breed, pregnant, sort } = req.query;
+
+
 
     // ✅ Base filter: available listings, hide sold/deceased animals
     let filter = {
@@ -33,6 +35,7 @@ exports.getMarketListings = async (req, res) => {
       .populate("animal_id", "cow_name species gender stage status breed_id")
       .select("title price location photos status createdAt views")
       .sort(sortOption);
+      
 
     res.status(200).json({
       success: true,
@@ -80,6 +83,11 @@ exports.getMarketListingById = async (req, res) => {
     if (!listing) {
       return res.status(404).json({ success: false, message: "Listing not found" });
     }
+
+    const viewsCount = await View.countDocuments({
+  listing_id: listing._id
+});
+
 
     const sellerData = listing.seller || listing.farmer || null;
 
@@ -131,20 +139,26 @@ exports.getMarketListingById = async (req, res) => {
     }
 
     res.status(200).json({
-      success: true,
-      listing: {
-        ...listing.toObject(),
-        _id: listing._id,
-        title: listing.title,
-        price: listing.price,
-        images: listing.photos?.length ? listing.photos : animalData?.photos || [],
-        location: listing.location,
-        createdAt: listing.createdAt,
-        views: listing.views,
-        seller: sellerData,
-        animal: animalData,
-      },
-    });
+  success: true,
+  listing: {
+    ...listing.toObject(),
+    _id: listing._id,
+
+    // SINGLE SOURCE OF TRUTH
+    views: viewsCount,
+
+    title: listing.title,
+    price: listing.price,
+    images: listing.photos?.length
+      ? listing.photos
+      : animalData?.photos || [],
+    location: listing.location,
+    createdAt: listing.createdAt,
+    seller: sellerData,
+    animal: animalData,
+  },
+});
+
   } catch (err) {
     console.error("❌ Market single fetch error:", err);
     res.status(500).json({ success: false, message: "Failed to fetch listing details" });
