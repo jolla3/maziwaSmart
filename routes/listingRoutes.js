@@ -41,8 +41,8 @@ router.patch("/:id", verifyToken, upload.array("images", 10), updateListing);
 
 // Protected: delete your own listing
 router.delete("/:id", verifyToken, deleteListing);
-router.post("/", verifyToken, registerListingView);
-router.get("/", verifyToken, getListingViews);
-router.get("/:id", verifyToken, getMyListingsViewsSummary);
+router.post("/views", verifyToken, registerListingView);
+router.get("/summary", verifyToken, getListingViews);
+router.get("/summary/:id", verifyToken, getMyListingsViewsSummary);
 
 module.exports = router;
