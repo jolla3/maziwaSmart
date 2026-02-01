@@ -32,7 +32,7 @@ const User = mongoose.model('User', userSchema);
 // ---------------------------
 const farmerSchema = new Schema({
   fullname: { type: String, required: true },
-  farmer_code: { type: Number,  unique: true },
+  farmer_code: { type: Number, unique: true },
   phone: { type: Number },
   email: { type: String },
   password: { type: String },
@@ -193,7 +193,7 @@ const breedSchema = new Schema({
 // SCHEMA-LEVEL VALIDATION: Prevent biologically impossible combinations
 // ============================================================================
 
-breedSchema.pre('validate', function(next) {
+breedSchema.pre('validate', function (next) {
   // Map valid animal_species → male_role combinations
   const validRoles = {
     'cow': 'bull',
@@ -205,7 +205,7 @@ breedSchema.pre('validate', function(next) {
   // If both fields are set, validate they match biology
   if (this.animal_species && this.male_role) {
     const expectedRole = validRoles[this.animal_species];
-    
+
     if (expectedRole !== this.male_role) {
       return next(new Error(
         `Invalid combination: male_role "${this.male_role}" ` +
@@ -385,7 +385,7 @@ cowSchema.pre("save", function (next) {
  */
 cowSchema.post("save", async function (doc, next) {
   try {
-const Cow = mongoose.model("Cow");
+    const Cow = mongoose.model("Cow");
     const ops = [];
 
     if (doc.mother_id && doc.isModified('mother_id')) {
@@ -642,19 +642,19 @@ const inseminationSchema = new Schema({
   insemination_date: { type: Date, required: true },
   inseminator: { type: String },
   method: { type: String, enum: ['AI', 'natural', 'other'], default: 'AI' },
-  
+
   // Bull information - either from profile or manual
   bull_profile_id: { type: Schema.Types.ObjectId, ref: 'Breed', default: null },
   bull_source: { type: String, enum: ['profile', 'manual'], required: true },
   bull_code: { type: String },
   bull_name: { type: String },
   bull_breed: { type: String },
-  
+
   // Outcome
-  outcome: { 
-    type: String, 
-    enum: ['pregnant', 'not_pregnant', 'unknown'], 
-    default: 'unknown' 
+  outcome: {
+    type: String,
+    enum: ['pregnant', 'not_pregnant', 'unknown'],
+    default: 'unknown'
   },
   expected_due_date: { type: Date, default: null },
   notes: { type: String },
@@ -686,23 +686,23 @@ inseminationSchema.post('save', async function (doc, next) {
 
     // === PREGNANCY CONFIRMED ===
     if (doc.outcome === 'pregnant') {
-      const gestationDaysMap = { 
-        cow: 283, 
-        goat: 150, 
-        sheep: 152, 
-        pig: 114 
+      const gestationDaysMap = {
+        cow: 283,
+        goat: 150,
+        sheep: 152,
+        pig: 114
       };
       const gestationDays = gestationDaysMap[cow.species] || 280;
 
       // Calculate due date if not provided
-      let dueDate = doc.expected_due_date 
-        ? new Date(doc.expected_due_date) 
+      let dueDate = doc.expected_due_date
+        ? new Date(doc.expected_due_date)
         : new Date(doc.insemination_date);
-      
+
       if (!doc.expected_due_date) {
         dueDate.setDate(dueDate.getDate() + gestationDays);
-        await Insemination.findByIdAndUpdate(doc._id, { 
-          $set: { expected_due_date: dueDate } 
+        await Insemination.findByIdAndUpdate(doc._id, {
+          $set: { expected_due_date: dueDate }
         });
       }
 
@@ -743,15 +743,15 @@ inseminationSchema.post('save', async function (doc, next) {
           insemination_date: { $lte: doc.insemination_date },
           outcome: { $nin: ['pregnant', 'not_pregnant'] }
         },
-        { 
-          $set: { 
-            outcome: 'not_pregnant', 
-            resolved_by: doc._id, 
-            resolved_at: new Date() 
-          } 
+        {
+          $set: {
+            outcome: 'not_pregnant',
+            resolved_by: doc._id,
+            resolved_at: new Date()
+          }
         }
       );
-    } 
+    }
     // === PREGNANCY FAILED ===
     else if (doc.outcome === 'not_pregnant') {
       // Only reset if this was the active pregnancy
@@ -821,18 +821,18 @@ const Payment = mongoose.model('Payment', paymentSchema);
 // Notification Schema
 // ---------------------------
 const notificationSchema = new mongoose.Schema({
- user: {
-  id: { type: mongoose.Schema.Types.ObjectId, required: true },
-  type: { type: String, enum: ['User', 'Farmer' , 'seller' , 'superadmin'], required: true }
-},
+  user: {
+    id: { type: mongoose.Schema.Types.ObjectId, required: true },
+    type: { type: String, enum: ['User', 'Farmer', 'seller', 'superadmin'], required: true }
+  },
 
-    farmer_code: { type: Number },
+  farmer_code: { type: Number },
 
   cow: { type: mongoose.Schema.Types.ObjectId, ref: 'Cow' }, // optional, only for animal-specific events  
-  type: { 
-    type: String, 
-    enum: ['gestation_alert', 'calving_reminder', 'milk_anomaly', 'general', 'chat_message'], 
-    required: true 
+  type: {
+    type: String,
+    enum: ['gestation_alert', 'calving_reminder', 'milk_anomaly', 'general', 'chat_message'],
+    required: true
   },
   message: { type: String, required: true },
   is_read: { type: Boolean, default: false },
@@ -916,22 +916,22 @@ const listingSchema = new Schema({
 
     // lifecycle
     status: { type: String, enum: ["active", "pregnant", "deceased"], default: "active" },
-    stage: { 
-    type: String,
-    enum: [
-      // Cows
-      'calf', 'heifer', 'cow',
-      // Bulls
-      'bull_calf', 'young_bull', 'mature_bull',
-      // Goats
-      'kid', 'doeling', 'buckling', 'nanny', 'buck',
-      // Sheep
-      'lamb', 'ewe', 'ram',
-      // Pigs
-      'piglet', 'gilt', 'sow', 'boar'
-    ],
-    default: null
-  },
+    stage: {
+      type: String,
+      enum: [
+        // Cows
+        'calf', 'heifer', 'cow',
+        // Bulls
+        'bull_calf', 'young_bull', 'mature_bull',
+        // Goats
+        'kid', 'doeling', 'buckling', 'nanny', 'buck',
+        // Sheep
+        'lamb', 'ewe', 'ram',
+        // Pigs
+        'piglet', 'gilt', 'sow', 'boar'
+      ],
+      default: null
+    },
 
     // pregnancy info
     pregnancy: {
@@ -944,6 +944,18 @@ const listingSchema = new Schema({
   status: { type: String, enum: ["available", "sold"], default: "available" }
 }, { timestamps: true });
 const Listing = mongoose.model('Listing', listingSchema);
+
+const viewSchema = new Schema({
+  listing_id: { type: Schema.Types.ObjectId, ref: 'Listing', required: true },
+  viewer_id: { type: Schema.Types.ObjectId, required: true },
+  viewer_schema: { type: String, enum: ['Farmer', 'User'], required: true },
+  viewer_role: { type: String, required: true },
+  viewed_at: { type: Date, default: Date.now }
+});
+viewSchema.index({ listing_id: 1, viewer_id: 1 }, { unique: true }); // Enforce unique views per user/listing
+viewSchema.index({ listing_id: 1 }); // For fast aggregates on summary
+viewSchema.index({ viewer_role: 1 }); // Optimize role grouping
+const View = mongoose.model('View', viewSchema);
 
 const chatSchema = new Schema({
   participants: [{ type: Schema.Types.ObjectId, ref: 'User' }], // buyer + seller
@@ -959,7 +971,7 @@ const chatSchema = new Schema({
 const Chat = mongoose.model('Chat', chatSchema);
 
 // models/chatModel.js
- 
+
 const chatRoomSchema = new mongoose.Schema({
   participants: [
     { type: mongoose.Schema.Types.ObjectId, ref: "User" } // buyer + seller
@@ -1047,6 +1059,7 @@ module.exports = {
   Insemination,
   VetLog,
   Payment,
+  View,
   Notification,
   Report,
   SmsLog,
@@ -1054,5 +1067,5 @@ module.exports = {
   Listing,
   Chat,
   ChatRoom,
-   ChatMessage
+  ChatMessage
 };

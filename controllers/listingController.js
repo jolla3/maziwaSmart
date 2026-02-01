@@ -1,5 +1,5 @@
 // controllers/listingController.js
-const { Listing, Farmer, Cow, User } = require("../models/model");
+const { Listing, Farmer, Cow, User, View } = require("../models/model");
 const cloudinary = require("cloudinary").v2;
 
 // ✅ Ensure Cloudinary is configured globally
@@ -33,7 +33,7 @@ exports.createListing = async (req, res) => {
     let parsedDetails = {};
     if (req.body.animal_details) {
       try {
-        parsedDetails = typeof req.body.animal_details === "string" 
+        parsedDetails = typeof req.body.animal_details === "string"
           ? JSON.parse(req.body.animal_details)
           : req.body.animal_details;
       } catch (err) {
@@ -513,7 +513,7 @@ exports.updateListing = async (req, res) => {
           photosArray.push(req.body[key]);
         }
       });
-      
+
       if (photosArray.length > 0) {
         finalPhotos = photosArray.filter(p => p && typeof p === 'string' && p.startsWith('http'));
       } else {
@@ -533,7 +533,7 @@ exports.updateListing = async (req, res) => {
     }
 
     // Remove duplicates and filter out invalid URLs
-    updates.photos = [...new Set(finalPhotos)].filter(p => 
+    updates.photos = [...new Set(finalPhotos)].filter(p =>
       p && typeof p === 'string' && p.startsWith('http')
     );
 
@@ -628,5 +628,111 @@ exports.deleteListing = async (req, res) => {
       message: "Failed to delete listing",
       error: err.message
     });
+  }
+};
+
+exports.registerListingView = async (req, res) => {
+  try {
+    const listingId = req.params.id;
+    const viewerId = req.user._id;
+    const viewerSchema = req.user.schema; // Validate existence
+    const viewerRole = req.user.role;
+    if (!viewerSchema || !viewerRole) throw new Error('Missing user schema/role');
+
+    const listing = await Listing.findById(listingId);
+    if (!listing) return res.status(404).json({ message: "Listing not found" });
+
+    const updated = await Listing.findOneAndUpdate(
+      {
+        _id: listingId,
+        "views.viewed_by.viewer_id": { $ne: viewerId }
+      },
+      {
+        $inc: { "views.count": 1 },
+        $push: {
+          "views.viewed_by": {
+            viewer_id: viewerId,
+            viewer_schema: viewerSchema,
+            viewer_role: viewerRole
+          }
+        }
+      },
+      { new: true } // Fixed: Return updated for potential logging
+    );
+
+    if (!updated) return res.status(204).send(); // Already viewed
+    res.status(204).send();
+  } catch (err) {
+    console.error("❌ registerListingView:", err);
+    res.status(500).json({ message: "Failed to register view" });
+  }
+};
+
+// Private: Aggregates views across all user's listings (seller-owned)
+exports.getMyListingsViewsSummary = async (req, res) => {
+  try {
+    const userId = req.user._id; // Assume auth middleware sets req.user
+
+    // Get user's listing IDs
+    const userListings = await Listing.find({ seller: userId }).select('_id').lean();
+    if (!userListings.length) return res.status(200).json({ total_views: 0, by_role: {}, per_listing: [] });
+
+    const listingIds = userListings.map(l => l._id);
+
+    // Aggregate total views and by_role across all
+    const agg = await View.aggregate([
+      { $match: { listing_id: { $in: listingIds } } },
+      { $group: { _id: "$viewer_role", count: { $sum: 1 } } }
+    ]);
+
+    const byRole = {};
+    let totalViews = 0;
+    agg.forEach(group => {
+      byRole[group._id] = group.count;
+      totalViews += group.count;
+    });
+
+    // Per-listing breakdown (for detail, scalable with limit if needed)
+    const perListingAgg = await View.aggregate([
+      { $match: { listing_id: { $in: listingIds } } },
+      { $group: { _id: "$listing_id", views: { $sum: 1 }, roles: { $push: "$viewer_role" } } },
+      { $project: { views: 1, by_role: { $arrayToObject: { $map: { input: { $setUnion: "$roles" }, as: "r", in: { k: "$$r", v: { $size: { $filter: { input: "$roles", cond: { $eq: ["$$this", "$$r"] } } } } } } } } } }
+    ]);
+
+    const perListing = perListingAgg.map(p => ({
+      listing_id: p._id,
+      total_views: p.views,       
+      by_role: p.by_role
+    }));
+
+    const summary = {
+      total_views: totalViews,
+      by_role: byRole,
+      per_listing: perListing
+    };
+
+    res.status(200).json(summary);
+  } catch (error) {
+    console.error("❌ getMyListingsViewsSummary:", error);
+    res.status(500).json({ message: "Failed to fetch my views summary" });
+  }
+};
+
+// Public: Get views for specific listing (just total, no by_role for privacy)
+exports.getListingViews = async (req, res) => {
+  try {
+    const { id: listingId } = req.params;
+
+    const listing = await Listing.findById(listingId)
+      .select("views.count")
+      .lean();
+    if (!listing) return res.status(404).json({ message: "Listing not found" });
+
+    const totalViews = listing.views?.count || 0;
+
+    res.status(200).json({ listing_id: listingId, total_views: totalViews });
+  } catch (error) {
+    console.error("❌ getListingViews:", error);
+    res.status(500).json({ message: "Failed to fetch listing views" });
   }
 };

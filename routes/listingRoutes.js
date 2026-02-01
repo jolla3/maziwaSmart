@@ -8,6 +8,10 @@ const {
   getListingById,
   updateListing,
   deleteListing,
+  registerListingView,
+  getListingViewsSummary,
+  getListingViews,
+  getMyListingsViewsSummary,
 } = require("../controllers/listingController");
 
 const { verifyToken } = require("../middleware/authMiddleware");
@@ -37,5 +41,8 @@ router.patch("/:id", verifyToken, upload.array("images", 10), updateListing);
 
 // Protected: delete your own listing
 router.delete("/:id", verifyToken, deleteListing);
+router.post("/", verifyToken, registerListingView);
+router.get("/", verifyToken, getListingViews);
+router.get("/:id", verifyToken, getMyListingsViewsSummary);
 
 module.exports = router;
