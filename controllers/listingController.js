@@ -671,11 +671,17 @@ exports.registerListingView = async (req, res) => {
 
 exports.getMyListingsViewsSummary = async (req, res) => {
   try {
-    const userId = req.user._id;
+    const userId = req.user._id || req.user.id; // Handle both _id and id
 
+    console.log('🔍 Getting views summary for user:', userId);
+
+    // Find listings owned by this user
     const userListings = await Listing.find({ seller: userId })
       .select('_id title price category images')
       .lean();
+
+    console.log('📦 Found listings:', userListings.length);
+    console.log('📦 Listing IDs:', userListings.map(l => l._id));
 
     if (!userListings.length) {
       return res.status(200).json({
@@ -690,11 +696,17 @@ exports.getMyListingsViewsSummary = async (req, res) => {
 
     const listingIds = userListings.map(l => l._id);
 
+    // Debug: Check if views exist for these listings
+    const viewCount = await View.countDocuments({ listing_id: { $in: listingIds } });
+    console.log('👀 Total views found:', viewCount);
+
     // Get total views by role
     const roleAgg = await View.aggregate([
       { $match: { listing_id: { $in: listingIds } } },
       { $group: { _id: "$viewer_role", count: { $sum: 1 } } }
     ]);
+
+    console.log('📊 Role aggregation result:', roleAgg);
 
     const byRole = {};
     let totalViews = 0;
@@ -733,6 +745,8 @@ exports.getMyListingsViewsSummary = async (req, res) => {
       { $sort: { total_views: -1 } }
     ]);
 
+    console.log('📊 Per-listing aggregation result:', perListingAgg);
+
     // Merge listing details with view data
     const perListing = perListingAgg.map(p => {
       const listing = userListings.find(l => l._id.toString() === p._id.toString());
@@ -747,12 +761,24 @@ exports.getMyListingsViewsSummary = async (req, res) => {
       };
     });
 
-    // Get recent views (last 10)
+    // Get recent views (last 10) - fix the populate issue
     const recentViews = await View.find({ listing_id: { $in: listingIds } })
       .sort({ viewed_at: -1 })
       .limit(10)
-      .populate('listing_id', 'title')
       .lean();
+
+    console.log('🕐 Recent views found:', recentViews.length);
+
+    // Manually add listing titles
+    const recentViewsWithTitles = recentViews.map(v => {
+      const listing = userListings.find(l => l._id.toString() === v.listing_id.toString());
+      return {
+        listing_id: v.listing_id,
+        listing_title: listing?.title || 'Unknown Listing',
+        viewer_role: v.viewer_role,
+        viewed_at: v.viewed_at
+      };
+    });
 
     const summary = {
       total_views: totalViews,
@@ -760,21 +786,17 @@ exports.getMyListingsViewsSummary = async (req, res) => {
       by_role: byRole,
       per_listing: perListing,
       top_viewed: perListing.slice(0, 5),
-      recent_views: recentViews.map(v => ({
-        listing_id: v.listing_id._id,
-        listing_title: v.listing_id.title,
-        viewer_role: v.viewer_role,
-        viewed_at: v.viewed_at
-      }))
+      recent_views: recentViewsWithTitles
     };
+
+    console.log('✅ Summary response:', JSON.stringify(summary, null, 2));
 
     res.status(200).json(summary);
   } catch (error) {
     console.error("❌ getMyListingsViewsSummary:", error);
-    res.status(500).json({ message: "Failed to fetch my views summary" });
+    res.status(500).json({ message: "Failed to fetch my views summary", error: error.message });
   }
-};
-exports.getListingViews = async (req, res) => {
+};exports.getListingViews = async (req, res) => {
   try {
     const { id: listingId } = req.params;
     if (!mongoose.Types.ObjectId.isValid(listingId)) return res.status(400).json({ message: "Invalid listing ID format" });
