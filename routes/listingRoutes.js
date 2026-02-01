@@ -33,7 +33,7 @@ router.patch("/:id", verifyToken, upload.array("images", 10), updateListing);
 // Protected: delete your own listing
 router.delete("/:id", verifyToken, deleteListing);
 // Fixed: Added :id to path for register—matches controller
-router.post("/:id/views", verifyToken, registerListingView);
+router.post("/views/:id", verifyToken, registerListingView);
 // Trash routes below—mismatched, rename or fix if needed
 // router.get("/summary", verifyToken, getListingViews); // No id? Useless
 router.get("/summary/:id", verifyToken, getListingViews); // Fixed to use getListingViews
