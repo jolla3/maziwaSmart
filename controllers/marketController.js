@@ -92,51 +92,54 @@ exports.getMarketListingById = async (req, res) => {
     const sellerData = listing.seller || listing.farmer || null;
 
     // Unified animal details extraction with fallback
-    let animalData = null;
+    // Unified animal details extraction with fallback
+let animalData = null;
 
-    if (listing.animal_id) {
-      const animal = listing.animal_id;
-      animalData = {
-        name: animal.cow_name || "Unnamed",
-        species: animal.species || listing.animal_type || "Unknown",
-        gender: animal.gender,
-        stage: animal.stage,
-        status: animal.status,
-        breed: animal.breed_id?.breed_name || animal.bull_breed || "Unknown",
-        lifetime_milk: animal.lifetime_milk || 0,
-        daily_average: animal.daily_average || 0,
-        calved_count: animal.total_offspring || 0,
-        bull_code: animal.pregnancy?.insemination_id?.bull_code || null,
-        bull_name: animal.pregnancy?.insemination_id?.bull_name || null,
-        bull_breed: animal.pregnancy?.insemination_id?.bull_breed || null,
-        pregnancy: {
-          is_pregnant: animal.pregnancy?.is_pregnant || false,
-          expected_due_date: animal.pregnancy?.insemination_id?.expected_due_date || animal.pregnancy?.expected_due_date || null,
-        },
-        photos: animal.photos || [],
-      };
-    } else if (listing.animal_details) {
-      const details = listing.animal_details;
-      animalData = {
-        name: details.bull_name || details.breed_name || listing.title || "Unnamed",
-        species: listing.animal_type || "Unknown",
-        gender: details.gender,
-        stage: details.stage,
-        status: details.status,
-        breed: details.breed_name || details.bull_breed || "Unknown",
-        lifetime_milk: details.lifetime_milk || 0,
-        daily_average: details.daily_average || 0,
-        calved_count: details.total_offspring || 0,
-        bull_code: details.bull_code || null,
-        bull_name: details.bull_name || null,
-        bull_breed: details.bull_breed || null,
-        pregnancy: {
-          is_pregnant: details.pregnancy?.is_pregnant || false,
-          expected_due_date: details.pregnancy?.expected_due_date || null,
-        },
-        photos: listing.photos || [],
-      };
-    }
+if (listing.animal_id) {
+  const animal = listing.animal_id;
+  animalData = {
+    name: animal.cow_name || "Unnamed",
+    species: animal.species || listing.animal_type || "Unknown",
+    gender: animal.gender,
+    stage: animal.stage,
+    status: animal.status,
+    breed: animal.breed_id?.breed_name || animal.bull_breed || "Unknown",
+    lifetime_milk: animal.lifetime_milk || 0,
+    daily_average: animal.daily_average || 0,
+    calved_count: animal.total_offspring || 0,
+    age: animal.age || 0, // <-- added age here
+    bull_code: animal.pregnancy?.insemination_id?.bull_code || null,
+    bull_name: animal.pregnancy?.insemination_id?.bull_name || null,
+    bull_breed: animal.pregnancy?.insemination_id?.bull_breed || null,
+    pregnancy: {
+      is_pregnant: animal.pregnancy?.is_pregnant || false,
+      expected_due_date: animal.pregnancy?.insemination_id?.expected_due_date || animal.pregnancy?.expected_due_date || null,
+    },
+    photos: animal.photos || [],
+  };
+} else if (listing.animal_details) {
+  const details = listing.animal_details;
+  animalData = {
+    name: details.bull_name || details.breed_name || listing.title || "Unnamed",
+    species: listing.animal_type || "Unknown",
+    gender: details.gender,
+    stage: details.stage,
+    status: details.status,
+    breed: details.breed_name || details.bull_breed || "Unknown",
+    lifetime_milk: details.lifetime_milk || 0,
+    daily_average: details.daily_average || 0,
+    calved_count: details.total_offspring || 0,
+    age: details.age || 0, // <-- added age here
+    bull_code: details.bull_code || null,
+    bull_name: details.bull_name || null,
+    bull_breed: details.bull_breed || null,
+    pregnancy: {
+      is_pregnant: details.pregnancy?.is_pregnant || false,
+      expected_due_date: details.pregnancy?.expected_due_date || null,
+    },
+    photos: listing.photos || [],
+  };
+}
 
     res.status(200).json({
   success: true,
