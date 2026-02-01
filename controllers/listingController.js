@@ -634,30 +634,23 @@ exports.deleteListing = async (req, res) => {
 };
 
 
+
 exports.registerListingView = async (req, res) => {
   try {
     const listingId = req.params.id;
     if (!mongoose.Types.ObjectId.isValid(listingId)) return res.status(400).json({ message: "Invalid listing ID format" });
-
-    const viewerId = req.user._id;
-    console.log('req.user:', req.user); // Debug: Log to trace missing fields
-
-    let viewerSchema = req.user.schema || 'User'; // Default if missing—fix auth
-    let viewerRole = req.user.role || 'viewer'; // Default if missing—fix auth
-    if (!viewerSchema || !viewerRole) {
-      console.warn('Warning: Defaulted missing schema/role'); // Log for fix
-    }
-
+    const viewerId = req.user.id; // Fixed: Use id from payload, not _id
+    console.log('req.user:', req.user); // Debug
+    let viewerSchema = req.user.schema || (req.user.role === 'farmer' ? 'Farmer' : 'User'); // Infer from role
+    let viewerRole = req.user.role || 'viewer';
     const listing = await Listing.findById(listingId);
     if (!listing) return res.status(404).json({ message: "Listing not found" });
-
     const newView = new View({
       listing_id: listingId,
       viewer_id: viewerId,
       viewer_schema: viewerSchema,
       viewer_role: viewerRole
     });
-
     let saved;
     try {
       saved = await newView.save();
@@ -665,18 +658,15 @@ exports.registerListingView = async (req, res) => {
       if (err.code === 11000) return res.status(204).send();
       throw err;
     }
-
     if (saved) {
       await Listing.findByIdAndUpdate(listingId, { $inc: { "views.count": 1 } });
     }
-
     res.status(204).send();
   } catch (err) {
     console.error("❌ registerListingView:", err);
     res.status(500).json({ message: "Failed to register view" });
   }
 };
-
 // Other controllers unchanged
 
 exports.getMyListingsViewsSummary = async (req, res) => {
@@ -686,12 +676,12 @@ exports.getMyListingsViewsSummary = async (req, res) => {
     const userListings = await Listing.find({ seller: userId })
       .select('_id title price category images')
       .lean();
-    
+
     if (!userListings.length) {
-      return res.status(200).json({ 
-        total_views: 0, 
+      return res.status(200).json({
+        total_views: 0,
         total_listings: 0,
-        by_role: {}, 
+        by_role: {},
         per_listing: [],
         top_viewed: [],
         recent_views: []
@@ -716,11 +706,11 @@ exports.getMyListingsViewsSummary = async (req, res) => {
     // Get per-listing views with role breakdown
     const perListingAgg = await View.aggregate([
       { $match: { listing_id: { $in: listingIds } } },
-      { 
-        $group: { 
+      {
+        $group: {
           _id: { listing: "$listing_id", role: "$viewer_role" },
           count: { $sum: 1 }
-        } 
+        }
       },
       {
         $group: {
