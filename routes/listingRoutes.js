@@ -1,4 +1,4 @@
-// routes/listingRoutes.js (fixed post route to match frontend)
+// routes/listingRoutes.js
 const express = require("express");
 const router = express.Router();
 const {
@@ -17,11 +17,10 @@ const {
 const { verifyToken } = require("../middleware/authMiddleware");
 const makeUploader = require("../middleware/upload");
 
-// ✅ Cloudinary uploader for listings
 const upload = makeUploader("listings");
 
 // ---------------------------
-// Marketplace Routes
+// IMPORTANT: Specific routes BEFORE dynamic :id routes!
 // ---------------------------
 
 // Public: get all active listings
@@ -30,23 +29,17 @@ router.get("/", getListings);
 // Protected: get your own listings
 router.get("/mylistings", verifyToken, getUserListings);
 
-// Public: get a single listing (increments views)
-router.get("/:id",  getListingById);
-
-// Protected: create new listing (upload up to 10 images)
-router.post("/", verifyToken,  upload.array("images", 10), createListing);
-
-// ✅ PATCH instead of PUT for partial updates
-router.patch("/:id", verifyToken, upload.array("images", 10), updateListing);
-
-// Protected: delete your own listing
-router.delete("/:id", verifyToken, deleteListing);
-
-// Fixed: Path to /views/:id to match frontend POST /api/listing/views/${id}
+// VIEWS ROUTES - Must come BEFORE /:id route!
 router.post("/views/:id", verifyToken, registerListingView);
-
-// Other summaries—assuming you fixed names
-router.get("/summary/:id", verifyToken, getListingViews);
 router.get("/my-summary", verifyToken, getMyListingsViewsSummary);
+router.get("/summary/:id", verifyToken, getListingViews);
+
+// Protected: create new listing
+router.post("/", verifyToken, upload.array("images", 10), createListing);
+
+// Dynamic routes LAST (will catch anything not matched above)
+router.get("/:id", getListingById);
+router.patch("/:id", verifyToken, upload.array("images", 10), updateListing);
+router.delete("/:id", verifyToken, deleteListing);
 
 module.exports = router;
