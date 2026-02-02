@@ -587,13 +587,18 @@ cowMilkRecordSchema.post('save', async function (doc, next) {
       );
 
       await Notification.create([{
-        farmer_code: doc.farmer_code,
-        cow: doc.animal_id,
-        type: 'milk_anomaly',
-        message: `⚠️ Anomaly for ${doc.cow_name} (${doc.time_slot}): ${anomalyData.anomaly_type} (${doc.litres}L vs avg ${newDailyAverage.toFixed(2)}L)`,
-        sent_at: moment.tz("Africa/Nairobi").toDate(),
-        read: false // Add status
-      }], { session });
+  user: {
+    id: farmer._id,
+    type: 'Farmer'
+  },
+  farmer_code: doc.farmer_code,
+  cow: doc.animal_id,
+  type: 'milk_anomaly',
+  message: `⚠️ Anomaly for ${doc.cow_name} (${doc.time_slot}): ${anomalyData.anomaly_type} (${doc.litres}L vs avg ${newDailyAverage.toFixed(2)}L)`,
+  sent_at: moment.tz("Africa/Nairobi").toDate(),
+  read: false
+}], { session });
+
     }
 
     await flagAnimalForListing(doc.animal_id, session);
