@@ -53,7 +53,7 @@ exports.getMarketListingById = async (req, res) => {
       .populate({
         path: "animal_id",
         select:
-          "cow_name species breed_id mother_id lifetime_milk daily_average total_offspring status stage photos pregnancy offspring_ids birth_date gender",
+          "cow_name species breed_id mother_id lifetime_milk daily_average total_offspring status stage photos pregnancy offspring_ids birth_date age gender",
         populate: [
           { path: "breed_id", select: "breed_name" },
           {
@@ -94,7 +94,7 @@ exports.getMarketListingById = async (req, res) => {
       lifetime_milk: details.lifetime_milk || listing.animal_id?.lifetime_milk || 0,
       daily_average: details.daily_average || listing.animal_id?.daily_average || 0,
       calved_count: details.total_offspring || listing.animal_id?.total_offspring || 0,
-display_age: details.age || null,
+      age: details.age ,
       bull_code: details.bull_code || listing.animal_id?.pregnancy?.insemination_id?.bull_code || null,
       bull_name: details.bull_name || listing.animal_id?.pregnancy?.insemination_id?.bull_name || null,
       bull_breed: details.bull_breed || listing.animal_id?.pregnancy?.insemination_id?.bull_breed || null,
