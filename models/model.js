@@ -588,7 +588,7 @@ cowMilkRecordSchema.post('save', async function (doc, next) {
 
       await Notification.create([{
   user: {
-    id: farmer._id,
+    id: Farmer._id,
     type: 'Farmer'
   },
   farmer_code: doc.farmer_code,
