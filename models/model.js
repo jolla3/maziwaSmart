@@ -907,7 +907,7 @@ const listingSchema = new Schema({
 
   // Unified details: always populate this, copy from animal for farmers
   animal_details: {
-    age: { type: Number }, // Raw age input (for sellers)
+    age: { type:String }, // Raw age input (for sellers)
     birth_date: { type: Date }, // For precise age calc (for farmers)
     breed_name: { type: String },
     gender: { type: String, enum: ["male", "female"] },
