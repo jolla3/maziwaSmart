@@ -892,18 +892,18 @@ const MilkAnomaly = mongoose.model('MilkAnomaly', milkAnomalySchema);
 const listingSchema = new Schema({
   title: { type: String, required: true },
   animal_type: { type: String, required: true },
-  animal_id: { type: Schema.Types.ObjectId, ref: "Cow", default: null },
+  animal_id: { type: Schema.Types.ObjectId, ref: "Cow", default: null }, // TODO: Generalize ref to 'Animal' if multi-species
   farmer: { type: Schema.Types.ObjectId, ref: "Farmer", default: null },
   seller: { type: Schema.Types.ObjectId, ref: "User", required: true },
   price: { type: Number, required: true },
   description: { type: String },
   photos: [{ type: String }],
   location: { type: String },
-  
 
-  // 🐄 Flexible details for seller-provided animals
+  // Unified details: always populate this, copy from animal for farmers
   animal_details: {
-    age: { type: Number },
+    age: { type: Number }, // Raw age input (for sellers)
+    birth_date: { type: Date }, // For precise age calc (for farmers)
     breed_name: { type: String },
     gender: { type: String, enum: ["male", "female"] },
     bull_code: { type: String },
@@ -945,6 +945,7 @@ const listingSchema = new Schema({
   status: { type: String, enum: ["available", "sold"], default: "available" }
 }, { timestamps: true });
 const Listing = mongoose.model('Listing', listingSchema);
+
 
 const viewSchema = new Schema({
   listing_id: { type: Schema.Types.ObjectId, ref: 'Listing', required: true },
