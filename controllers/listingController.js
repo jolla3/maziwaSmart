@@ -196,7 +196,8 @@ exports.createListing = async (req, res) => {
       error: err.message,
     });
   }
-};// GET all active listings (Marketplace homepage)
+};
+// GET all active listings (Marketplace homepage)
 // ---------------------------
 exports.getListings = async (req, res) => {
   try {

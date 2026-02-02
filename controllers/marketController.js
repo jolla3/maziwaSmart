@@ -94,7 +94,7 @@ exports.getMarketListingById = async (req, res) => {
       lifetime_milk: details.lifetime_milk || listing.animal_id?.lifetime_milk || 0,
       daily_average: details.daily_average || listing.animal_id?.daily_average || 0,
       calved_count: details.total_offspring || listing.animal_id?.total_offspring || 0,
-      display_age: calculateAge(details.birth_date, details.age), // Unified display
+display_age: details.age || null,
       bull_code: details.bull_code || listing.animal_id?.pregnancy?.insemination_id?.bull_code || null,
       bull_name: details.bull_name || listing.animal_id?.pregnancy?.insemination_id?.bull_name || null,
       bull_breed: details.bull_breed || listing.animal_id?.pregnancy?.insemination_id?.bull_breed || null,
