@@ -95,23 +95,25 @@ exports.createListing = async (req, res) => {
       listingData.animal_id = animal._id;
       // Copy animal details to unified structure
       listingData.animal_details = {
-        birth_date: animal.birth_date,
-        breed_name: animal.breed_id?.breed_name || animal.bull_breed || "Unknown",
-        gender: animal.gender,
-        status: animal.status,
-        stage: animal.stage,
-        lifetime_milk: animal.lifetime_milk || 0,
-        daily_average: animal.daily_average || 0,
-        total_offspring: animal.total_offspring || 0,
-        pregnancy: {
-          is_pregnant: animal.pregnancy?.is_pregnant || false,
-          expected_due_date: animal.pregnancy?.expected_due_date || null,
-          insemination_id: animal.pregnancy?.insemination_id || null,
-        },
-        bull_code: animal.pregnancy?.insemination_id?.bull_code || "",
-        bull_name: animal.pregnancy?.insemination_id?.bull_name || "",
-        bull_breed: animal.pregnancy?.insemination_id?.bull_breed || "",
-      };
+  age: animal.age,                // ✅ THIS LINE
+  birth_date: animal.birth_date,
+  breed_name: animal.breed_id?.breed_name || animal.bull_breed || "Unknown",
+  gender: animal.gender,
+  status: animal.status,
+  stage: animal.stage,
+  lifetime_milk: animal.lifetime_milk || 0,
+  daily_average: animal.daily_average || 0,
+  total_offspring: animal.total_offspring || 0,
+  pregnancy: {
+    is_pregnant: animal.pregnancy?.is_pregnant || false,
+    expected_due_date: animal.pregnancy?.expected_due_date || null,
+    insemination_id: animal.pregnancy?.insemination_id || null,
+  },
+  bull_code: animal.pregnancy?.insemination_id?.bull_code || "",
+  bull_name: animal.pregnancy?.insemination_id?.bull_name || "",
+  bull_breed: animal.pregnancy?.insemination_id?.bull_breed || "",
+};
+
       // If parsedDetails provided (now sent from frontend), merge overrides
       if (Object.keys(parsedDetails).length > 0) {
         listingData.animal_details = { ...listingData.animal_details, ...parsedDetails };
