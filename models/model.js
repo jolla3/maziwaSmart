@@ -21,6 +21,8 @@ const userSchema = new Schema({
     required: true
   },
   photo: { type: String },
+  resetToken: { type: String }, // Hashed token
+  resetExpiry: { type: Date },
   created_by: { type: Schema.Types.ObjectId, ref: 'User' },
   is_approved_seller: { type: Boolean, default: false }
 }, { timestamps: true });
@@ -44,6 +46,8 @@ const farmerSchema = new Schema({
   join_date: { type: Date, default: Date.now },
   created_by: { type: Schema.Types.ObjectId, ref: 'User' },
   manager_ids: [{ type: Schema.Types.ObjectId, ref: 'Manager' }],
+  resetToken: { type: String },
+  resetExpiry: { type: Date },
   is_active: { type: Boolean, default: true }
 }, { timestamps: true });
 
@@ -587,35 +591,35 @@ cowMilkRecordSchema.post('save', async function (doc, next) {
       );
 
       await Notification.create([{
-  user: {
-    id: Farmer._id,
-    type: 'Farmer'
-  },
-  farmer_code: doc.farmer_code,
-  cow: doc.animal_id,
-  type: 'milk_anomaly',
-  message: `⚠️ Anomaly for ${doc.cow_name} (${doc.time_slot}): ${anomalyData.anomaly_type} (${doc.litres}L vs avg ${newDailyAverage.toFixed(2)}L)`,
-  sent_at: moment.tz("Africa/Nairobi").toDate(),
-  read: false
-}], { session });
-
+        user: {
+          id: doc.farmer,  // Fixed: Use doc.farmer (ObjectId from record)
+          type: 'Farmer'
+        },
+        farmer_code: doc.farmer_code,
+        cow: doc.animal_id,
+        type: 'milk_anomaly',
+        message: `⚠️ Anomaly for ${doc.cow_name} (${doc.time_slot}): ${anomalyData.anomaly_type} (${doc.litres}L vs avg ${newDailyAverage.toFixed(2)}L)`,
+        sent_at: moment.tz("Africa/Nairobi").toDate(),
+        read: false
+      }], { session });
     }
 
+    // Assuming flagAnimalForListing is defined elsewhere—trash if not, remove or fix
     await flagAnimalForListing(doc.animal_id, session);
 
     await session.commitTransaction();
-    session.endSession();
   } catch (err) {
     await session.abortTransaction();
-    session.endSession();
     console.error('CowMilkRecord post-save transaction error:', err);
+    return next(err); // Propagate to Mongoose error handler
+  } finally {
+    session.endSession(); // Always end—your code skips this on success, leak risk
   }
 
   next();
 });
 
 const CowMilkRecord = mongoose.model('CowMilkRecord', cowMilkRecordSchema);
-
 
 // ---------------------------
 // Daily Milk Summary Schema

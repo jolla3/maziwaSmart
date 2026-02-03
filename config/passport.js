@@ -2,6 +2,7 @@
 const passport = require("passport");
 const GoogleStrategy = require("passport-google-oauth20").Strategy;
 const { User, Farmer } = require("../models/model");
+const { sendWelcomeEmail } = require("../utils/emailService"); // Add this import—your code skips it, trash
 
 const callbackURL =
   process.env.NODE_ENV === "production"
@@ -82,6 +83,11 @@ passport.use(
           });
 
           const savedFarmer = await newFarmer.save();
+          // Welcome email—non-blocking
+          if (savedFarmer.email && savedFarmer.fullname) {
+            sendWelcomeEmail(savedFarmer.email, savedFarmer.fullname, "farmer")
+              .catch(console.error); // Log fail, don't crash auth
+          }
           return done(null, wrapUser(savedFarmer, "Farmer"));
         }
 
@@ -96,6 +102,11 @@ passport.use(
         });
 
         const savedUser = await newUser.save();
+        // Welcome email—non-blocking
+        if (savedUser.email && savedUser.username) {
+          sendWelcomeEmail(savedUser.email, savedUser.username, role)
+            .catch(console.error); // Log fail, don't crash auth
+        }
         return done(null, wrapUser(savedUser, "User"));
 
       } catch (err) {

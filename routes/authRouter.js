@@ -2,7 +2,7 @@
 const express = require("express");
 const passport = require("passport");
 const router = express.Router();
-const { googleCallback } = require("../controllers/authController");
+const { googleCallback, forgotPassword, resetPassword, getProfile, updateProfile } = require("../controllers/authController");
 
 const {
   registerAdmin,
@@ -21,6 +21,11 @@ router.post("/register/seller", registerSeller);
 router.post('/register/farmer', registerFarmer);
 router.post("/login", login);
 router.post("/set-password", require("../controllers/authController").setPassword);
+
+router.post('/forgot-password',forgotPassword);
+router.post('/reset-password', resetPassword);
+router.get('/profile', verifyToken, getProfile);
+router.patch('/update-profile', verifyToken, updateProfile);
 
 // ✅ START GOOGLE OAUTH - capture role and pass via state
 router.get("/google", (req, res, next) => {

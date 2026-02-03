@@ -4,7 +4,10 @@
 const bcrypt = require("bcrypt");
 const { User, Porter, Farmer , Manager } = require("../models/model");
 const jwt = require("jsonwebtoken");
+const { sendWelcomeEmail } = require("../utils/emailService")
 
+const crypto = require('crypto');
+const { sendMail } = require("../utils/emailService")
 
 // ============================
 // UNIVERSAL REGISTER (Default: buyer)
@@ -155,13 +158,12 @@ exports.login = async (req, res) => {
     // JWT PAYLOAD
     // -----------------------------------------
     const payload = {
-      id: user._id,
-      name: user.name || user.fullname || user.username || "",
-      email: user.email,
-      role,
-      ...(code && { code })
-    };
-
+  id: user._id.toString(), // Sanitize ObjectId
+  name: (user.name || user.fullname || user.username || "").trim(),
+  email: user.email?.trim() || "", // Null-safe
+  role: user.role || "N/A", // Fallback, log warn
+  ...(typeof code === 'string' && code.trim() ? { code: code.trim() } : {}), // Strict check
+};
     const token = jwt.sign(payload, process.env.JWT_SECRET, {
       expiresIn: "7d"
     });
@@ -210,6 +212,9 @@ exports.registerSeller = async (req, res) => {
     });
 
     await seller.save();
+
+    sendWelcomeEmail(seller.email, seller.username, "seller")
+    .catch(err => console.error("Seller welcome email failed:", err));
 
     res.status(201).json({
       message: "✅ Seller registered. Awaiting approval by admin.",
@@ -433,6 +438,9 @@ exports.registerFarmer = async (req, res) => {
     });
 
     await newFarmer.save();
+    // Send welcome email (non-blocking)
+    sendWelcomeEmail(newFarmer.email, newFarmer.fullname, "farmer")
+      .catch(err => console.error("Welcome email failed:", err)); // Don't fail registration
 
     // ✅ Respond success
     res.status(201).json({
@@ -456,5 +464,135 @@ exports.registerFarmer = async (req, res) => {
       message: 'Farmer registration failed.',
       error: err.message,
     });
+  }
+};
+
+
+
+// Forgot Password
+exports.forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ message: "Email required" });
+
+    // Search across models like login
+    const roleConfig = [ // Your centralized config
+      { model: User },
+      { model: Farmer }
+      // Add Porter/Manager if they have passwords
+    ];
+
+    let user = null;
+    for (const cfg of roleConfig) {
+      user = await cfg.model.findOne({ email });
+      if (user) break;
+    }
+
+    if (!user || !user.password) { // Hide existence for security
+      return res.status(200).json({ message: "If account exists, reset link sent" });
+    }
+
+    // Generate token
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const hashedToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+
+    user.resetToken = hashedToken;
+    user.resetExpiry = Date.now() + 3600000; // 1 hour
+    await user.save();
+
+    // Reset link
+    const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
+
+    const html = `
+      <h2>Password Reset Request</h2>
+      <p>Click link to reset (expires in 1 hour):</p>
+      <a href="${resetUrl}">${resetUrl}</a>
+      <p>Ignore if not you.</p>
+    `;
+
+    await sendMail(email, "MaziwaSmart Password Reset", html);
+
+    res.status(200).json({ message: "If account exists, reset link sent" });
+  } catch (err) {
+    console.error("Forgot password error:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+// Reset Password
+exports.resetPassword = async (req, res) => {
+  try {
+    const { token, email, newPassword } = req.body;
+    if (!token || !email || !newPassword) {
+      return res.status(400).json({ message: "Token, email, and new password required" });
+    }
+
+    const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+
+    // Search across models
+    const roleConfig = [{ model: User }, { model: Farmer }];
+    let user = null;
+    for (const cfg of roleConfig) {
+      user = await cfg.model.findOne({ 
+        email, 
+        resetToken: hashedToken, 
+        resetExpiry: { $gt: Date.now() } 
+      });
+      if (user) break;
+    }
+
+    if (!user) {
+      return res.status(400).json({ message: "Invalid or expired token" });
+    }
+
+    user.password = await bcrypt.hash(newPassword, 10);
+    user.resetToken = undefined;
+    user.resetExpiry = undefined;
+    await user.save();
+
+    res.status(200).json({ message: "Password reset successful" });
+  } catch (err) {
+    console.error("Reset password error:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+// Get Profile (auth protected)
+exports.getProfile = async (req, res) => {
+  try {
+    const userId = req.user.id; // From verifyToken
+
+    // Search across models
+    let profile = await User.findById(userId) || await Farmer.findById(userId);
+    // Add Porter/Manager if needed
+
+    if (!profile) return res.status(404).json({ message: "Profile not found" });
+
+    res.status(200).json({ success: true, profile: profile.toObject() });
+  } catch (err) {
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+// Update Profile (auth protected, partial)
+exports.updateProfile = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const updates = req.body; // Validate/sanitize in real—your code skips, trash
+
+    // Whitelist fields
+    const allowed = ['fullname', 'username', 'phone', 'location', 'photo']; // Add per model
+    const sanitized = Object.keys(updates)
+      .filter(key => allowed.includes(key))
+      .reduce((obj, key) => ({ ...obj, [key]: updates[key] }), {});
+
+    let user = await User.findByIdAndUpdate(userId, sanitized, { new: true }) ||
+               await Farmer.findByIdAndUpdate(userId, sanitized, { new: true });
+
+    if (!user) return res.status(404).json({ message: "Profile not found" });
+
+    res.status(200).json({ success: true, message: "Profile updated", profile: user });
+  } catch (err) {
+    res.status(500).json({ message: "Server error" });
   }
 };

@@ -105,6 +105,7 @@ exports.getMarketListingById = async (req, res) => {
       photos: listing.photos || listing.animal_id?.photos || [],
       birth_date: details.birth_date || listing.animal_id?.birth_date || null, // For frontend if needed
     };
+    
 
     res.status(200).json({
       success: true,
