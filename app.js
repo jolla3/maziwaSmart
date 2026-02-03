@@ -202,7 +202,7 @@ const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
     origin: ["https://maziwa-smart.vercel.app", "http://localhost:3000"],
-    methods: ["GET", "POST","DELETE" , "PATCH", "PUT"],
+    methods: ["GET", "POST", "DELETE", "PATCH", "PUT"],
     credentials: true,
   },
 });
@@ -232,8 +232,8 @@ io.on("connection", async (socket) => {
   }
 
   const ip = socket.handshake.headers['cf-connecting-ip'] ||
-             socket.handshake.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
-             socket.handshake.address || 'unknown';
+    socket.handshake.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+    socket.handshake.address || 'unknown';
 
   const userAgent = socket.handshake.headers['user-agent'] || 'unknown';
 
@@ -279,7 +279,7 @@ io.on("connection", async (socket) => {
         fromSocket: userId,
         timestamp: new Date(),
       });
-      
+
       logEvent(socket, {
         userId,
         type: "chat.message.sent",
@@ -289,6 +289,11 @@ io.on("connection", async (socket) => {
   });
 
   socket.on("disconnect", async () => {
+    // Retrieve ip and geo from the Map before deleting
+    const userInfo = onlineUsers.get(userId);
+    const ip = userInfo?.ip || 'unknown';
+    const geo = userInfo?.geo || null;
+
     onlineUsers.delete(userId);
     await Session.deleteOne({ socketId: socket.id });
     broadcastOnlineList();
@@ -297,13 +302,12 @@ io.on("connection", async (socket) => {
       userId,
       role,
       type: "socket.disconnect",
-      metadata: { socketId: socket.id, ip, geo }  // <-- ADD: Include geo in disconnect log
+      metadata: { socketId: socket.id, ip, geo }  // Now ip and geo are properly scoped
     });
 
     logger.warn(`OFFLINE → ${userId} – Total: ${onlineUsers.size}`);
   });
 });
-
 // ======================================================
 // START SERVER
 // ======================================================
