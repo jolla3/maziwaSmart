@@ -665,7 +665,7 @@ exports.getMyListingsViewsSummary = async (req, res) => {
 
     // Find listings owned by this user
     const userListings = await Listing.find({ seller: userId })
-      .select('_id title price category images')
+.select('_id title price animal_type images')
       .lean();
 
     console.log('📦 Found listings:', userListings.length);
@@ -742,7 +742,7 @@ exports.getMyListingsViewsSummary = async (req, res) => {
         listing_id: p._id,
         title: listing?.title || 'Unknown',
         price: listing?.price || 0,
-        category: listing?.category || 'Uncategorized',
+category: listing?.animal_type || 'unknown',
         image: listing?.images?.[0] || null,
         total_views: p.total_views,
         by_role: p.by_role

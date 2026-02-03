@@ -15,6 +15,7 @@ const userSchema = new Schema({
   email: { type: String, required: true, unique: true },
   phone: { type: Number },
   password: { type: String },
+  location: { type: String },
   role: {
     type: String,
     enum: ['superadmin', 'admin', 'broker', 'buyer', 'seller', 'manager'], // ✅ fixed
