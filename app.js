@@ -1,4 +1,4 @@
-// app.js  ← REPLACE ENTIRE FILE
+// app.js  ← REPLACE ENTIRE FILE (with these targeted updates)
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -10,6 +10,7 @@ const passport = require("./config/passport");
 const { logger } = require("./utils/logger");
 const Session = require("./models/Session");
 const { logEvent } = require("./utils/eventLogger");
+const geoip = require("geoip-lite");  // <-- ADD THIS: For geolocation lookups
 
 const app = express();
 
@@ -18,15 +19,17 @@ const app = express();
 // ======================================================
 app.set('trust proxy', true);
 
-const onlineUsers = new Map(); // userId => { role, ip, connectedAt }
+// Updated: Include geo in the Map for richer tracking
+const onlineUsers = new Map(); // userId => { role, ip, geo: { country, city }, connectedAt }
 app.set("onlineUsers", onlineUsers);
 
-// Broadcast helper (defined early)
+// Broadcast helper (updated to include geo)
 const broadcastOnlineList = () => {
   const list = Array.from(onlineUsers.entries()).map(([id, info]) => ({
     userId: id,
     role: info.role,
     ip: info.ip,
+    geo: info.geo,  // <-- ADD: Include geolocation in broadcasts
     connectedAt: info.connectedAt
   }));
 
@@ -34,7 +37,7 @@ const broadcastOnlineList = () => {
   monitorNamespace.emit("monitor:onlineUsers", list);
 };
 
-// Cleanup dead sessions every 2 min
+// Cleanup dead sessions every 2 min (unchanged, but now removes from Map too)
 setInterval(async () => {
   const cutoff = new Date(Date.now() - 5 * 60 * 1000);
   const dead = await Session.find({ updatedAt: { $lt: cutoff } });
@@ -42,7 +45,6 @@ setInterval(async () => {
   await Session.deleteMany({ updatedAt: { $lt: cutoff } });
   broadcastOnlineList();
 }, 120000);
-
 // ======================================================
 // GLOBAL REQUEST LOGGER
 // ======================================================
@@ -215,6 +217,7 @@ monitorNamespace.on("connection", (socket) => {
   broadcastOnlineList();
 });
 
+
 // ======================================================
 // MAIN SOCKET HANDLER – RICH ONLINE TRACKING
 // ======================================================
@@ -234,10 +237,13 @@ io.on("connection", async (socket) => {
 
   const userAgent = socket.handshake.headers['user-agent'] || 'unknown';
 
-  // Add to map
-  onlineUsers.set(userId, { role, ip, connectedAt: new Date() });
+  // ADD: Compute geolocation from IP
+  const geo = geoip.lookup(ip) || null;  // { country: 'US', city: 'New York' } or null
 
-  // Persist session
+  // Updated: Add to Map with geo
+  onlineUsers.set(userId, { role, ip, geo, connectedAt: new Date() });
+
+  // Persist session (unchanged, but now IP is captured)
   await Session.findOneAndUpdate(
     { userId },
     {
@@ -253,16 +259,16 @@ io.on("connection", async (socket) => {
 
   broadcastOnlineList();
 
-  logger.info(`ONLINE → ${userId} (${role}) – ${ip} – Total: ${onlineUsers.size}`);
+  logger.info(`ONLINE → ${userId} (${role}) – ${ip} – Geo: ${geo ? `${geo.city}, ${geo.country}` : 'Unknown'} – Total: ${onlineUsers.size}`);
 
   socket.join(userId);
 
-  // Log connect
+  // Log connect (updated to include geo in metadata)
   await logEvent(socket, {
     userId,
     role,
     type: "socket.connect",
-    metadata: { socketId: socket.id, ip, userAgent }
+    metadata: { socketId: socket.id, ip, userAgent, geo }
   });
 
   // Chat handler (unchanged)
@@ -291,7 +297,7 @@ io.on("connection", async (socket) => {
       userId,
       role,
       type: "socket.disconnect",
-      metadata: { socketId: socket.id }
+      metadata: { socketId: socket.id, ip, geo }  // <-- ADD: Include geo in disconnect log
     });
 
     logger.warn(`OFFLINE → ${userId} – Total: ${onlineUsers.size}`);

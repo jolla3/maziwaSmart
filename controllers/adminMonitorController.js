@@ -3,19 +3,24 @@ const Session = require("../models/Session");
 const Event = require("../models/Event");
 const Alert = require("../models/Alert");
 const Listing = require("../models/ListingsAudit");
+const geoip = require("geoip-lite");
 
 exports.getOnlineUsers = async (req, res) => {
   try {
     const sessions = await Session.find({}).sort({ connectedAt: -1 }).lean();
 
-    const richUsers = sessions.map(s => ({
-      userId: s.userId.toString(),
-      role: s.role || "unknown",
-      ip: s.ip || "unknown",
-      userAgent: s.userAgent || "unknown",
-      connectedAt: s.connectedAt,
-      socketId: s.socketId
-    }));
+    const richUsers = sessions.map(s => {
+      const geo = geoip.lookup(s.ip) || null;
+      return {
+        userId: s.userId.toString(),
+        role: s.role || "unknown",
+        ip: s.ip || "unknown",
+        userAgent: s.userAgent || "unknown",
+        connectedAt: s.connectedAt,
+        socketId: s.socketId,
+        geo: geo ? { country: geo.country, city: geo.city } : null
+      };
+    });
 
     res.json({
       count: richUsers.length,
