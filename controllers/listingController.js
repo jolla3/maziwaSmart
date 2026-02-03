@@ -1,5 +1,5 @@
 // controllers/listingController.js
-const { Listing, Farmer, User } = require("../models/model"); // Assuming Cow is exported as require("../models/model").Cow
+const { Listing, Farmer, User ,View} = require("../models/model"); // Assuming Cow is exported as require("../models/model").Cow
 const cloudinary = require("cloudinary").v2;
 
 // Move config to app startup or config file—trash to repeat here

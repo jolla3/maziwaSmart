@@ -471,104 +471,135 @@ exports.registerFarmer = async (req, res) => {
 
 // Forgot Password
 exports.forgotPassword = async (req, res) => {
-  try {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ message: "Email required" });
+  const { email } = req.body;
+  if (!email?.trim()) return res.status(400).json({ message: "Email required" });
 
-    // Search across models like login
-    const roleConfig = [ // Your centralized config
-      { model: User },
-      { model: Farmer }
-      // Add Porter/Manager if they have passwords
-    ];
+  // Rate limit check (pseudo — use express-rate-limit or redis in real)
+  // if (tooManyRequests(ip, email)) return 429;
 
-    let user = null;
-    for (const cfg of roleConfig) {
-      user = await cfg.model.findOne({ email });
-      if (user) break;
+  let user = null;
+  let Model = null;
+
+  // Try all models — order by most common first
+  for (const M of [User, Farmer /* , Porter, Manager */]) {
+    user = await M.findOne({ email: email.trim() });
+    if (user) {
+      Model = M;
+      break;
     }
-
-    if (!user || !user.password) { // Hide existence for security
-      return res.status(200).json({ message: "If account exists, reset link sent" });
-    }
-
-    // Generate token
-    const resetToken = crypto.randomBytes(32).toString('hex');
-    const hashedToken = crypto.createHash('sha256').update(resetToken).digest('hex');
-
-    user.resetToken = hashedToken;
-    user.resetExpiry = Date.now() + 3600000; // 1 hour
-    await user.save();
-
-    // Reset link
-    const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
-
-    const html = `
-      <h2>Password Reset Request</h2>
-      <p>Click link to reset (expires in 1 hour):</p>
-      <a href="${resetUrl}">${resetUrl}</a>
-      <p>Ignore if not you.</p>
-    `;
-
-    await sendMail(email, "MaziwaSmart Password Reset", html);
-
-    res.status(200).json({ message: "If account exists, reset link sent" });
-  } catch (err) {
-    console.error("Forgot password error:", err);
-    res.status(500).json({ message: "Server error" });
   }
+
+  // Always respond 200 — security
+  if (!user || !user.password) {
+    return res.status(200).json({ message: "If account exists, reset link sent" });
+  }
+
+  // Generate secure token
+  const resetToken = crypto.randomBytes(32).toString('hex');
+  const hashed = crypto.createHash('sha256').update(resetToken).digest('hex');
+
+  user.resetToken = hashed;
+  user.resetExpiry = Date.now() + 3600 * 1000; // 1h
+  await user.save();
+
+  const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
+
+  const html = `
+    <h2>Reset Your MaziwaSmart Password</h2>
+    <p>Click below to reset (link expires in 1 hour):</p>
+    <a href="${resetUrl}" style="background:#00bcd4;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;">
+      Reset Password
+    </a>
+    <p>If you didn't request this, ignore this email.</p>
+    <p>— MaziwaSmart Team</p>
+  `;
+
+  await sendMail(email, "MaziwaSmart Password Reset", html);
+
+  res.status(200).json({ message: "Reset link sent if account exists" });
 };
+
 
 // Reset Password
 exports.resetPassword = async (req, res) => {
-  try {
-    const { token, email, newPassword } = req.body;
-    if (!token || !email || !newPassword) {
-      return res.status(400).json({ message: "Token, email, and new password required" });
-    }
-
-    const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
-
-    // Search across models
-    const roleConfig = [{ model: User }, { model: Farmer }];
-    let user = null;
-    for (const cfg of roleConfig) {
-      user = await cfg.model.findOne({ 
-        email, 
-        resetToken: hashedToken, 
-        resetExpiry: { $gt: Date.now() } 
-      });
-      if (user) break;
-    }
-
-    if (!user) {
-      return res.status(400).json({ message: "Invalid or expired token" });
-    }
-
-    user.password = await bcrypt.hash(newPassword, 10);
-    user.resetToken = undefined;
-    user.resetExpiry = undefined;
-    await user.save();
-
-    res.status(200).json({ message: "Password reset successful" });
-  } catch (err) {
-    console.error("Reset password error:", err);
-    res.status(500).json({ message: "Server error" });
+  const { token, newPassword } = req.body;
+  if (!token || !newPassword?.trim()) {
+    return res.status(400).json({ message: "Token and new password required" });
   }
+
+  // Basic strength (you can make stricter)
+  if (newPassword.length < 8) {
+    return res.status(400).json({ message: "Password must be at least 8 characters" });
+  }
+
+  const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+
+  let user = null;
+  let Model = null;
+
+  for (const M of [User, Farmer /* , others */]) {
+    user = await M.findOne({
+      resetToken: hashedToken,
+      resetExpiry: { $gt: Date.now() }
+    });
+    if (user) {
+      Model = M;
+      break;
+    }
+  }
+
+  if (!user) {
+    return res.status(400).json({ message: "Invalid or expired token" });
+  }
+
+  // Optional: prevent reuse of same password
+  const sameAsOld = await bcrypt.compare(newPassword, user.password);
+  if (sameAsOld) {
+    return res.status(400).json({ message: "New password must be different" });
+  }
+
+  user.password = await bcrypt.hash(newPassword, 10);
+  user.resetToken = undefined;
+  user.resetExpiry = undefined;
+  await user.save();
+
+  res.status(200).json({ message: "Password reset successful. Please log in." });
 };
 
 // Get Profile (auth protected)
 exports.getProfile = async (req, res) => {
   try {
-    const userId = req.user.id; // From verifyToken
+    const { id, role } = req.user; // From verifyToken middleware
 
-    // Search across models
-    let profile = await User.findById(userId) || await Farmer.findById(userId);
-    // Add Porter/Manager if needed
+    let profile;
 
-    if (!profile) return res.status(404).json({ message: "Profile not found" });
+    switch (role) {
+      case 'farmer':
+        profile = await Farmer.findById(id);
+        break;
+      case 'seller':
+      case 'buyer':
+      case 'admin':
+      case 'broker':
+      case 'manager':
+        profile = await User.findById(id);
+        break;
+      // Add porter etc. if they have profiles
+      default:
+        return res.status(403).json({ message: "Unknown role" });
+    }
 
-    res.status(200).json({ success: true, profile: profile.toObject() });
+    if (!profile) {
+      return res.status(404).json({ message: "Profile not found" });
+    }
+
+    // Strip sensitive fields
+    const safeProfile = profile.toObject();
+    delete safeProfile.password;
+    delete safeProfile.resetToken;
+    delete safeProfile.resetExpiry;
+
+    res.status(200).json({ success: true, profile: safeProfile });
   } catch (err) {
     res.status(500).json({ message: "Server error" });
   }
@@ -576,23 +607,33 @@ exports.getProfile = async (req, res) => {
 
 // Update Profile (auth protected, partial)
 exports.updateProfile = async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const updates = req.body; // Validate/sanitize in real—your code skips, trash
+  const { id, role } = req.user;
+  const updates = req.body;
 
-    // Whitelist fields
-    const allowed = ['fullname', 'username', 'phone', 'location', 'photo']; // Add per model
-    const sanitized = Object.keys(updates)
-      .filter(key => allowed.includes(key))
-      .reduce((obj, key) => ({ ...obj, [key]: updates[key] }), {});
+  // Role-specific allowed fields
+  const allowedFields = {
+    farmer: ['fullname', 'phone', 'location', 'photo'],
+    seller: ['username', 'phone', 'photo'],
+    // add others...
+  };
 
-    let user = await User.findByIdAndUpdate(userId, sanitized, { new: true }) ||
-               await Farmer.findByIdAndUpdate(userId, sanitized, { new: true });
+  const fields = allowedFields[role] || [];
+  if (!fields.length) return res.status(403).json({ message: "No updatable fields for your role" });
 
-    if (!user) return res.status(404).json({ message: "Profile not found" });
-
-    res.status(200).json({ success: true, message: "Profile updated", profile: user });
-  } catch (err) {
-    res.status(500).json({ message: "Server error" });
+  const sanitized = {};
+  for (const key of fields) {
+    if (updates[key] !== undefined) sanitized[key] = updates[key];
   }
+
+  if (Object.keys(sanitized).length === 0) {
+    return res.status(400).json({ message: "No valid fields to update" });
+  }
+
+  let Model = role === 'farmer' ? Farmer : User;
+  const updated = await Model.findByIdAndUpdate(id, sanitized, { new: true, runValidators: true });
+
+  if (!updated) return res.status(404).json({ message: "Profile not found" });
+
+  res.status(200).json({ success: true, message: "Profile updated", profile: updated });
 };
+
