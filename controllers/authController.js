@@ -614,7 +614,7 @@ exports.updateProfile = async (req, res) => {
   // Role-specific allowed fields
   const allowedFields = {
     farmer: ['fullname', 'phone', 'location', 'photo'],
-    seller: ['username', 'phone', 'photo'],
+    seller: ['username', 'phone', 'photo', 'location'],
     // add others...
   };
 
