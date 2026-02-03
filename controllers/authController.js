@@ -157,13 +157,14 @@ exports.login = async (req, res) => {
     // -----------------------------------------
     // JWT PAYLOAD
     // -----------------------------------------
-    const payload = {
-  id: user._id.toString(), // Sanitize ObjectId
+   const payload = {
+  id: user._id.toString(),
   name: (user.name || user.fullname || user.username || "").trim(),
-  email: user.email?.trim() || "", // Null-safe
-  role: user.role || "N/A", // Fallback, log warn
-  ...(typeof code === 'string' && code.trim() ? { code: code.trim() } : {}), // Strict check
+  email: user.email?.trim() || "",
+  role, // ✅ the computed role
+  ...(typeof code === "string" && code.trim() ? { code: code.trim() } : {}),
 };
+
     const token = jwt.sign(payload, process.env.JWT_SECRET, {
       expiresIn: "7d"
     });
