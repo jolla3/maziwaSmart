@@ -42,6 +42,19 @@ const sendWelcomeEmail = async (email, name, role = "user") => {
 
   const subject = roleGreeting[role] || roleGreeting.default;
 
+  const DASHBOARD_BY_ROLE = {
+  farmer: "/fmr.drb",
+  seller: "/slr.drb",
+  admin: "/admindashboard",
+  superadmin: "/spr.dmn",
+  porter: "/porterdashboard",
+  buyer: "/byr.drb",
+  manager: "/man.drb",
+};
+
+const dashboardPath = DASHBOARD_BY_ROLE[role] || "/login";
+
+
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background: #f9f9f9;">
       <h1 style="color: #00bcd4;">Hello ${name.split(' ')[0]},</h1>
@@ -61,7 +74,11 @@ const sendWelcomeEmail = async (email, name, role = "user") => {
         </ul>
       </div>
 
-      <a href="${process.env.FRONTEND_URL}/dashboard" 
+      
+
+
+
+       <a href="${process.env.FRONTEND_URL}${dashboardPath}">
          style="background: #00bcd4; color: white; padding: 12px 30px; text-decoration: none; border-radius: 8px; font-weight: bold;">
         Go to Dashboard →
       </a>

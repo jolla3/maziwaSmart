@@ -742,7 +742,7 @@ exports.getMyListingsViewsSummary = async (req, res) => {
         listing_id: p._id,
         title: listing?.title || 'Unknown',
         price: listing?.price || 0,
-category: listing?.animal_type || 'unknown',
+        category: listing?.category || 'Uncategorized',
         image: listing?.images?.[0] || null,
         total_views: p.total_views,
         by_role: p.by_role
