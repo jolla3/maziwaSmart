@@ -2,7 +2,7 @@
 const passport = require("passport");
 const GoogleStrategy = require("passport-google-oauth20").Strategy;
 const { User, Farmer } = require("../models/model");
-const { sendWelcomeEmail } = require("../utils/emailService"); // Add this import—your code skips it, trash
+const { sendWelcomeEmail } = require("../utils/emailService");
 
 const callbackURL =
   process.env.NODE_ENV === "production"
@@ -10,7 +10,7 @@ const callbackURL =
     : "http://localhost:5000/api/userAuth/google/callback";
 
 // ---------------------------------------------------------
-// Helper: Normalize user object for session storage
+// Helper: normalize user for downstream logic
 // ---------------------------------------------------------
 const wrapUser = (doc, collection) => {
   if (!doc) return null;
@@ -33,27 +33,34 @@ passport.use(
     async (req, accessToken, refreshToken, profile, done) => {
       try {
         // -----------------------------------------
-        // ROLE FROM FRONTEND STATE (default buyer)
+        // ROLE FROM FRONTEND STATE (LOCKED)
         // -----------------------------------------
         let role = "buyer";
-
         try {
           if (req.query.state) {
             const parsed = JSON.parse(req.query.state);
-            role = (parsed.role || "buyer").toLowerCase();
+            if (parsed?.role) {
+              role = String(parsed.role).toLowerCase();
+            }
           }
-        } catch (_) {
-          // If invalid JSON: ignore silently
+        } catch (_) {}
+
+        // Only allow known roles
+        const ALLOWED_ROLES = ["buyer", "farmer", "seller", "broker", "manager"];
+        if (!ALLOWED_ROLES.includes(role)) {
+          role = "buyer";
         }
 
         // -----------------------------------------
-        // EXTRACT EMAIL
+        // EMAIL (MANDATORY)
         // -----------------------------------------
-        const email = profile.emails?.[0]?.value;
-        if (!email) return done(null, false, { message: "No email returned from Google" });
+        const email = profile.emails?.[0]?.value?.toLowerCase();
+        if (!email) {
+          return done(null, false, { message: "No email returned from Google" });
+        }
 
         // -----------------------------------------
-        // 1: Check User collection
+        // 1. EXISTING USER
         // -----------------------------------------
         const existingUser = await User.findOne({ email });
         if (existingUser) {
@@ -61,7 +68,7 @@ passport.use(
         }
 
         // -----------------------------------------
-        // 2: Check Farmer collection
+        // 2. EXISTING FARMER
         // -----------------------------------------
         const existingFarmer = await Farmer.findOne({ email });
         if (existingFarmer) {
@@ -69,44 +76,46 @@ passport.use(
         }
 
         // -----------------------------------------
-        // 3: Create new Farmer (if role = farmer)
+        // 3. CREATE NEW FARMER
         // -----------------------------------------
         if (role === "farmer") {
-          const newFarmer = new Farmer({
+          const farmer = new Farmer({
             fullname: profile.displayName || "Unnamed Farmer",
             email,
             photo: profile.photos?.[0]?.value || null,
             role: "farmer",
-            farmer_code: null, // Filled later manually
+            farmer_code: null,
             phone: null,
-            is_active: true
+            is_active: true,
+            auth_provider: "google",
+            needs_password_setup: true
           });
 
-          const savedFarmer = await newFarmer.save();
-          // Welcome email—non-blocking
-          if (savedFarmer.email && savedFarmer.fullname) {
-            sendWelcomeEmail(savedFarmer.email, savedFarmer.fullname, "farmer")
-              .catch(console.error); // Log fail, don't crash auth
-          }
-          return done(null, wrapUser(savedFarmer, "Farmer"));
+          const saved = await farmer.save();
+
+          sendWelcomeEmail(saved.email, saved.fullname, "farmer")
+            .catch(console.error);
+
+          return done(null, wrapUser(saved, "Farmer"));
         }
 
         // -----------------------------------------
-        // 4: Default → Create new User
+        // 4. CREATE NEW USER
         // -----------------------------------------
-        const newUser = new User({
+        const user = new User({
           username: profile.displayName || "Unnamed User",
           email,
-          role, // buyer | seller | admin | broker | manager etc.
-          photo: profile.photos?.[0]?.value || null
+          role,
+          photo: profile.photos?.[0]?.value || null,
+          auth_provider: "google",
+          needs_password_setup: true
         });
 
-        const savedUser = await newUser.save();
-        // Welcome email—non-blocking
-        if (savedUser.email && savedUser.username) {
-          sendWelcomeEmail(savedUser.email, savedUser.username, role)
-            .catch(console.error); // Log fail, don't crash auth
-        }
+        const savedUser = await user.save();
+
+        sendWelcomeEmail(savedUser.email, savedUser.username, role)
+          .catch(console.error);
+
         return done(null, wrapUser(savedUser, "User"));
 
       } catch (err) {
@@ -118,12 +127,12 @@ passport.use(
 );
 
 // ---------------------------------------------------------
-// SERIALIZER / DESERIALIZER
+// SERIALIZATION
 // ---------------------------------------------------------
 passport.serializeUser((user, done) => {
   done(null, {
     id: user._id || user.id,
-    collection: user._collection || "User"
+    collection: user._collection
   });
 });
 
