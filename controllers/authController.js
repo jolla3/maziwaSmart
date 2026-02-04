@@ -75,58 +75,54 @@ exports.login = async (req, res) => {
     }
 
     // -----------------------------------------
-    // CENTRALIZED MODEL CONFIG (NO HARDCODING)
+    // ROLE RESOLUTION CONFIG (ORDER MATTERS)
     // -----------------------------------------
     const roleConfig = [
       {
-        model: User,
-        getRole: (u) => u.role,
-        getCode: () => ""
-      },
-      {
         model: Farmer,
-        getRole: () => "farmer",
+        role: "farmer",
         getCode: (u) => u.farmer_code
       },
       {
         model: Porter,
-        getRole: () => "porter",
-        getCode: () => u.porter_code || ""
+        role: "porter",
+        getCode: (u) => u.porter_code
       },
       {
         model: Manager,
-        getRole: () => "manager",
+        role: "manager",
         getCode: (u) => u.farmer_code
+      },
+      {
+        model: User,
+        role: null, // use stored role
+        getCode: () => null
       }
     ];
 
     let user = null;
-    let role = "";
-    let code = "";
+    let role = null;
+    let code = null;
 
     // -----------------------------------------
-    // AUTO-MATCH USER BY EMAIL
+    // FIND ACCOUNT (FIRST MATCH WINS)
     // -----------------------------------------
     for (const cfg of roleConfig) {
       const found = await cfg.model.findOne({ email });
-
       if (found) {
         user = found;
-        role = cfg.getRole(found);
-        code = cfg.getCode(found) || "";
+        role = cfg.role || found.role;
+        code = cfg.getCode(found);
         break;
       }
     }
 
-    // -----------------------------------------
-    // ACCOUNT NOT FOUND
-    // -----------------------------------------
     if (!user) {
       return res.status(404).json({ message: "Account not found" });
     }
 
     // -----------------------------------------
-    // CHECK ACTIVE STATUS
+    // ACCOUNT STATE CHECKS
     // -----------------------------------------
     if (user.is_active === false) {
       return res.status(403).json({
@@ -134,12 +130,9 @@ exports.login = async (req, res) => {
       });
     }
 
-    // -----------------------------------------
-    // NO PASSWORD SET
-    // -----------------------------------------
     if (!user.password) {
-      return res.status(400).json({
-        message: "This account has no login credentials set."
+      return res.status(409).json({
+        message: "This account must set a password before login."
       });
     }
 
@@ -147,45 +140,41 @@ exports.login = async (req, res) => {
     // PASSWORD CHECK
     // -----------------------------------------
     const validPass = await bcrypt.compare(password, user.password);
-
     if (!validPass) {
-      return res.status(400).json({
-        message: "Invalid credentials"
-      });
+      return res.status(401).json({ message: "Invalid credentials" });
     }
 
     // -----------------------------------------
-    // JWT PAYLOAD
+    // NORMALIZE ROLE
     // -----------------------------------------
-   const payload = {
-  id: user._id.toString(),
-  name: (user.name || user.fullname || user.username || "").trim(),
-  email: user.email?.trim() || "",
-  role, // ✅ the computed role
-  ...(typeof code === "string" && code.trim() ? { code: code.trim() } : {}),
-};
+    role = String(role).toLowerCase();
+
+    // -----------------------------------------
+    // JWT PAYLOAD (LEAN, STABLE)
+    // -----------------------------------------
+    const payload = {
+      id: user._id.toString(),
+      name: (user.name || user.fullname || user.username || "").trim(),
+      email: user.email.trim(),
+      role,
+      ...(code ? { code: String(code).trim() } : {})
+    };
 
     const token = jwt.sign(payload, process.env.JWT_SECRET, {
       expiresIn: "7d"
     });
 
-    // -----------------------------------------
-    // SUCCESS RESPONSE
-    // -----------------------------------------
     return res.status(200).json({
       success: true,
       message: "Login successful",
-      token,
-      role,
-      user: payload
+      token
     });
 
   } catch (err) {
     console.error("Login error:", err);
     return res.status(500).json({
       success: false,
-      message: "Login failed",
-      error: err.message
+      message: "Login failed"
     });
   }
 };
@@ -236,29 +225,33 @@ exports.registerSeller = async (req, res) => {
 // ----------------------------
 
 exports.googleCallback = async (req, res) => {
+  const FRONTEND =
+    process.env.FRONTEND_URL?.replace(/\/$/, "") ||
+    "https://maziwa-smart.vercel.app";
+
   try {
     const user = req.user;
 
-    // FRONTEND URL MUST BE FRONTEND. NOT BACKEND.
-    const FRONTEND = process.env.FRONTEND_URL || "https://maziwa-smart.vercel.app";
-
-    if (!user || !user.email) {
+    // Absolute minimum sanity check
+    if (!user || !user.email || !user._id) {
       return res.redirect(
-        `${FRONTEND}/google-callback?error=No email found`
+        `${FRONTEND}/google-callback?error=Invalid user from Google`
       );
     }
 
-    // Resolve role cleanly
+    // Resolve role from source of truth
     const role =
       user._collection === "Farmer"
         ? "farmer"
-        : user.role || "buyer";
+        : (user.role || "buyer").toLowerCase();
 
-    const code = user.farmer_code || "";
+    // Optional farmer code
+    const code =
+      role === "farmer" && user.farmer_code ? user.farmer_code : undefined;
 
-    // Build token
+    // JWT payload — keep it lean and deterministic
     const payload = {
-      id: user._id,
+      id: user._id.toString(),
       name: user.username || user.fullname || "Unnamed User",
       email: user.email,
       role,
@@ -269,22 +262,20 @@ exports.googleCallback = async (req, res) => {
       expiresIn: "7d"
     });
 
-    // If it's first time Google login → redirect to frontend /set-password
+    // First-time Google user → force password setup
     if (!user.password) {
-      return res.redirect(`${FRONTEND}/set-password?token=${token}`);
+      return res.redirect(
+        `${FRONTEND}/set-password?token=${encodeURIComponent(token)}`
+      );
     }
 
-    // Normal login
+    // Normal Google login
     return res.redirect(
-      `${FRONTEND}/google-callback?token=${token}&role=${role}&name=${encodeURIComponent(
-        payload.name
-      )}`
+      `${FRONTEND}/google-callback?token=${encodeURIComponent(token)}`
     );
 
   } catch (err) {
     console.error("googleCallback error:", err);
-
-    const FRONTEND = process.env.FRONTEND_URL || "https://maziwa-smart.vercel.app";
 
     return res.redirect(
       `${FRONTEND}/google-callback?error=Google login failed`
