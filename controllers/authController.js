@@ -67,116 +67,43 @@ exports.registerAdmin = async (req, res) => {
 
 // loginController.js
 exports.login = async (req, res) => {
-  try {
-    const { email, password } = req.body;
+  const { email, password } = req.body;
+  if (!email || !password)
+    return res.status(400).json({ message: "Email and password required" });
 
-    if (!email || !password) {
-      return res.status(400).json({ message: "Email and password required" });
+  const models = [
+    { model: Farmer, role: "farmer", code: u => u.farmer_code },
+    { model: User, role: null, code: () => null },
+  ];
+
+  let user, role, code;
+  for (const m of models) {
+    const found = await m.model.findOne({ email });
+    if (found) {
+      user = found;
+      role = m.role || found.role;
+      code = m.code(found);
+      break;
     }
-
-    // -----------------------------------------
-    // ROLE RESOLUTION CONFIG (ORDER MATTERS)
-    // -----------------------------------------
-    const roleConfig = [
-      {
-        model: Farmer,
-        role: "farmer",
-        getCode: (u) => u.farmer_code
-      },
-      {
-        model: Porter,
-        role: "porter",
-        getCode: (u) => u.porter_code
-      },
-      {
-        model: Manager,
-        role: "manager",
-        getCode: (u) => u.farmer_code
-      },
-      {
-        model: User,
-        role: null, // use stored role
-        getCode: () => null
-      }
-    ];
-
-    let user = null;
-    let role = null;
-    let code = null;
-
-    // -----------------------------------------
-    // FIND ACCOUNT (FIRST MATCH WINS)
-    // -----------------------------------------
-    for (const cfg of roleConfig) {
-      const found = await cfg.model.findOne({ email });
-      if (found) {
-        user = found;
-        role = cfg.role || found.role;
-        code = cfg.getCode(found);
-        break;
-      }
-    }
-
-    if (!user) {
-      return res.status(404).json({ message: "Account not found" });
-    }
-
-    // -----------------------------------------
-    // ACCOUNT STATE CHECKS
-    // -----------------------------------------
-    if (user.is_active === false) {
-      return res.status(403).json({
-        message: "Account is deactivated. Contact admin."
-      });
-    }
-
-    if (!user.password) {
-      return res.status(409).json({
-        message: "This account must set a password before login."
-      });
-    }
-
-    // -----------------------------------------
-    // PASSWORD CHECK
-    // -----------------------------------------
-    const validPass = await bcrypt.compare(password, user.password);
-    if (!validPass) {
-      return res.status(401).json({ message: "Invalid credentials" });
-    }
-
-    // -----------------------------------------
-    // NORMALIZE ROLE
-    // -----------------------------------------
-    role = String(role).toLowerCase();
-
-    // -----------------------------------------
-    // JWT PAYLOAD (LEAN, STABLE)
-    // -----------------------------------------
-    const payload = {
-      id: user._id.toString(),
-      name: (user.name || user.fullname || user.username || "").trim(),
-      email: user.email.trim(),
-      role,
-      ...(code ? { code: String(code).trim() } : {})
-    };
-
-    const token = jwt.sign(payload, process.env.JWT_SECRET, {
-      expiresIn: "7d"
-    });
-
-    return res.status(200).json({
-      success: true,
-      message: "Login successful",
-      token
-    });
-
-  } catch (err) {
-    console.error("Login error:", err);
-    return res.status(500).json({
-      success: false,
-      message: "Login failed"
-    });
   }
+
+  if (!user) return res.status(404).json({ message: "Account not found" });
+  if (!user.password)
+    return res.status(409).json({ message: "Complete registration first" });
+  if (!(await bcrypt.compare(password, user.password)))
+    return res.status(401).json({ message: "Invalid credentials" });
+
+  const payload = {
+    id: user._id,
+    name: user.username || user.fullname,
+    email: user.email,
+    role,
+    ...(code ? { code } : {}),
+  };
+
+  const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "7d" });
+
+  res.json({ success: true, token });
 };
 
 // ----------------------------
@@ -227,13 +154,10 @@ exports.registerSeller = async (req, res) => {
 exports.googleCallback = async (req, res) => {
   try {
     const user = req.user;
-    const FRONTEND =
-      process.env.FRONTEND_URL || "https://maziwa-smart.vercel.app";
+    const FRONTEND = process.env.FRONTEND_URL;
 
-    if (!user || !user.email) {
-      return res.redirect(
-        `${FRONTEND}/google-callback?error=No email found`
-      );
+    if (!user) {
+      return res.redirect(`${FRONTEND}/login`);
     }
 
     const role =
@@ -243,41 +167,24 @@ exports.googleCallback = async (req, res) => {
 
     const payload = {
       id: user._id,
-      name: user.username || user.fullname || "Unnamed User",
+      name: user.username || user.fullname,
       email: user.email,
       role,
-      ...(user.farmer_code ? { code: user.farmer_code } : {})
+      ...(user.farmer_code ? { code: user.farmer_code } : {}),
     };
 
-    const token = jwt.sign(payload, process.env.JWT_SECRET, {
-      expiresIn: "7d"
-    });
+    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "7d" });
 
-    // ✅ ONLY redirect if explicitly marked
-    if (user.needs_password_setup === true) {
-      return res.redirect(
-        `${FRONTEND}/set-password?token=${token}`
-      );
+    if (user.onboarding_complete !== true) {
+      return res.redirect(`${FRONTEND}/set-password?token=${token}`);
     }
 
-    // ✅ Normal login for ALL existing users
-    return res.redirect(
-      `${FRONTEND}/google-callback?token=${token}&name=${encodeURIComponent(
-        payload.name
-      )}`
-    );
-
-  } catch (err) {
-    console.error("googleCallback error:", err);
-
-    const FRONTEND =
-      process.env.FRONTEND_URL || "https://maziwa-smart.vercel.app";
-
-    return res.redirect(
-      `${FRONTEND}/google-callback?error=Google login failed`
-    );
+    return res.redirect(`${FRONTEND}/google-callback?token=${token}`);
+  } catch {
+    return res.redirect(`${process.env.FRONTEND_URL}/login`);
   }
 };
+
 
 
 // ------------------------------------------------------------------

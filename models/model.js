@@ -25,6 +25,11 @@ const userSchema = new Schema({
   resetToken: { type: String }, // Hashed token
   resetExpiry: { type: Date },
   created_by: { type: Schema.Types.ObjectId, ref: 'User' },
+  onboarding_complete: {
+  type: Boolean,
+  default: false
+}
+,
   is_approved_seller: { type: Boolean, default: false }
 }, { timestamps: true });
 
@@ -49,7 +54,12 @@ const farmerSchema = new Schema({
   manager_ids: [{ type: Schema.Types.ObjectId, ref: 'Manager' }],
   resetToken: { type: String },
   resetExpiry: { type: Date },
-  is_active: { type: Boolean, default: true }
+  is_active: { type: Boolean, default: true },
+  onboarding_complete: {
+  type: Boolean,
+  default: false
+}
+
 }, { timestamps: true });
 
 const Farmer = mongoose.model('Farmer', farmerSchema);

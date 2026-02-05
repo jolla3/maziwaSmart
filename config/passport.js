@@ -10,10 +10,9 @@ const callbackURL =
     : "http://localhost:5000/api/userAuth/google/callback";
 
 // ---------------------------------------------------------
-// Helper: normalize user for downstream logic
+// Helper
 // ---------------------------------------------------------
 const wrapUser = (doc, collection) => {
-  if (!doc) return null;
   const obj = doc.toObject ? doc.toObject() : doc;
   obj._collection = collection;
   return obj;
@@ -28,98 +27,54 @@ passport.use(
       clientID: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
       callbackURL,
-      passReqToCallback: true
+      passReqToCallback: true,
     },
     async (req, accessToken, refreshToken, profile, done) => {
       try {
-        // -----------------------------------------
-        // ROLE FROM FRONTEND STATE (LOCKED)
-        // -----------------------------------------
         let role = "buyer";
         try {
           if (req.query.state) {
-            const parsed = JSON.parse(req.query.state);
-            if (parsed?.role) {
-              role = String(parsed.role).toLowerCase();
-            }
+            role = JSON.parse(req.query.state).role || "buyer";
           }
         } catch (_) {}
 
-        // Only allow known roles
-        const ALLOWED_ROLES = ["buyer", "farmer", "seller", "broker", "manager"];
-        if (!ALLOWED_ROLES.includes(role)) {
-          role = "buyer";
-        }
-
-        // -----------------------------------------
-        // EMAIL (MANDATORY)
-        // -----------------------------------------
         const email = profile.emails?.[0]?.value?.toLowerCase();
-        if (!email) {
-          return done(null, false, { message: "No email returned from Google" });
-        }
+        if (!email) return done(null, false);
 
-        // -----------------------------------------
-        // 1. EXISTING USER
-        // -----------------------------------------
-        const existingUser = await User.findOne({ email });
-        if (existingUser) {
-          return done(null, wrapUser(existingUser, "User"));
-        }
+        // ---------------- USER ----------------
+        const user = await User.findOne({ email });
+        if (user) return done(null, wrapUser(user, "User"));
 
-        // -----------------------------------------
-        // 2. EXISTING FARMER
-        // -----------------------------------------
-        const existingFarmer = await Farmer.findOne({ email });
-        if (existingFarmer) {
-          return done(null, wrapUser(existingFarmer, "Farmer"));
-        }
+        // ---------------- FARMER --------------
+        const farmer = await Farmer.findOne({ email });
+        if (farmer) return done(null, wrapUser(farmer, "Farmer"));
 
-        // -----------------------------------------
-        // 3. CREATE NEW FARMER
-        // -----------------------------------------
+        // ---------------- CREATE FARMER -------
         if (role === "farmer") {
-          const farmer = new Farmer({
-            fullname: profile.displayName || "Unnamed Farmer",
+          const created = await Farmer.create({
+            fullname: profile.displayName,
             email,
-            photo: profile.photos?.[0]?.value || null,
             role: "farmer",
-            farmer_code: null,
-            phone: null,
+            photo: profile.photos?.[0]?.value || null,
             is_active: true,
-            auth_provider: "google",
-            needs_password_setup: true
+            onboarding_complete: false,
           });
-
-          const saved = await farmer.save();
-
-          sendWelcomeEmail(saved.email, saved.fullname, "farmer")
-            .catch(console.error);
-
-          return done(null, wrapUser(saved, "Farmer"));
+          sendWelcomeEmail(created.email, created.fullname, "farmer").catch(() => {});
+          return done(null, wrapUser(created, "Farmer"));
         }
 
-        // -----------------------------------------
-        // 4. CREATE NEW USER
-        // -----------------------------------------
-        const user = new User({
-          username: profile.displayName || "Unnamed User",
+        // ---------------- CREATE USER ---------
+        const created = await User.create({
+          username: profile.displayName,
           email,
           role,
           photo: profile.photos?.[0]?.value || null,
-          auth_provider: "google",
-          needs_password_setup: true
+          onboarding_complete: false,
         });
-
-        const savedUser = await user.save();
-
-        sendWelcomeEmail(savedUser.email, savedUser.username, role)
-          .catch(console.error);
-
-        return done(null, wrapUser(savedUser, "User"));
+        sendWelcomeEmail(created.email, created.username, role).catch(() => {});
+        return done(null, wrapUser(created, "User"));
 
       } catch (err) {
-        console.error("Google Strategy Error:", err);
         return done(err, null);
       }
     }
@@ -127,26 +82,13 @@ passport.use(
 );
 
 // ---------------------------------------------------------
-// SERIALIZATION
-// ---------------------------------------------------------
 passport.serializeUser((user, done) => {
-  done(null, {
-    id: user._id || user.id,
-    collection: user._collection
-  });
+  done(null, { id: user._id, collection: user._collection });
 });
 
-passport.deserializeUser(async (obj, done) => {
-  try {
-    if (!obj) return done(null, null);
-
-    const Model = obj.collection === "Farmer" ? Farmer : User;
-    const user = await Model.findById(obj.id);
-
-    return done(null, user || null);
-  } catch (err) {
-    return done(err, null);
-  }
+passport.deserializeUser(async ({ id, collection }, done) => {
+  const Model = collection === "Farmer" ? Farmer : User;
+  done(null, await Model.findById(id));
 });
 
 module.exports = passport;
