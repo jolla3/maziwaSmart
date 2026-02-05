@@ -626,35 +626,41 @@ exports.deleteListing = async (req, res) => {
 exports.registerListingView = async (req, res) => {
   try {
     const listingId = req.params.id;
-    if (!mongoose.Types.ObjectId.isValid(listingId)) return res.status(400).json({ message: "Invalid listing ID format" });
-    const viewerId = req.user.id; // Fixed: Use id from payload, not _id
-    console.log('req.user:', req.user); // Debug
-    let viewerSchema = req.user.schema || (req.user.role === 'farmer' ? 'Farmer' : 'User'); // Infer from role
-    let viewerRole = req.user.role || 'viewer';
-    const listing = await Listing.findById(listingId);
+    if (!mongoose.Types.ObjectId.isValid(listingId)) {
+      return res.status(400).json({ message: "Invalid listing ID format" });
+    }
+
+    const viewerId = req.user.id;
+    const viewerRole = req.user.role;
+    const viewerSchema = viewerRole === 'farmer' ? 'Farmer' : 'User';
+
+    const listing = await Listing.findById(listingId).select('_id');
     if (!listing) return res.status(404).json({ message: "Listing not found" });
-    const newView = new View({
-      listing_id: listingId,
-      viewer_id: viewerId,
-      viewer_schema: viewerSchema,
-      viewer_role: viewerRole
-    });
-    let saved;
+
     try {
-      saved = await newView.save();
+      await View.create({
+        listing_id: listingId,
+        viewer_id: viewerId,
+        viewer_schema: viewerSchema,
+        viewer_role: viewerRole,
+      });
     } catch (err) {
-      if (err.code === 11000) return res.status(204).send();
+      if (err.code === 11000) {
+        // already viewed → do nothing
+        return res.status(204).send();
+      }
       throw err;
     }
-    if (saved) {
-      await Listing.findByIdAndUpdate(listingId, { $inc: { "views.count": 1 } });
-    }
-    res.status(204).send();
+
+    // ✅ NO manual increment here
+    return res.status(204).send();
+
   } catch (err) {
     console.error("❌ registerListingView:", err);
     res.status(500).json({ message: "Failed to register view" });
   }
 };
+
 // Other controllers unchanged
 
 exports.getMyListingsViewsSummary = async (req, res) => {

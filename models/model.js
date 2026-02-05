@@ -919,6 +919,10 @@ const listingSchema = new Schema({
   description: { type: String },
   photos: [{ type: String }],
   location: { type: String },
+  views: {
+  count: { type: Number, default: 0 },
+}
+,
 
   // Unified details: always populate this, copy from animal for farmers
   animal_details: {
@@ -974,10 +978,25 @@ const viewSchema = new Schema({
   viewer_role: { type: String, required: true },
   viewed_at: { type: Date, default: Date.now }
 });
-viewSchema.index({ listing_id: 1, viewer_id: 1 }, { unique: true }); // Enforce unique views per user/listing
-viewSchema.index({ listing_id: 1 }); // For fast aggregates on summary
-viewSchema.index({ viewer_role: 1 }); // Optimize role grouping
+
+// one view per user per listing
+viewSchema.index({ listing_id: 1, viewer_id: 1 }, { unique: true });
+
+// ✅ POST-SAVE HOOK (THE IMPORTANT PART)
+viewSchema.post('save', async function (doc, next) {
+  try {
+    await mongoose.model('Listing').findByIdAndUpdate(
+      doc.listing_id,
+      { $inc: { 'views.count': 1 } }
+    );
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
+
 const View = mongoose.model('View', viewSchema);
+
 
 const chatSchema = new Schema({
   participants: [{ type: Schema.Types.ObjectId, ref: 'User' }], // buyer + seller
