@@ -66,6 +66,7 @@ exports.registerAdmin = async (req, res) => {
 };
 
 // loginController.js
+// Assuming this is part of a larger controller file; only showing the relevant exports
 exports.login = async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password)
@@ -98,12 +99,46 @@ exports.login = async (req, res) => {
     name: user.username || user.fullname,
     email: user.email,
     role,
+    onboarding_complete: user.onboarding_complete, // Added for potential frontend use
     ...(code ? { code } : {}),
   };
 
   const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "7d" });
 
   res.json({ success: true, token });
+};
+
+exports.googleCallback = async (req, res) => {
+  try {
+    const user = req.user;
+    const FRONTEND = process.env.FRONTEND_URL;
+
+    if (!user) {
+      return res.redirect(`${FRONTEND}/login`);
+    }
+
+    const role = String(user.role || "buyer").toLowerCase(); // Simplified: rely on role field
+
+    const payload = {
+      id: user._id,
+      name: user.username || user.fullname,
+      email: user.email,
+      role,
+      onboarding_complete: user.onboarding_complete, // Added for consistency
+      ...(user.farmer_code ? { code: user.farmer_code } : {}),
+    };
+
+    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "7d" });
+
+    if (user.onboarding_complete !== true) {
+      return res.redirect(`${FRONTEND}/set-password?token=${token}`);
+    }
+
+    return res.redirect(`${FRONTEND}/google-callback?token=${token}`);
+  } catch (err) {
+    console.error(err); // Log for debugging
+    return res.redirect(`${process.env.FRONTEND_URL}/login`);
+  }
 };
 
 // ----------------------------
@@ -151,39 +186,6 @@ exports.registerSeller = async (req, res) => {
 // GOOGLE LOGIN / REGISTER
 // ----------------------------
 
-exports.googleCallback = async (req, res) => {
-  try {
-    const user = req.user;
-    const FRONTEND = process.env.FRONTEND_URL;
-
-    if (!user) {
-      return res.redirect(`${FRONTEND}/login`);
-    }
-
-    const role =
-      user._collection === "Farmer"
-        ? "farmer"
-        : String(user.role || "buyer").toLowerCase();
-
-    const payload = {
-      id: user._id,
-      name: user.username || user.fullname,
-      email: user.email,
-      role,
-      ...(user.farmer_code ? { code: user.farmer_code } : {}),
-    };
-
-    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "7d" });
-
-    if (user.onboarding_complete !== true) {
-      return res.redirect(`${FRONTEND}/set-password?token=${token}`);
-    }
-
-    return res.redirect(`${FRONTEND}/google-callback?token=${token}`);
-  } catch {
-    return res.redirect(`${process.env.FRONTEND_URL}/login`);
-  }
-};
 
 
 
