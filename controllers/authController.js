@@ -66,7 +66,6 @@ exports.registerAdmin = async (req, res) => {
 };
 
 // loginController.js
-// Assuming this is part of a larger controller file; only showing the relevant exports
 exports.login = async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password)
@@ -99,7 +98,6 @@ exports.login = async (req, res) => {
     name: user.username || user.fullname,
     email: user.email,
     role,
-    onboarding_complete: user.onboarding_complete, // Added for potential frontend use
     ...(code ? { code } : {}),
   };
 
@@ -107,7 +105,6 @@ exports.login = async (req, res) => {
 
   res.json({ success: true, token });
 };
-
 exports.googleCallback = async (req, res) => {
   try {
     const user = req.user;
@@ -117,14 +114,16 @@ exports.googleCallback = async (req, res) => {
       return res.redirect(`${FRONTEND}/login`);
     }
 
-    const role = String(user.role || "buyer").toLowerCase(); // Simplified: rely on role field
+    const role =
+      user._collection === "Farmer"
+        ? "farmer"
+        : String(user.role || "buyer").toLowerCase();
 
     const payload = {
       id: user._id,
       name: user.username || user.fullname,
       email: user.email,
       role,
-      onboarding_complete: user.onboarding_complete, // Added for consistency
       ...(user.farmer_code ? { code: user.farmer_code } : {}),
     };
 
@@ -135,8 +134,7 @@ exports.googleCallback = async (req, res) => {
     }
 
     return res.redirect(`${FRONTEND}/google-callback?token=${token}`);
-  } catch (err) {
-    console.error(err); // Log for debugging
+  } catch {
     return res.redirect(`${process.env.FRONTEND_URL}/login`);
   }
 };

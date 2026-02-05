@@ -1,16 +1,22 @@
+// passport.js
 const passport = require("passport");
 const GoogleStrategy = require("passport-google-oauth20").Strategy;
 const { User, Farmer } = require("../models/model");
 const { sendWelcomeEmail } = require("../utils/emailService");
+
 const callbackURL =
   process.env.NODE_ENV === "production"
     ? "https://maziwasmart.onrender.com/api/userAuth/google/callback"
     : "http://localhost:5000/api/userAuth/google/callback";
 
 // ---------------------------------------------------------
-// Helper (simplified: no toObject or _collection needed)
+// Helper
 // ---------------------------------------------------------
-const wrapUser = (doc) => doc;
+const wrapUser = (doc, collection) => {
+  const obj = doc.toObject ? doc.toObject() : doc;
+  obj._collection = collection;
+  return obj;
+};
 
 // ---------------------------------------------------------
 // GOOGLE STRATEGY
@@ -31,21 +37,17 @@ passport.use(
             role = JSON.parse(req.query.state).role || "buyer";
           }
         } catch (_) {}
+
         const email = profile.emails?.[0]?.value?.toLowerCase();
         if (!email) return done(null, false);
 
-        // Check Farmer first for consistency
-        const farmer = await Farmer.findOne({ email });
-        if (farmer) {
-          if (role !== "farmer") return done(new Error("Role mismatch: Account is farmer-only"), false);
-          return done(null, wrapUser(farmer));
-        }
-
+        // ---------------- USER ----------------
         const user = await User.findOne({ email });
-        if (user) {
-          if (role !== user.role) return done(new Error(`Role mismatch: Account role is ${user.role}`), false);
-          return done(null, wrapUser(user));
-        }
+        if (user) return done(null, wrapUser(user, "User"));
+
+        // ---------------- FARMER --------------
+        const farmer = await Farmer.findOne({ email });
+        if (farmer) return done(null, wrapUser(farmer, "Farmer"));
 
         // ---------------- CREATE FARMER -------
         if (role === "farmer") {
@@ -58,7 +60,7 @@ passport.use(
             onboarding_complete: false,
           });
           sendWelcomeEmail(created.email, created.fullname, "farmer").catch(() => {});
-          return done(null, wrapUser(created));
+          return done(null, wrapUser(created, "Farmer"));
         }
 
         // ---------------- CREATE USER ---------
@@ -70,7 +72,8 @@ passport.use(
           onboarding_complete: false,
         });
         sendWelcomeEmail(created.email, created.username, role).catch(() => {});
-        return done(null, wrapUser(created));
+        return done(null, wrapUser(created, "User"));
+
       } catch (err) {
         return done(err, null);
       }
@@ -80,8 +83,7 @@ passport.use(
 
 // ---------------------------------------------------------
 passport.serializeUser((user, done) => {
-  const collection = user.role === "farmer" ? "Farmer" : "User"; // Derive collection from role for deserialize
-  done(null, { id: user._id, collection });
+  done(null, { id: user._id, collection: user._collection });
 });
 
 passport.deserializeUser(async ({ id, collection }, done) => {
