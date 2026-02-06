@@ -7,13 +7,13 @@ const Notification = require('./models/model').Notification;
 const app = express();
 const server = http.createServer(app);
 
-const io = new Server(server, {
+const io = socketIo(server, {
   cors: {
-    origin: "*",  // frontend domain goes here
-    methods: ["GET", "POST"]
-  }
+    origin: ["https://maziwa-smart.vercel.app", "http://localhost:3000", "http://localhost:3001"],  // <-- ADD your dev URL
+    methods: ["GET", "POST", "DELETE", "PATCH", "PUT"],
+    credentials: true,
+  },
 });
-
 // Store sockets by role or farmer_code
 io.on('connection', (socket) => {
   console.log('⚡ New client connected:', socket.id);
