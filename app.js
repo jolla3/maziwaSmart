@@ -1,4 +1,4 @@
-// app.js  ← REPLACE ENTIRE FILE
+// app.js  ← REPLACE ENTIRE FILE (with these targeted updates)
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -10,7 +10,7 @@ const passport = require("./config/passport");
 const { logger } = require("./utils/logger");
 const Session = require("./models/Session");
 const { logEvent } = require("./utils/eventLogger");
-const geoip = require("geoip-lite");
+const geoip = require("geoip-lite");  // <-- ADD THIS: For geolocation lookups
 
 const app = express();
 
@@ -19,6 +19,7 @@ const app = express();
 // ======================================================
 app.set('trust proxy', true);
 
+// Updated: Include geo in the Map for richer tracking
 const onlineUsers = new Map(); // userId => { role, ip, geo: { country, city }, connectedAt }
 app.set("onlineUsers", onlineUsers);
 
@@ -28,14 +29,15 @@ const broadcastOnlineList = () => {
     userId: id,
     role: info.role,
     ip: info.ip,
-    geo: info.geo,
+    geo: info.geo,  // <-- ADD: Include geolocation in broadcasts
     connectedAt: info.connectedAt
   }));
 
-  monitorNamespace.emit("monitor:onlineUsers", list);  // Only emit to monitor namespace
+  io.emit("monitor:onlineUsers", list);
+  monitorNamespace.emit("monitor:onlineUsers", list);
 };
 
-// Cleanup dead sessions every 2 min
+// Cleanup dead sessions every 2 min (unchanged, but now removes from Map too)
 setInterval(async () => {
   const cutoff = new Date(Date.now() - 5 * 60 * 1000);
   const dead = await Session.find({ updatedAt: { $lt: cutoff } });
@@ -43,7 +45,6 @@ setInterval(async () => {
   await Session.deleteMany({ updatedAt: { $lt: cutoff } });
   broadcastOnlineList();
 }, 120000);
-
 // ======================================================
 // GLOBAL REQUEST LOGGER
 // ======================================================
@@ -92,7 +93,6 @@ app.use(passport.initialize());
 // ======================================================
 // ROUTES
 // ======================================================
-// (Your routes here – unchanged)
 const userAuth = require('./routes/authRouter');
 app.use('/api/userAuth', userAuth);
 
@@ -186,8 +186,6 @@ app.use("/api/admin/monitor/config", adminConfig);
 const adminSession = require("./routes/adminSessionRouter");
 app.use("/api/admin/sessions", adminSession);
 
-
-
 // ======================================================
 // MONGO CONNECTION
 // ======================================================
@@ -198,27 +196,30 @@ mongoose.connect(process.env.MONGO_URI)
 // ======================================================
 // SOCKET.IO SETUP
 // ======================================================
-const { verifySocketAuth } = require("./middleware/authMiddleware");  // <-- INTEGRATED: Your auth middleware
+const { verifySocketAuth } = require("./middleware/authMiddleware");
 const server = http.createServer(app);
 
 const io = socketIo(server, {
   cors: {
-    origin: ["https://maziwa-smart.vercel.app", "http://localhost:3000", "http://localhost:3001"],  // <-- ADD: Your dev URL for testing
+    origin: ["https://maziwa-smart.vercel.app", "http://localhost:3000"],  // <-- ADD your dev URL
     methods: ["GET", "POST", "DELETE", "PATCH", "PUT"],
     credentials: true,
   },
 });
-
 app.set("io", io);
-io.use(verifySocketAuth);  // <-- INTEGRATED: Socket auth
+io.use(verifySocketAuth);
 
-// Monitor namespace for superadmin dashboard (DECLARE BEFORE USE)
+// Monitor namespace for superadmin dashboard
 const monitorNamespace = io.of("/monitor");
 monitorNamespace.on("connection", (socket) => {
   logger.info(`Monitor dashboard connected: ${socket.id}`);
-  broadcastOnlineList();  // <-- MOVED: Emit after monitor client connects
+  broadcastOnlineList();
 });
 
+
+// ======================================================
+// MAIN SOCKET HANDLER – RICH ONLINE TRACKING
+// ======================================================
 // ======================================================
 // MAIN SOCKET HANDLER – RICH ONLINE TRACKING
 // ======================================================
@@ -238,12 +239,16 @@ io.on("connection", async (socket) => {
 
   const userAgent = socket.handshake.headers['user-agent'] || 'unknown';
 
-  logger.info(`Raw IP: ${ip}`);  // <-- ADD: Debug raw IP
+  // ADD: Log raw IP for debugging
+  logger.info(`Raw IP: ${ip}`);
 
-  const geo = geoip.lookup(ip) || null;
+  // ADD: Compute geolocation from IP
+  const geo = geoip.lookup(ip) || null;  // { country: 'US', city: 'New York' } or null
 
+  // Updated: Add to Map with geo
   onlineUsers.set(userId, { role, ip, geo, connectedAt: new Date() });
 
+  // Persist session (unchanged, but now IP is captured)
   await Session.findOneAndUpdate(
     { userId },
     {
@@ -263,6 +268,7 @@ io.on("connection", async (socket) => {
 
   socket.join(userId);
 
+  // Log connect (updated to include geo in metadata)
   await logEvent(socket, {
     userId,
     role,
@@ -278,7 +284,7 @@ io.on("connection", async (socket) => {
     broadcastOnlineList();
   });
 
-  // Chat handler
+  // Chat handler (unchanged)
   socket.on("send_message", (data) => {
     if (data.receiver) {
       io.to(data.receiver.toString()).emit("new_message", {
@@ -296,6 +302,7 @@ io.on("connection", async (socket) => {
   });
 
   socket.on("disconnect", async () => {
+    // Retrieve ip and geo from the Map before deleting
     const userInfo = onlineUsers.get(userId);
     const ip = userInfo?.ip || 'unknown';
     const geo = userInfo?.geo || null;
@@ -308,13 +315,12 @@ io.on("connection", async (socket) => {
       userId,
       role,
       type: "socket.disconnect",
-      metadata: { socketId: socket.id, ip, geo }
+      metadata: { socketId: socket.id, ip, geo }  // Now ip and geo are properly scoped
     });
 
     logger.warn(`OFFLINE → ${userId} – Total: ${onlineUsers.size}`);
   });
 });
-
 // ======================================================
 // START SERVER
 // ======================================================
