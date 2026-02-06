@@ -221,6 +221,9 @@ monitorNamespace.on("connection", (socket) => {
 // ======================================================
 // MAIN SOCKET HANDLER – RICH ONLINE TRACKING
 // ======================================================
+// ======================================================
+// MAIN SOCKET HANDLER – RICH ONLINE TRACKING
+// ======================================================
 io.on("connection", async (socket) => {
   const userId = socket.user?.id?.toString();
   const role = socket.user?.role;
@@ -236,6 +239,9 @@ io.on("connection", async (socket) => {
     socket.handshake.address || 'unknown';
 
   const userAgent = socket.handshake.headers['user-agent'] || 'unknown';
+
+  // ADD: Log raw IP for debugging
+  logger.info(`Raw IP: ${ip}`);
 
   // ADD: Compute geolocation from IP
   const geo = geoip.lookup(ip) || null;  // { country: 'US', city: 'New York' } or null
@@ -269,6 +275,14 @@ io.on("connection", async (socket) => {
     role,
     type: "socket.connect",
     metadata: { socketId: socket.id, ip, userAgent, geo }
+  });
+
+  // ADD: Handle socket errors
+  socket.on("error", async (err) => {
+    logger.error(`Socket error for ${userId}:`, err);
+    onlineUsers.delete(userId);
+    await Session.deleteOne({ socketId: socket.id });
+    broadcastOnlineList();
   });
 
   // Chat handler (unchanged)
