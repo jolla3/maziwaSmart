@@ -667,15 +667,15 @@ exports.getMyListingsViewsSummary = async (req, res) => {
   try {
     const userId = req.user._id || req.user.id; // Handle both _id and id
 
-    // console.log('🔍 Getting views summary for user:', userId);
+    console.log('🔍 Getting views summary for user:', userId);
 
     // Find listings owned by this user
     const userListings = await Listing.find({ seller: userId })
 .select('_id title price animal_type images')
       .lean();
 
-    // console.log('📦 Found listings:', userListings.length);
-    // console.log('📦 Listing IDs:', userListings.map(l => l._id));
+    console.log('📦 Found listings:', userListings.length);
+    console.log('📦 Listing IDs:', userListings.map(l => l._id));
 
     if (!userListings.length) {
       return res.status(200).json({
@@ -692,7 +692,7 @@ exports.getMyListingsViewsSummary = async (req, res) => {
 
     // Debug: Check if views exist for these listings
     const viewCount = await View.countDocuments({ listing_id: { $in: listingIds } });
-    // console.log('👀 Total views found:', viewCount);
+    console.log('👀 Total views found:', viewCount);
 
     // Get total views by role
     const roleAgg = await View.aggregate([
@@ -700,7 +700,7 @@ exports.getMyListingsViewsSummary = async (req, res) => {
       { $group: { _id: "$viewer_role", count: { $sum: 1 } } }
     ]);
 
-    // console.log('📊 Role aggregation result:', roleAgg);
+    console.log('📊 Role aggregation result:', roleAgg);
 
     const byRole = {};
     let totalViews = 0;
@@ -739,7 +739,7 @@ exports.getMyListingsViewsSummary = async (req, res) => {
       { $sort: { total_views: -1 } }
     ]);
 
-    // console.log('📊 Per-listing aggregation result:', perListingAgg);
+    console.log('📊 Per-listing aggregation result:', perListingAgg);
 
     // Merge listing details with view data
     const perListing = perListingAgg.map(p => {
@@ -761,7 +761,7 @@ exports.getMyListingsViewsSummary = async (req, res) => {
       .limit(10)
       .lean();
 
-    // console.log('🕐 Recent views found:', recentViews.length);
+    console.log('🕐 Recent views found:', recentViews.length);
 
     // Manually add listing titles
     const recentViewsWithTitles = recentViews.map(v => {
@@ -783,9 +783,9 @@ exports.getMyListingsViewsSummary = async (req, res) => {
       recent_views: recentViewsWithTitles
     };
 
-    // console.log('✅ Summary response:', JSON.stringify(summary, null, 2));
+    console.log('✅ Summary response:', JSON.stringify(summary, null, 2));
 
-    // res.status(200).json(summary);
+    res.status(200).json(summary);
   } catch (error) {
     console.error("❌ getMyListingsViewsSummary:", error);
     res.status(500).json({ message: "Failed to fetch my views summary", error: error.message });
