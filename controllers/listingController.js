@@ -38,7 +38,7 @@ exports.createListing = async (req, res) => {
       return res.status(400).json({ success: false, message: "At least one photo is required" });
     }
 
-    // Basic validation—your code skips this trash
+    // Basic validation
     if (!title?.trim() || !animal_type?.trim() || !price) {
       return res.status(400).json({ success: false, message: "Title, animal type, and price are required" });
     }
@@ -79,23 +79,38 @@ exports.createListing = async (req, res) => {
         return res.status(400).json({ success: false, message: "Animal ID required for farmers" });
       }
       const Cow = require("../models/model").Cow; // Assuming exported
-      const animal = await Cow.findById(animal_id);
+      const animal = await Cow.findById(animal_id).populate('breed_id').populate('pregnancy.insemination_id'); // ✅ Populate breed and insemination
       if (!animal) {
         return res.status(404).json({ success: false, message: "Animal not found" });
       }
 
-      // Ownership check—your code skips this, total security trash
+      // Ownership check
       if (animal.farmer_id?.toString() !== req.user.id) {
         return res.status(403).json({ success: false, message: "You can only list your own animals" });
       }
 
-      listingData.animal_id = animal._id;
+      // ✅ Recalculate age reliably (same as cron logic)
+      const calculateAge = (birthDate) => {
+        if (!birthDate) return "";
+        const today = new Date();
+        const birth = new Date(birthDate);
+        let years = today.getFullYear() - birth.getFullYear();
+        let months = today.getMonth() - birth.getMonth();
+        if (months < 0 || (months === 0 && today.getDate() < birth.getDate())) {
+          years--;
+          months += 12;
+        }
+        return `${years} year${years !== 1 ? "s" : ""} ${months} month${months !== 1 ? "s" : ""}`;
+      };
 
-      // Copy from animal—use flat breed, no useless populate
+      // ✅ Populate breed and sire from breed_id
+      const breedData = animal.breed_id || {};
+      const inseminationData = animal.pregnancy?.insemination_id || {};
+
       listingData.animal_details = {
-        age: animal.age || "",
+        age: calculateAge(animal.birth_date) || "", // ✅ Always recalculate
         birth_date: animal.birth_date || null,
-        breed_name: (animal.breed || "").trim() || "Unknown",
+        breed_name: breedData.breed_name || animal.breed || "Unknown", // ✅ From breed_id
         gender: animal.gender || "",
         status: animal.status || "active",
         stage: animal.stage || "",
@@ -107,12 +122,12 @@ exports.createListing = async (req, res) => {
           expected_due_date: animal.pregnancy?.expected_due_date || null,
           insemination_id: animal.pregnancy?.insemination_id || null,
         },
-        bull_code: animal.sire?.code || animal.pregnancy?.insemination_id?.bull_code || "",
-        bull_name: animal.sire?.name || animal.pregnancy?.insemination_id?.bull_name || "",
-        bull_breed: animal.sire?.breed || animal.pregnancy?.insemination_id?.bull_breed || "",
+        bull_code: breedData.bull_code || inseminationData.bull_code || animal.bull_code || "", // ✅ From breed or insemination
+        bull_name: breedData.bull_name || inseminationData.bull_name || animal.bull_name || "",
+        bull_breed: breedData.bull_breed || inseminationData.bull_breed || "",
       };
 
-      // Merge overrides—handle blanks as hides
+      // Merge overrides
       if (Object.keys(parsedDetails).length > 0) {
         listingData.animal_details = { ...listingData.animal_details, ...parsedDetails };
         if (parsedDetails.pregnancy) {
@@ -130,9 +145,23 @@ exports.createListing = async (req, res) => {
         return res.status(403).json({ success: false, message: "Seller not approved" });
       }
 
-      if (!parsedDetails.age || !parsedDetails.breed_name?.trim()) {
-        return res.status(400).json({ success: false, message: "Age and breed_name are required for sellers" });
+      if (!parsedDetails.age && !parsedDetails.birth_date) {
+        return res.status(400).json({ success: false, message: "Age or birth_date required for sellers" });
       }
+
+      // ✅ Compute age if birth_date provided
+      const calculateAge = (birthDate) => {
+        if (!birthDate) return parsedDetails.age || "";
+        const today = new Date();
+        const birth = new Date(birthDate);
+        let years = today.getFullYear() - birth.getFullYear();
+        let months = today.getMonth() - birth.getMonth();
+        if (months < 0 || (months === 0 && today.getDate() < birth.getDate())) {
+          years--;
+          months += 12;
+        }
+        return `${years} year${years !== 1 ? "s" : ""} ${months} month${months !== 1 ? "s" : ""}`;
+      };
 
       let cleanStage = parsedDetails.stage?.toLowerCase().trim();
       if (!validStages.includes(cleanStage)) {
@@ -141,9 +170,9 @@ exports.createListing = async (req, res) => {
       }
 
       listingData.animal_details = {
-        age: parsedDetails.age,
+        age: calculateAge(parsedDetails.birth_date) || parsedDetails.age || "",
         birth_date: parsedDetails.birth_date || null,
-        breed_name: parsedDetails.breed_name.trim(),
+        breed_name: parsedDetails.breed_name?.trim() || "",
         gender: parsedDetails.gender || "",
         bull_code: parsedDetails.bull_code || "",
         bull_name: parsedDetails.bull_name || "",
