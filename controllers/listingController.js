@@ -637,6 +637,12 @@ exports.registerListingView = async (req, res) => {
     const listing = await Listing.findById(listingId).select('_id');
     if (!listing) return res.status(404).json({ message: "Listing not found" });
 
+    // Check if view already exists to prevent duplicates
+    const existingView = await View.findOne({ listing_id: listingId, viewer_id: viewerId });
+    if (existingView) {
+      return res.status(204).send(); // Already viewed, no increment
+    }
+
     try {
       await View.create({
         listing_id: listingId,
@@ -646,13 +652,13 @@ exports.registerListingView = async (req, res) => {
       });
     } catch (err) {
       if (err.code === 11000) {
-        // already viewed → do nothing
+        // Duplicate key error (shouldn't happen with check above, but safety net)
         return res.status(204).send();
       }
       throw err;
     }
 
-    // ✅ NO manual increment here
+    // ✅ NO manual increment here - hook handles it
     return res.status(204).send();
 
   } catch (err) {
