@@ -287,8 +287,9 @@ exports.getAnimalById = async (req, res) => {
     const animal = await Cow.findOne({ _id: id, farmer_code })
       .populate("mother_id", "cow_name species")
       .populate("father_id", "cow_name species")
-      .populate("breed_id", "name")
+      .populate("breed_id", "breed_name bull_code bull_name bull_breed origin_farm country") // ✅ Populate full sire details
       .populate("offspring_ids", "cow_name species birth_date")
+      .populate("pregnancy.insemination_id", "bull_code bull_name bull_breed") // ✅ Populate insemination details
       .lean();
 
     if (!animal) {
@@ -307,8 +308,23 @@ exports.getAnimalById = async (req, res) => {
         photos: animal.photos || [],
         birth_date: animal.birth_date,
         age: animal.age,
-        breed: animal.breed_id?.name || animal.breed || null,
-        sire: formatSire(animal),
+        breed: animal.breed_id?.breed_name || animal.breed || null, // ✅ Use breed_name
+        sire: {
+          bull_code: animal.breed_id?.bull_code || animal.bull_code || null,
+          bull_name: animal.breed_id?.bull_name || animal.bull_name || null,
+          bull_breed: animal.breed_id?.bull_breed || null,
+          origin_farm: animal.breed_id?.origin_farm || null,
+          country: animal.breed_id?.country || null,
+        }, // ✅ Structured sire data
+        pregnancy: {
+          is_pregnant: animal.pregnancy?.is_pregnant || false,
+          expected_due_date: animal.pregnancy?.expected_due_date || null,
+          insemination: animal.pregnancy?.insemination_id ? {
+            bull_code: animal.pregnancy.insemination_id.bull_code,
+            bull_name: animal.pregnancy.insemination_id.bull_name,
+            bull_breed: animal.pregnancy.insemination_id.bull_breed,
+          } : null,
+        }, // ✅ Include insemination details
         offspring: animal.offspring_ids?.map(o => ({
           id: o._id,
           name: o.cow_name,
@@ -325,7 +341,6 @@ exports.getAnimalById = async (req, res) => {
     });
   }
 };
-
 // PUT /api/farmer/animals/:id
 exports.updateAnimal = async (req, res) => {
   let session;
