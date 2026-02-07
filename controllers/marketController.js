@@ -84,27 +84,46 @@ exports.getMarketListingById = async (req, res) => {
 
     // Unified extraction from animal_details (now always present)
     const details = listing.animal_details;
-    const animalData = {
-      name: details.bull_name || details.breed_name || listing.animal_id?.cow_name || listing.title || "Unnamed",
-      species: listing.animal_type || "Unknown",
-      gender: details.gender || listing.animal_id?.gender,
-      stage: details.stage || listing.animal_id?.stage,
-      status: details.status || listing.animal_id?.status,
-      breed: details.breed_name || listing.animal_id?.breed_id?.breed_name || "Unknown",
-      lifetime_milk: details.lifetime_milk || listing.animal_id?.lifetime_milk || 0,
-      daily_average: details.daily_average || listing.animal_id?.daily_average || 0,
-      calved_count: details.total_offspring || listing.animal_id?.total_offspring || 0,
-      age: details.age ,
-      bull_code: details.bull_code || listing.animal_id?.pregnancy?.insemination_id?.bull_code || null,
-      bull_name: details.bull_name || listing.animal_id?.pregnancy?.insemination_id?.bull_name || null,
-      bull_breed: details.bull_breed || listing.animal_id?.pregnancy?.insemination_id?.bull_breed || null,
-      pregnancy: {
-        is_pregnant: details.pregnancy?.is_pregnant || listing.animal_id?.pregnancy?.is_pregnant || false,
-        expected_due_date: details.pregnancy?.expected_due_date || listing.animal_id?.pregnancy?.expected_due_date || null,
-      },
-      photos: listing.photos || listing.animal_id?.photos || [],
-      birth_date: details.birth_date || listing.animal_id?.birth_date || null, // For frontend if needed
-    };
+
+const animalData = {
+  name: animal.cow_name || "Unnamed", // ✅ Use cow_name, not bull_name
+  species: listing.animal_type || "Unknown",
+  gender: details.gender || listing.animal_id?.gender,
+  stage: details.stage || listing.animal_id?.stage,
+  status: details.status || listing.animal_id?.status,
+  breed: details.breed_name || listing.animal_id?.breed_id?.breed_name || "Unknown",
+  lifetime_milk: details.lifetime_milk || listing.animal_id?.lifetime_milk || 0,
+  daily_average: details.daily_average || listing.animal_id?.daily_average || 0,
+  calved_count: details.total_offspring || listing.animal_id?.total_offspring || 0,
+  age: details.age,
+  bull_code: details.bull_code || listing.animal_id?.pregnancy?.insemination_id?.bull_code || null,
+  bull_name: details.bull_name || listing.animal_id?.pregnancy?.insemination_id?.bull_name || null,
+  bull_breed: details.bull_breed || listing.animal_id?.pregnancy?.insemination_id?.bull_breed || null,
+  pregnancy: {
+    is_pregnant: details.pregnancy?.is_pregnant || listing.animal_id?.pregnancy?.is_pregnant || false,
+    expected_due_date: details.pregnancy?.expected_due_date || listing.animal_id?.pregnancy?.expected_due_date || null,
+  },
+  photos: listing.photos || listing.animal_id?.photos || [],
+  birth_date: details.birth_date || listing.animal_id?.birth_date || null,
+};
+
+res.status(200).json({
+  success: true,
+  listing: {
+    ...listing.toObject(), // ✅ This includes animal_id if saved
+    _id: listing._id,
+    views: viewsCount,
+    title: listing.title,
+    price: listing.price,
+    images: listing.photos?.length ? listing.photos : animalData.photos || [],
+    location: listing.location,
+    createdAt: listing.createdAt,
+    seller: sellerData,
+    animal: animalData,
+  },
+});
+
+// ... (rest of the file)
     
 
     res.status(200).json({
