@@ -22,7 +22,7 @@ app.set('trust proxy', true);
 const onlineUsers = new Map(); // userId => { role, ip, geo: { country, city }, connectedAt }
 app.set("onlineUsers", onlineUsers);
 
-// Broadcast helper (updated to include geo)
+// Broadcast helper
 const broadcastOnlineList = () => {
   const list = Array.from(onlineUsers.entries()).map(([id, info]) => ({
     userId: id,
@@ -93,6 +93,7 @@ app.use(passport.initialize());
 // ROUTES
 // ======================================================
 // (Your routes here – unchanged)
+
 const userAuth = require('./routes/authRouter');
 app.use('/api/userAuth', userAuth);
 
@@ -187,7 +188,6 @@ const adminSession = require("./routes/adminSessionRouter");
 app.use("/api/admin/sessions", adminSession);
 
 
-
 // ======================================================
 // MONGO CONNECTION
 // ======================================================
@@ -198,25 +198,25 @@ mongoose.connect(process.env.MONGO_URI)
 // ======================================================
 // SOCKET.IO SETUP
 // ======================================================
-const { verifySocketAuth } = require("./middleware/authMiddleware");  // <-- INTEGRATED: Your auth middleware
+const { verifySocketAuth } = require("./middleware/authMiddleware");
 const server = http.createServer(app);
 
 const io = socketIo(server, {
   cors: {
-    origin: ["https://maziwa-smart.vercel.app", "http://localhost:3000", "http://localhost:3001"],  // <-- ADD: Your dev URL for testing
+    origin: ["https://maziwa-smart.vercel.app", "http://localhost:3000"],
     methods: ["GET", "POST", "DELETE", "PATCH", "PUT"],
     credentials: true,
   },
 });
 
 app.set("io", io);
-io.use(verifySocketAuth);  // <-- INTEGRATED: Socket auth
+io.use(verifySocketAuth);
 
 // Monitor namespace for superadmin dashboard (DECLARE BEFORE USE)
 const monitorNamespace = io.of("/monitor");
 monitorNamespace.on("connection", (socket) => {
   logger.info(`Monitor dashboard connected: ${socket.id}`);
-  broadcastOnlineList();  // <-- MOVED: Emit after monitor client connects
+  broadcastOnlineList();
 });
 
 // ======================================================
@@ -238,7 +238,7 @@ io.on("connection", async (socket) => {
 
   const userAgent = socket.handshake.headers['user-agent'] || 'unknown';
 
-  logger.info(`Raw IP: ${ip}`);  // <-- ADD: Debug raw IP
+  logger.info(`Raw IP: ${ip}`);
 
   const geo = geoip.lookup(ip) || null;
 
@@ -263,14 +263,21 @@ io.on("connection", async (socket) => {
 
   socket.join(userId);
 
+  // Log and emit activity for login
   await logEvent(socket, {
     userId,
     role,
-    type: "socket.connect",
+    type: "user.login",
     metadata: { socketId: socket.id, ip, userAgent, geo }
   });
 
-  // ADD: Handle socket errors
+  // Emit role-based activity to monitor namespace
+  monitorNamespace.emit('activity:new', {
+    type: role,  // <-- UPDATED: Use role (e.g., 'superadmin', 'farmer') instead of 'User'
+    message: `${role} logged in`,
+    timestamp: new Date().toISOString()
+  });
+
   socket.on("error", async (err) => {
     logger.error(`Socket error for ${userId}:`, err);
     onlineUsers.delete(userId);
@@ -304,11 +311,19 @@ io.on("connection", async (socket) => {
     await Session.deleteOne({ socketId: socket.id });
     broadcastOnlineList();
 
+    // Log and emit activity for logout
     await logEvent(socket, {
       userId,
       role,
-      type: "socket.disconnect",
+      type: "user.logout",
       metadata: { socketId: socket.id, ip, geo }
+    });
+
+    // Emit role-based activity to monitor namespace
+    monitorNamespace.emit('activity:new', {
+      type: role,  // <-- UPDATED: Use role
+      message: `${role} logged out`,
+      timestamp: new Date().toISOString()
     });
 
     logger.warn(`OFFLINE → ${userId} – Total: ${onlineUsers.size}`);
