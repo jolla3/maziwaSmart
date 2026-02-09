@@ -1,5 +1,5 @@
 // controllers/marketController.js
-const { Listing, View } = require('../models/model');
+const { Listing, View ,Cow} = require('../models/model');
 
 // ... (keep getMarketListings, but update filters to handle both paths)
 exports.getMarketListings = async (req, res) => {
@@ -75,70 +75,55 @@ exports.getMarketListingById = async (req, res) => {
       .populate("farmer", "_id fullname phone email location farmer_code");
 
     if (!listing) {
+      console.error(`❌ Listing not found for ID: ${id}`);
       return res.status(404).json({ success: false, message: "Listing not found" });
     }
 
     const viewsCount = await View.countDocuments({ listing_id: listing._id });
+    console.log(`✅ Views count for listing ${id}: ${viewsCount}`); // ✅ Debug log
 
     const sellerData = listing.seller || listing.farmer || null;
 
     // Unified extraction from animal_details (now always present)
     const details = listing.animal_details;
 
-const animalData = {
-  name: animal.cow_name || "Unnamed", // ✅ Use cow_name, not bull_name
-  species: listing.animal_type || "Unknown",
-  gender: details.gender || listing.animal_id?.gender,
-  stage: details.stage || listing.animal_id?.stage,
-  status: details.status || listing.animal_id?.status,
-  breed: details.breed_name || listing.animal_id?.breed_id?.breed_name || "Unknown",
-  lifetime_milk: details.lifetime_milk || listing.animal_id?.lifetime_milk || 0,
-  daily_average: details.daily_average || listing.animal_id?.daily_average || 0,
-  calved_count: details.total_offspring || listing.animal_id?.total_offspring || 0,
-  age: details.age,
-  bull_code: details.bull_code || listing.animal_id?.pregnancy?.insemination_id?.bull_code || null,
-  bull_name: details.bull_name || listing.animal_id?.pregnancy?.insemination_id?.bull_name || null,
-  bull_breed: details.bull_breed || listing.animal_id?.pregnancy?.insemination_id?.bull_breed || null,
-  pregnancy: {
-    is_pregnant: details.pregnancy?.is_pregnant || listing.animal_id?.pregnancy?.is_pregnant || false,
-    expected_due_date: details.pregnancy?.expected_due_date || listing.animal_id?.pregnancy?.expected_due_date || null,
-  },
-  photos: listing.photos || listing.animal_id?.photos || [],
-  birth_date: details.birth_date || listing.animal_id?.birth_date || null,
-};
+    // ✅ Fixed: Use listing.animal_id instead of undefined 'animal'
+    const animalData = {
+      name: listing.animal_id?.cow_name || "Unnamed", // ✅ Corrected reference
+      species: listing.animal_type || "Unknown",
+      gender: details?.gender || listing.animal_id?.gender,
+      stage: details?.stage || listing.animal_id?.stage,
+      status: details?.status || listing.animal_id?.status,
+      breed: details?.breed_name || listing.animal_id?.breed_id?.breed_name || "Unknown",
+      lifetime_milk: details?.lifetime_milk || listing.animal_id?.lifetime_milk || 0,
+      daily_average: details?.daily_average || listing.animal_id?.daily_average || 0,
+      calved_count: details?.total_offspring || listing.animal_id?.total_offspring || 0,
+      age: details?.age,
+      bull_code: details?.bull_code || listing.animal_id?.pregnancy?.insemination_id?.bull_code || null,
+      bull_name: details?.bull_name || listing.animal_id?.pregnancy?.insemination_id?.bull_name || null,
+      bull_breed: details?.bull_breed || listing.animal_id?.pregnancy?.insemination_id?.bull_breed || null,
+      pregnancy: {
+        is_pregnant: details?.pregnancy?.is_pregnant || listing.animal_id?.pregnancy?.is_pregnant || false,
+        expected_due_date: details?.pregnancy?.expected_due_date || listing.animal_id?.pregnancy?.expected_due_date || null,
+      },
+      photos: listing.photos || listing.animal_id?.photos || [],
+      birth_date: details?.birth_date || listing.animal_id?.birth_date || null,
+    };
 
-res.status(200).json({
-  success: true,
-  listing: {
-    ...listing.toObject(), // ✅ This includes animal_id if saved
-    _id: listing._id,
-    views: viewsCount,
-    title: listing.title,
-    price: listing.price,
-    images: listing.photos?.length ? listing.photos : animalData.photos || [],
-    location: listing.location,
-    createdAt: listing.createdAt,
-    seller: sellerData,
-    animal: animalData,
-  },
-});
-
-// ... (rest of the file)
-    
-
+    // ✅ Single response: Fixed structure to match frontend expectations
     res.status(200).json({
       success: true,
       listing: {
         ...listing.toObject(),
         _id: listing._id,
-        views: viewsCount,
+        views: { count: viewsCount }, // ✅ Changed to object with count for frontend compatibility
         title: listing.title,
         price: listing.price,
         images: listing.photos?.length ? listing.photos : animalData.photos || [],
         location: listing.location,
         createdAt: listing.createdAt,
         seller: sellerData,
-        animal: animalData,
+        animal_info: animalData, // ✅ Changed to animal_info for frontend consistency
       },
     });
   } catch (err) {
@@ -146,7 +131,6 @@ res.status(200).json({
     res.status(500).json({ success: false, message: "Failed to fetch listing details" });
   }
 };
-
 // (keep getTrendingListings, add populate as needed)
 
 // ---------------------------------------
