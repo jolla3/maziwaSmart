@@ -775,7 +775,7 @@ exports.getListingViews = async (req, res) => {
       return res.status(404).json({ success: false, message: "Listing not found" });
     }
     const viewsCount = listing.views?.count || 0;
-    // console.log(`✅ Summary views count for listing ${id}: ${viewsCount}`); // ✅ Debug log
+    console.log(`✅ Summary views count for listing ${id}: ${viewsCount}`); // ✅ Debug log
     res.status(200).json({
       success: true,
       views: { count: viewsCount } // ✅ Matches frontend expectation
