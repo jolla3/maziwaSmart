@@ -619,6 +619,9 @@ exports.registerListingView = async (req, res) => {
         viewer_schema: viewerSchema,
         viewer_role: viewerRole,
       });
+
+      // ✅ Increment embedded views.count in the Listing schema
+      await Listing.findByIdAndUpdate(listingId, { $inc: { 'views.count': 1 } });
     } catch (err) {
       if (err.code === 11000) {
         // Duplicate key error (shouldn't happen with check above, but safety net)
@@ -627,7 +630,6 @@ exports.registerListingView = async (req, res) => {
       throw err;
     }
 
-    // ✅ NO manual increment here - hook handles it
     return res.status(204).send();
 
   } catch (err) {
@@ -775,7 +777,7 @@ exports.getListingViews = async (req, res) => {
       return res.status(404).json({ success: false, message: "Listing not found" });
     }
     const viewsCount = listing.views?.count || 0;
-    console.log(`✅ Summary views count for listing ${id}: ${viewsCount}`); // ✅ Debug log
+    // console.log(`✅ Summary views count for listing ${id}: ${viewsCount}`); // ✅ Debug log
     res.status(200).json({
       success: true,
       views: { count: viewsCount } // ✅ Matches frontend expectation
