@@ -79,17 +79,17 @@ exports.getMarketListingById = async (req, res) => {
       return res.status(404).json({ success: false, message: "Listing not found" });
     }
 
-    const viewsCount = await View.countDocuments({ listing_id: listing._id });
-    console.log(`✅ Views count for listing ${id}: ${viewsCount}`); // ✅ Debug log
+    // ✅ Use embedded views.count from the listing schema (no separate query needed)
+    const viewsCount = listing.views?.count || 0;
+    console.log(`✅ Embedded views count for listing ${id}: ${viewsCount}`); // ✅ Debug log
 
     const sellerData = listing.seller || listing.farmer || null;
 
     // Unified extraction from animal_details (now always present)
     const details = listing.animal_details;
 
-    // ✅ Fixed: Use listing.animal_id instead of undefined 'animal'
     const animalData = {
-      name: listing.animal_id?.cow_name || "Unnamed", // ✅ Corrected reference
+      name: listing.animal_id?.cow_name || "Unnamed",
       species: listing.animal_type || "Unknown",
       gender: details?.gender || listing.animal_id?.gender,
       stage: details?.stage || listing.animal_id?.stage,
@@ -110,28 +110,26 @@ exports.getMarketListingById = async (req, res) => {
       birth_date: details?.birth_date || listing.animal_id?.birth_date || null,
     };
 
-    // ✅ Single response: Fixed structure to match frontend expectations
     res.status(200).json({
       success: true,
       listing: {
         ...listing.toObject(),
         _id: listing._id,
-        views: { count: viewsCount }, // ✅ Changed to object with count for frontend compatibility
+        views: { count: viewsCount }, // ✅ Return as object for frontend compatibility
         title: listing.title,
         price: listing.price,
         images: listing.photos?.length ? listing.photos : animalData.photos || [],
         location: listing.location,
         createdAt: listing.createdAt,
         seller: sellerData,
-        animal_info: animalData, // ✅ Changed to animal_info for frontend consistency
+        animal_info: animalData,
       },
     });
   } catch (err) {
     console.error("❌ Market single fetch error:", err);
     res.status(500).json({ success: false, message: "Failed to fetch listing details" });
   }
-};
-// (keep getTrendingListings, add populate as needed)
+};// (keep getTrendingListings, add populate as needed)
 
 // ---------------------------------------
 // GET trending listings (top 10 by views)

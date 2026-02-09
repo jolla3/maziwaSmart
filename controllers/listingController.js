@@ -769,19 +769,19 @@ exports.getMyListingsViewsSummary = async (req, res) => {
 
 exports.getListingViews = async (req, res) => {
   try {
-    const { id: listingId } = req.params;
-    if (!mongoose.Types.ObjectId.isValid(listingId)) return res.status(400).json({ message: "Invalid listing ID format" });
-
-    const listing = await Listing.findById(listingId)
-      .select("views.count")
-      .lean();
-    if (!listing) return res.status(404).json({ message: "Listing not found" });
-
-    const totalViews = listing.views?.count || 0;
-
-    res.status(200).json({ listing_id: listingId, total_views: totalViews });
-  } catch (error) {
-    console.error("❌ getListingViews:", error);
-    res.status(500).json({ message: "Failed to fetch listing views" });
+    const { id } = req.params;
+    const listing = await Listing.findById(id).select('views'); // Only fetch views field
+    if (!listing) {
+      return res.status(404).json({ success: false, message: "Listing not found" });
+    }
+    const viewsCount = listing.views?.count || 0;
+    // console.log(`✅ Summary views count for listing ${id}: ${viewsCount}`); // ✅ Debug log
+    res.status(200).json({
+      success: true,
+      views: { count: viewsCount } // ✅ Matches frontend expectation
+    });
+  } catch (err) {
+    console.error("❌ Views summary fetch error:", err);
+    res.status(500).json({ success: false, message: "Failed to fetch views" });
   }
 };

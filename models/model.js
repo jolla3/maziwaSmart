@@ -26,10 +26,10 @@ const userSchema = new Schema({
   resetExpiry: { type: Date },
   created_by: { type: Schema.Types.ObjectId, ref: 'User' },
   onboarding_complete: {
-  type: Boolean,
-  default: false
-}
-,
+    type: Boolean,
+    default: false
+  }
+  ,
   is_approved_seller: { type: Boolean, default: false }
 }, { timestamps: true });
 
@@ -56,9 +56,9 @@ const farmerSchema = new Schema({
   resetExpiry: { type: Date },
   is_active: { type: Boolean, default: true },
   onboarding_complete: {
-  type: Boolean,
-  default: false
-}
+    type: Boolean,
+    default: false
+  }
 
 }, { timestamps: true });
 
@@ -920,13 +920,13 @@ const listingSchema = new Schema({
   photos: [{ type: String }],
   location: { type: String },
   views: {
-  count: { type: Number, default: 0 },
-}
-,
+    count: { type: Number, default: 0 },
+  }
+  ,
 
   // Unified details: always populate this, copy from animal for farmers
   animal_details: {
-    age: { type:String }, // Raw age input (for sellers)
+    age: { type: String }, // Raw age input (for sellers)
     birth_date: { type: Date }, // For precise age calc (for farmers)
     breed_name: { type: String },
     gender: { type: String, enum: ["male", "female"] },
