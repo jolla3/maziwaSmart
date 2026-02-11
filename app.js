@@ -94,6 +94,7 @@ app.use(passport.initialize());
 // ======================================================
 // (Your routes here – unchanged)
 
+
 const userAuth = require('./routes/authRouter');
 app.use('/api/userAuth', userAuth);
 
@@ -219,6 +220,33 @@ monitorNamespace.on("connection", (socket) => {
   broadcastOnlineList();
 });
 
+// ======================================================
+// GLOBAL REQUEST LOGGER (REDUCED)
+// ======================================================
+app.use(async (req, res, next) => {
+  const start = Date.now();
+
+  res.on("finish", async () => {
+    const duration = Date.now() - start;
+
+    // REMOVE: Log every HTTP request (too bloated)
+    // Only log errors
+    if (res.statusCode >= 400) {
+      await logEvent(req, {
+        type: "http.error",
+        metadata: {
+          method: req.method,
+          path: req.originalUrl,
+          statusCode: res.statusCode,
+          durationMs: duration,
+          userAgent: req.headers['user-agent']
+        }
+      });
+    }
+  });
+
+  next();
+});
 // ======================================================
 // MAIN SOCKET HANDLER – RICH ONLINE TRACKING
 // ======================================================

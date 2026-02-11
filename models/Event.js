@@ -22,7 +22,7 @@ const eventSchema = new Schema(
 
     metadata: { type: Schema.Types.Mixed },
 
-    createdAt: { type: Date, default: Date.now },
+    createdAt: { type: Date, default: Date.now, expires: 2592000 },  // <-- ADD: TTL 30 days (auto-delete)
   },
   { timestamps: false }
 );

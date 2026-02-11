@@ -4,6 +4,7 @@ const Config = require("../models/MonitoringConfig");
 
 
 const { User  , Farmer} = require("../models/model");
+const Event = require("../models/Event");
 
 (async () => {
   try {
@@ -15,16 +16,7 @@ const { User  , Farmer} = require("../models/model");
     console.log("Connected to DB");
 
     // seed-onboarding.js
-await User.updateMany(
-  { password: { $exists: true, $ne: null } },
-  { $set: { onboarding_complete: true } }
-);
-
-await Farmer.updateMany(
-  { password: { $exists: true, $ne: null } },
-  { $set: { onboarding_complete: true } }
-);
-
+    await Event.deleteMany({ createdAt: { $lt: new Date(Date.now() - 30*24*60*60*1000) } });  // Delete older than 30 days
 console.log("onboarding_complete normalized");
 
   
