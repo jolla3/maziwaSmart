@@ -16,7 +16,7 @@ const Event = require("../models/Event");
     console.log("Connected to DB");
 
     // seed-onboarding.js
-    await Event.deleteMany({ createdAt: { $lt: new Date(Date.now() - 30*24*60*60*1000) } });  // Delete older than 30 days
+    await Event.deleteMany();  // Delete older than 30 days
 console.log("onboarding_complete normalized");
 
   

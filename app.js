@@ -45,7 +45,7 @@ setInterval(async () => {
 }, 120000);
 
 // ======================================================
-// GLOBAL REQUEST LOGGER
+// GLOBAL REQUEST LOGGER (REDUCED - ONLY ERRORS)
 // ======================================================
 app.use(async (req, res, next) => {
   const start = Date.now();
@@ -53,27 +53,18 @@ app.use(async (req, res, next) => {
   res.on("finish", async () => {
     const duration = Date.now() - start;
 
-    await logEvent(req, {
-      type: "http.request",
-      metadata: {
-        method: req.method,
-        path: req.originalUrl,
-        statusCode: res.statusCode,
-        durationMs: duration,
-        userAgent: req.headers['user-agent']
-      }
-    });
-
+    // REMOVE: Log every HTTP request (too bloated - only log errors)
     if (res.statusCode >= 400) {
       await logEvent(req, {
         userId: req.user?.id || null,
         role: req.user?.role || null,
         type: "http.error",
         metadata: {
-          statusCode: res.statusCode,
           method: req.method,
           path: req.originalUrl,
-          body: req.body || null
+          statusCode: res.statusCode,
+          durationMs: duration,
+          userAgent: req.headers['user-agent']
         }
       });
     }
@@ -92,9 +83,6 @@ app.use(passport.initialize());
 // ======================================================
 // ROUTES
 // ======================================================
-// (Your routes here – unchanged)
-
-
 const userAuth = require('./routes/authRouter');
 app.use('/api/userAuth', userAuth);
 
@@ -188,7 +176,6 @@ app.use("/api/admin/monitor/config", adminConfig);
 const adminSession = require("./routes/adminSessionRouter");
 app.use("/api/admin/sessions", adminSession);
 
-
 // ======================================================
 // MONGO CONNECTION
 // ======================================================
@@ -220,33 +207,6 @@ monitorNamespace.on("connection", (socket) => {
   broadcastOnlineList();
 });
 
-// ======================================================
-// GLOBAL REQUEST LOGGER (REDUCED)
-// ======================================================
-app.use(async (req, res, next) => {
-  const start = Date.now();
-
-  res.on("finish", async () => {
-    const duration = Date.now() - start;
-
-    // REMOVE: Log every HTTP request (too bloated)
-    // Only log errors
-    if (res.statusCode >= 400) {
-      await logEvent(req, {
-        type: "http.error",
-        metadata: {
-          method: req.method,
-          path: req.originalUrl,
-          statusCode: res.statusCode,
-          durationMs: duration,
-          userAgent: req.headers['user-agent']
-        }
-      });
-    }
-  });
-
-  next();
-});
 // ======================================================
 // MAIN SOCKET HANDLER – RICH ONLINE TRACKING
 // ======================================================
@@ -301,7 +261,7 @@ io.on("connection", async (socket) => {
 
   // Emit role-based activity to monitor namespace
   monitorNamespace.emit('activity:new', {
-    type: role,  // <-- UPDATED: Use role (e.g., 'superadmin', 'farmer') instead of 'User'
+    type: role,
     message: `${role} logged in`,
     timestamp: new Date().toISOString()
   });
@@ -349,7 +309,7 @@ io.on("connection", async (socket) => {
 
     // Emit role-based activity to monitor namespace
     monitorNamespace.emit('activity:new', {
-      type: role,  // <-- UPDATED: Use role
+      type: role,
       message: `${role} logged out`,
       timestamp: new Date().toISOString()
     });
