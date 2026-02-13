@@ -17,17 +17,17 @@ const formatSire = (animal) => {
 
   return animal.father_id
     ? {
-        type: "internal",
-        id: animal.father_id._id,
-        name: animal.father_id.cow_name
-      }
+      type: "internal",
+      id: animal.father_id._id,
+      name: animal.father_id.cow_name
+    }
     : animal.bull_name
-    ? {
+      ? {
         type: "external",
         code: animal.bull_code,
         name: animal.bull_name
       }
-    : null;
+      : null;
 };
 
 /**
@@ -252,6 +252,8 @@ exports.getMyAnimals = async (req, res) => {
       photos: a.photos || [],
       birth_date: a.birth_date,
       age: a.age,
+      lifetime_milk: a.lifetime_milk || 0,
+      daily_average: a.daily_average || 0,
       breed: a.breed_id?.name || a.breed || null,
       sire: formatSire(a),
       offspring: a.offspring_ids?.map(o => ({
@@ -308,6 +310,8 @@ exports.getAnimalById = async (req, res) => {
         photos: animal.photos || [],
         birth_date: animal.birth_date,
         age: animal.age,
+        lifetime_milk: animal.lifetime_milk || 0,
+        daily_average: animal.daily_average || 0,
         breed: animal.breed_id?.breed_name || animal.breed || null, // ✅ Use breed_name
         sire: {
           bull_code: animal.breed_id?.bull_code || animal.bull_code || null,
