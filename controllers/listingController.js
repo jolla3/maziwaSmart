@@ -648,7 +648,7 @@ exports.getMyListingsViewsSummary = async (req, res) => {
 
     // Find listings owned by this user
     const userListings = await Listing.find({ seller: userId })
-.select('_id title price animal_type images')
+      .select('_id title price animal_type images')
       .lean();
 
     console.log('📦 Found listings:', userListings.length);
@@ -725,7 +725,7 @@ exports.getMyListingsViewsSummary = async (req, res) => {
         listing_id: p._id,
         title: listing?.title || 'Unknown',
         price: listing?.price || 0,
-        category: listing?.category || 'Uncategorized',
+        animal_type: listing?.animal_type || 'Uncategorized',  // Updated to use animal_type instead of category
         image: listing?.images?.[0] || null,
         total_views: p.total_views,
         by_role: p.by_role
@@ -768,7 +768,6 @@ exports.getMyListingsViewsSummary = async (req, res) => {
     res.status(500).json({ message: "Failed to fetch my views summary", error: error.message });
   }
 };
-
 exports.getListingViews = async (req, res) => {
   try {
     const { id } = req.params;
