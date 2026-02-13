@@ -5,9 +5,9 @@ const CowController = require('../controllers/createCowController');
 const { verifyToken, authorizeRoles } = require('../middleware/authMiddleware');
 const cron= require('../cron/updateCowStages');
 
-router.post('/', verifyToken,CowController.createCow);
-router.get('/', verifyToken, CowController.getMyCows);
-router.put('/:id', verifyToken, CowController.updateCow);
+// router.post('/', verifyToken,CowController.createCow);
+// router.get('/', verifyToken, CowController.getMyCows);
+// router.put('/:id', verifyToken, CowController.updateCow);
 router.post('/:id', verifyToken, CowController.addCowLitres);
 
 
