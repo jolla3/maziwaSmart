@@ -3,7 +3,7 @@ const mongoose = require("mongoose");
 const Config = require("../models/MonitoringConfig");
 
 
-const { User  , Farmer} = require("../models/model");
+const { User  , Farmer, Listing} = require("../models/model");
 const Event = require("../models/Event");
 
 (async () => {
@@ -16,7 +16,7 @@ const Event = require("../models/Event");
     console.log("Connected to DB");
 
     // seed-onboarding.js
-    await Event.deleteMany();  // Delete older than 30 days
+    await Listing.deleteMany();  // Delete older than 30 days
 console.log("onboarding_complete normalized");
 
   

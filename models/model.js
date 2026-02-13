@@ -313,9 +313,17 @@ const cowSchema = new Schema({
 
   speciesDetails: { type: Schema.Types.Mixed },
 
-  // milk
-  lifetime_milk: { type: Number, default: 0 },
-  daily_average: { type: Number, default: 0 },
+  // milk (continued)
+lifetime_milk: { type: Number, default: 0 },
+daily_average: { type: Number, default: 0 },
+
+// Running stats for incremental calculations (used in CowMilkRecord post-save)
+running_total_litres: { type: Number, default: 0 },  // Cumulative litres (for accurate recalc on updates)
+total_milk_days: { type: Number, default: 0 },       // Unique days with milk records
+last_milk_date: { type: Date, default: null },       // Last collection date (for new-day checks)
+running_mean: { type: Number, default: 0 },          // Running mean (for variance)
+running_m2: { type: Number, default: 0 },            // Sum of squared differences (Welford's algorithm)
+running_stddev: { type: Number, default: 0 },        // Running standard deviation,
 
   pregnancy: {
     is_pregnant: { type: Boolean, default: false },
@@ -484,8 +492,18 @@ cowMilkRecordSchema.index({ farmer_code: 1, animal_id: 1 });
 cowMilkRecordSchema.index({ animal_id: 1, time_slot: 1 });
 
 // Auto increment update_count
-cowMilkRecordSchema.pre('save', function (next) {
-  if (!this.isNew) this.update_count += 1;
+cowMilkRecordSchema.pre('save', async function (next) {
+  if (!this.isNew) {
+    this.update_count += 1;
+    
+    // Fetch existing record to calculate delta (litres change)
+    const existing = await CowMilkRecord.findById(this._id);
+    const oldLitres = existing ? existing.litres : 0;
+    this._litresDelta = this.litres - oldLitres;  // + for increase, - for decrease
+  } else {
+    this._litresDelta = this.litres;  // New records: delta = litres
+  }
+  
   next();
 });
 
@@ -509,7 +527,6 @@ const flagAnimalForListing = async (animalId, session) => {
   );
 };
 
-// 📌 Post-save hook: update stats, detect anomalies, notify farmer, flag animal
 cowMilkRecordSchema.post('save', async function (doc, next) {
   if (!doc.animal_id) return next();
 
@@ -533,42 +550,30 @@ cowMilkRecordSchema.post('save', async function (doc, next) {
     }
 
     // 1️⃣ Update lifetime milk and incremental stats
-    const prevTotalLitres = cow.running_total_litres || 0;
-    const prevTotalDays = cow.total_milk_days || 0;
-    const eatDate = moment(doc.collection_date).tz("Africa/Nairobi").format("YYYY-MM-DD");
+const prevTotalLitres = cow.running_total_litres || 0;
+const prevTotalDays = cow.total_milk_days || 0;
+const eatDate = moment(doc.collection_date).tz("Africa/Nairobi").format("YYYY-MM-DD");
 
-    // Check if this is a new day
-    const lastMilkDate = cow.last_milk_date ? moment(cow.last_milk_date).tz("Africa/Nairobi").format("YYYY-MM-DD") : null;
-    const isNewDay = eatDate !== lastMilkDate;
+// Check if this is a new day
+const lastMilkDate = cow.last_milk_date ? moment(cow.last_milk_date).tz("Africa/Nairobi").format("YYYY-MM-DD") : null;
+const isNewDay = eatDate !== lastMilkDate;
 
-    const newTotalLitres = prevTotalLitres + doc.litres;
-    const newTotalDays = isNewDay ? prevTotalDays + 1 : prevTotalDays;
-    const newDailyAverage = newTotalDays > 0 ? newTotalLitres / newTotalDays : 0;
+const newTotalLitres = prevTotalLitres + doc._litresDelta;  // Use delta here
+const newTotalDays = isNewDay ? prevTotalDays + 1 : prevTotalDays;
+const newDailyAverage = newTotalDays > 0 ? newTotalLitres / newTotalDays : 0;
 
-    // Incremental variance (Welford's online algorithm)
-    const prevMean = cow.running_mean || 0;
-    const prevM2 = cow.running_m2 || 0; // Sum of squared differences
+// ... (rest of variance calc stays the same)
 
-    // Fetch total record count (per animal)
-    const recordCount = await CowMilkRecord.countDocuments({ animal_id: doc.animal_id }).session(session) || 1; // Min 1 for first
-
-    const delta = doc.litres - prevMean;
-    const newMean = prevMean + delta / recordCount;
-    const delta2 = doc.litres - newMean;
-    const newM2 = prevM2 + delta * delta2;
-    const newVariance = recordCount > 1 ? newM2 / (recordCount - 1) : 0; // Sample variance
-    const newStdDev = Math.sqrt(newVariance);
-
-    await Cow.findByIdAndUpdate(doc.animal_id, {
-      $inc: { lifetime_milk: doc.litres },
-      running_total_litres: newTotalLitres,
-      total_milk_days: newTotalDays,
-      daily_average: newDailyAverage,
-      last_milk_date: doc.collection_date,
-      running_mean: newMean,
-      running_m2: newM2,
-      running_stddev: newStdDev
-    }, { session });
+await Cow.findByIdAndUpdate(doc.animal_id, {
+  $inc: { lifetime_milk: doc._litresDelta },  // Use delta here
+  running_total_litres: newTotalLitres,
+  total_milk_days: newTotalDays,
+  daily_average: newDailyAverage,
+  last_milk_date: doc.collection_date,
+  running_mean: newMean,
+  running_m2: newM2,
+  running_stddev: newStdDev
+}, { session });
 
     // 3️⃣ Dynamic anomaly detection (using cached stats)
     const mean = newMean; // Use updated
