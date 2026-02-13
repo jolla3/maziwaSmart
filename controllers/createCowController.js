@@ -2,120 +2,120 @@ const { Cow, CowMilkRecord } = require("../models/model");
 // const moment = require('moment')
 const moment = require('moment-timezone'); // Add this if not already required
 
-// POST /api/farmer/cows
-exports.createCow = async (req, res) => {
-  try {
-    const { cow_name, breed_id, gender, birth_date, litres_per_day, mother_id } = req.body;
-    const farmer_id = req.user._id;
-    const farmer_code = req.user.code;
+// // POST /api/farmer/cows
+// exports.createCow = async (req, res) => {
+//   try {
+//     const { cow_name, breed_id, gender, birth_date, litres_per_day, mother_id } = req.body;
+//     const farmer_id = req.user._id;
+//     const farmer_code = req.user.code;
 
-    const newCow = new Cow({
-      cow_name,
-      farmer: farmer_id,
-      breed_id,
-      gender,
-      birth_date,
-      litres_per_day,
-      farmer_id,
-      farmer_code,
-      is_calf:false
-    });
+//     const newCow = new Cow({
+//       cow_name,
+//       farmer: farmer_id,
+//       breed_id,
+//       gender,
+//       birth_date,
+//       litres_per_day,
+//       farmer_id,
+//       farmer_code,
+//       is_calf:false
+//     });
 
-    await newCow.save();
+//     await newCow.save();
 
-    res.status(201).json({
-      message: "✅ Cow registered successfully",
-      cow: newCow
-    });
-  } catch (error) {
-    console.error("❌ Cow creation error:", error);
-    res.status(500).json({ message: "Failed to register cow", error: error.message });
-  }
-};
+//     res.status(201).json({
+//       message: "✅ Cow registered successfully",
+//       cow: newCow
+//     });
+//   } catch (error) {
+//     console.error("❌ Cow creation error:", error);
+//     res.status(500).json({ message: "Failed to register cow", error: error.message });
+//   }
+// };
 
 
-// GET /api/farmer/cows
-exports.getMyCows = async (req, res) => {
-  try {
-    const farmer_code = req.user.code;
-    const { gender, stage } = req.query; // ✅ Destructure gender and stage from query parameters
+// // GET /api/farmer/cows
+// exports.getMyCows = async (req, res) => {
+//   try {
+//     const farmer_code = req.user.code;
+//     const { gender, stage } = req.query; // ✅ Destructure gender and stage from query parameters
 
-    // ✅ Build a dynamic filter object
-    const filter = { farmer_code };
+//     // ✅ Build a dynamic filter object
+//     const filter = { farmer_code };
 
-    if (gender) {
-      filter.gender = gender;
-    }
+//     if (gender) {
+//       filter.gender = gender;
+//     }
 
-    if (stage) {
-      // Check if 'stage' is an array. The frontend sends it as such.
-      if (Array.isArray(stage)) {
-        filter.stage = { $in: stage }; // ✅ Use $in operator for arrays
-      } else {
-        filter.stage = stage;
-      }
-    }
+//     if (stage) {
+//       // Check if 'stage' is an array. The frontend sends it as such.
+//       if (Array.isArray(stage)) {
+//         filter.stage = { $in: stage }; // ✅ Use $in operator for arrays
+//       } else {
+//         filter.stage = stage;
+//       }
+//     }
 
-    const cows = await Cow.find(filter) // ✅ Use the dynamic filter
-      .populate('breed_id', 'breed_name')
-      .populate('mother_id', 'cow_name')
-      .populate({
-        path: 'offspring_ids',
-        select: 'cow_name birth_date'
-      });
+//     const cows = await Cow.find(filter) // ✅ Use the dynamic filter
+//       .populate('breed_id', 'breed_name')
+//       .populate('mother_id', 'cow_name')
+//       .populate({
+//         path: 'offspring_ids',
+//         select: 'cow_name birth_date'
+//       });
 
-   res.status(200).json({ cows });
-  } catch (error) {
-    console.error("❌ Error fetching cows:", error);
-    res.status(500).json({ message: "Failed to fetch cows", error: error.message });
-  }
-};
-// PUT /api/farmer/cows/:id
-exports.updateCow = async (req, res) => {
-  try {
-    const farmer_code = req.user.code; // from token
-    const cowId = req.params.id; // from URL
-    const updateData = req.body; // data to update
+//    res.status(200).json({ cows });
+//   } catch (error) {
+//     console.error("❌ Error fetching cows:", error);
+//     res.status(500).json({ message: "Failed to fetch cows", error: error.message });
+//   }
+// };
+// // PUT /api/farmer/cows/:id
+// exports.updateCow = async (req, res) => {
+//   try {
+//     const farmer_code = req.user.code; // from token
+//     const cowId = req.params.id; // from URL
+//     const updateData = req.body; // data to update
 
-    // Only allow update if this cow belongs to the logged-in farmer
-    const cow = await Cow.findOneAndUpdate(
-      { _id: cowId, farmer_code },
-      updateData,
-      { new: true }
-    );
+//     // Only allow update if this cow belongs to the logged-in farmer
+//     const cow = await Cow.findOneAndUpdate(
+//       { _id: cowId, farmer_code },
+//       updateData,
+//       { new: true }
+//     );
 
-    if (!cow) {
-      return res.status(404).json({ message: "Cow not found or unauthorized" });
-    }
+//     if (!cow) {
+//       return res.status(404).json({ message: "Cow not found or unauthorized" });
+//     }
 
-    res.status(200).json({
-      message: "Cow updated successfully",
-      cow,
-    });
-  } catch (error) {
-    console.error("Update error:", error);
-    res.status(500).json({ message: "Failed to update cow", error: error.message });
-  }
-}
+//     res.status(200).json({
+//       message: "Cow updated successfully",
+//       cow,
+//     });
+//   } catch (error) {
+//     console.error("Update error:", error);
+//     res.status(500).json({ message: "Failed to update cow", error: error.message });
+//   }
+// }
 
-// DELETE /api/farmer/cows/:id
-exports.deleteCow = async (req, res) => {
-  try {
-    const farmer_code = req.user.code;
-    const cowId = req.params.id;
+// // DELETE /api/farmer/cows/:id
+// exports.deleteCow = async (req, res) => {
+//   try {
+//     const farmer_code = req.user.code;
+//     const cowId = req.params.id;
 
-    const deleted = await Cow.findOneAndDelete({ _id: cowId, farmer_code });
+//     const deleted = await Cow.findOneAndDelete({ _id: cowId, farmer_code });
 
-    if (!deleted) {
-      return res.status(404).json({ message: "Cow not found or unauthorized" });
-    }
+//     if (!deleted) {
+//       return res.status(404).json({ message: "Cow not found or unauthorized" });
+//     }
 
-    res.status(200).json({ message: "Cow deleted successfully" });
-  } catch (error) {
-    console.error("Delete error:", error);
-    res.status(500).json({ message: "Failed to delete cow", error: error.message });
-  }
-};
+//     res.status(200).json({ message: "Cow deleted successfully" });
+//   } catch (error) {
+//     console.error("Delete error:", error);
+//     res.status(500).json({ message: "Failed to delete cow", error: error.message });
+//   }
+// };
 
 
 // add cow litres by id
