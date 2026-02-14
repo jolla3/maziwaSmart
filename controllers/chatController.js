@@ -120,33 +120,45 @@ exports.sendMessage = async (req, res) => {
       deliveredAt: new Date(),
     });
 
-    /* ---- notification ---- */
-    let notifMsg = `💬 New message from ${getDisplayName(req.user)}`;
+    /* ---- notification (prevent duplicates) ---- */
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);  // 1 hour ago
+    const existingNotif = await Notification.findOne({
+      "user.id": receiverId,
+      "user.type": receiverType,
+      type: "chat_message",
+      listing: listingId,
+      created_at: { $gte: oneHourAgo },  // Check for recent notifications for the same listing
+    });
 
-    if (listingId) {
-      const listing = await Listing.findById(listingId)
-        .select("title price")
-        .lean();
+    if (!existingNotif) {
+      let notifMsg = `💬 New message from ${getDisplayName(req.user)}`;
 
-      if (listing) {
-        notifMsg += ` about "${listing.title}" (Ksh ${listing.price})`;
+      if (listingId) {
+        const listing = await Listing.findById(listingId)
+          .select("title price")
+          .lean();
+
+        if (listing) {
+          notifMsg += ` about "${listing.title}" (Ksh ${listing.price})`;
+        }
       }
-    }
 
-   await Notification.create({
-  user: {
-    id: receiverId,
-    type: receiverType, // "User" | "Farmer"
-  },
-  farmer_code:
-    receiverType === "Farmer"
-      ? receiver.farmer_code
-      : senderType === "Farmer"
-      ? req.user.farmer_code
-      : null,
-  type: "chat_message",
-  message: notifMsg,
-});
+      await Notification.create({
+        user: {
+          id: receiverId,
+          type: receiverType,  // "User" | "Farmer"
+        },
+        farmer_code:
+          receiverType === "Farmer"
+            ? receiver.farmer_code
+            : senderType === "Farmer"
+            ? req.user.farmer_code
+            : null,
+        type: "chat_message",
+        message: notifMsg,
+        created_at: new Date(),  // Ensure proper timestamp
+      });
+    }
 
     /* ---- socket ---- */
     const io = req.app.get("io");
@@ -164,7 +176,6 @@ exports.sendMessage = async (req, res) => {
     });
   }
 };
-
 /* ---------------- GET CONVERSATION ---------------- */
 
 exports.getConversation = async (req, res) => {
