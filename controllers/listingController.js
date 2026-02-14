@@ -620,8 +620,7 @@ exports.registerListingView = async (req, res) => {
         viewer_role: viewerRole,
       });
 
-      // ✅ Increment embedded views.count in the Listing schema
-      await Listing.findByIdAndUpdate(listingId, { $inc: { 'views.count': 1 } });
+      // ❌ Removed manual increment - post-save hook handles it
     } catch (err) {
       if (err.code === 11000) {
         // Duplicate key error (shouldn't happen with check above, but safety net)
@@ -637,7 +636,6 @@ exports.registerListingView = async (req, res) => {
     res.status(500).json({ message: "Failed to register view" });
   }
 };
-
 // Other controllers unchanged
 
 exports.getMyListingsViewsSummary = async (req, res) => {
