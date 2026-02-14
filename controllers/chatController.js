@@ -155,7 +155,8 @@ exports.sendMessage = async (req, res) => {
             ? req.user.farmer_code
             : null,
         type: "chat_message",
-        message: notifMsg,
+        title: "New Message",  // Added title
+        message: notifMsg,  // Full message
         created_at: new Date(),  // Ensure proper timestamp
       });
     }

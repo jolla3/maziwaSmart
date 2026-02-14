@@ -153,7 +153,9 @@ exports.deleteNotification = async (req, res) => {
     console.error("❌ Error deleting notification:", err);
     res.status(500).json({ success: false, message: "Server Error" });
   }
-};exports.createNotification = async (req, res) => {
+}
+
+;exports.createNotification = async (req, res) => {
   try {
     const { type, message, cow, targetUserId, targetFarmerId } = req.body;
 
