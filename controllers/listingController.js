@@ -127,7 +127,17 @@ exports.createListing = async (req, res) => {
       if (!listingData.location) listingData.location = farmerDoc.location || "";
 
     } else if (req.user.role === "seller") {
-      // ... (seller section remains unchanged)
+      console.log("🛒 Seller listing");
+      // ✅ Enable sellers to save animal details
+      if (!parsedDetails.age || !parsedDetails.breed_name) {
+        return res.status(400).json({ success: false, message: "Age and breed name are required for sellers" });
+      }
+      // Sellers provide details directly (no animal_id)
+      listingData.animal_details = parsedDetails;
+      // Validate stage if provided
+      if (parsedDetails.stage && !validStages.includes(parsedDetails.stage)) {
+        return res.status(400).json({ success: false, message: "Invalid stage for animal type" });
+      }
     } else {
       return res.status(403).json({ success: false, message: "Unauthorized role" });
     }
@@ -150,8 +160,8 @@ exports.createListing = async (req, res) => {
       error: err.message,
     });
   }
-};
-// GET all active listings (Marketplace homepage)
+}
+;// GET all active listings (Marketplace homepage)
 // ---------------------------
 exports.getListings = async (req, res) => {
   try {
