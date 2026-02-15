@@ -14,9 +14,7 @@ function maskEmail(email) {
   return name[0] + "***@" + domain;
 }
 
-function getDisplayName(user) {
-  return user.username || user.fullname || user.name || "Unknown User";
-}
+
 
 /**
  * MUST match ChatMessage enum exactly
@@ -62,6 +60,11 @@ function normalizeMessage(doc, currentUserId) {
 
 /* ---------------- SEND MESSAGE ---------------- */
 
+function getDisplayName(user) {
+  return user.email || user.username || user.fullname || user.name || "Unknown User";
+}
+
+// In sendMessage
 exports.sendMessage = async (req, res) => {
   try {
     const { receiverId, message, listingId } = req.body;
@@ -122,42 +125,38 @@ exports.sendMessage = async (req, res) => {
 
     /* ---- notification (prevent duplicates) ---- */
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);  // 1 hour ago
+    let notifMsg = `💬 New message from ${getDisplayName(req.user)}`;
+
+    if (listingId) {
+      const listing = await Listing.findById(listingId)
+        .select("title price")
+        .lean();
+
+      if (listing) {
+        notifMsg += ` about "${listing.title}" (Ksh ${listing.price})`;
+      }
+    }
+
+    // Check for exact duplicate message within the last hour
     const existingNotif = await Notification.findOne({
       "user.id": receiverId,
       "user.type": receiverType,
       type: "chat_message",
-      listing: listingId,
-      created_at: { $gte: oneHourAgo },  // Check for recent notifications for the same listing
+      message: notifMsg,  // Check for identical message
+      created_at: { $gte: oneHourAgo },
     });
 
     if (!existingNotif) {
-      let notifMsg = `💬 New message from ${getDisplayName(req.user)}`;
-
-      if (listingId) {
-        const listing = await Listing.findById(listingId)
-          .select("title price")
-          .lean();
-
-        if (listing) {
-          notifMsg += ` about "${listing.title}" (Ksh ${listing.price})`;
-        }
-      }
-
       await Notification.create({
         user: {
           id: receiverId,
-          type: receiverType,  // "User" | "Farmer"
+          type: receiverType,
         },
-        farmer_code:
-          receiverType === "Farmer"
-            ? receiver.farmer_code
-            : senderType === "Farmer"
-            ? req.user.farmer_code
-            : null,
+        farmer_code: receiverType === "Farmer" ? receiver.farmer_code : senderType === "Farmer" ? req.user.farmer_code : null,
         type: "chat_message",
-        title: "New Message",  // Added title
-        message: notifMsg,  // Full message
-        created_at: new Date(),  // Ensure proper timestamp
+        title: "New",  // Set title to "New"
+        message: notifMsg,  // Full message with email
+        created_at: new Date().toISOString(),  // UTC timestamp to avoid timezone issues
       });
     }
 
@@ -176,8 +175,7 @@ exports.sendMessage = async (req, res) => {
       message: "Failed to send message",
     });
   }
-};
-/* ---------------- GET CONVERSATION ---------------- */
+};/* ---------------- GET CONVERSATION ---------------- */
 
 exports.getConversation = async (req, res) => {
   try {
