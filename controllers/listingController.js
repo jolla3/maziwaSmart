@@ -47,7 +47,6 @@ exports.createListing = async (req, res) => {
       return res.status(400).json({ success: false, message: "Price must be a positive number" });
     }
 
-    const sellerRef = req.user.id;
     const listingData = {
       title: title.trim(),
       animal_type: animal_type.toLowerCase().trim(),
@@ -56,7 +55,6 @@ exports.createListing = async (req, res) => {
       location: location?.trim() || "",
       photos: uploadedPhotos,
       status: "available",
-      seller: sellerRef,
       animal_details: {},
     };
 
@@ -77,8 +75,8 @@ exports.createListing = async (req, res) => {
       if (!animal_id) {
         return res.status(400).json({ success: false, message: "Animal ID required for farmers" });
       }
-      const Cow = require("../models/model").Cow; // Assuming exported
-      const animal = await Cow.findById(animal_id).populate('breed_id').populate('pregnancy.insemination_id'); // ✅ Fetch animal first
+      const Cow = require("../models/model").Cow;
+      const animal = await Cow.findById(animal_id).populate('breed_id').populate('pregnancy.insemination_id');
       if (!animal) {
         return res.status(404).json({ success: false, message: "Animal not found" });
       }
@@ -88,16 +86,17 @@ exports.createListing = async (req, res) => {
         return res.status(403).json({ success: false, message: "You can only list your own animals" });
       }
 
-      // ✅ Set animal_id after fetch
+      // Set animal_id and farmer
       listingData.animal_id = animal._id;
+      listingData.farmer = req.user.id;
+      listingData.seller = req.user.id; // ✅ Set seller to farmer's ID for chat modal
 
-      // ✅ Populate breed and sire from breed_id
+      // Populate details from animal
       const breedData = animal.breed_id || {};
       const inseminationData = animal.pregnancy?.insemination_id || {};
 
-      // ✅ Use animal data directly for accuracy (matches your animal data example)
       listingData.animal_details = {
-        age: animal.age || "", // ✅ Use animal.age directly (matches cron format)
+        age: animal.age || "",
         birth_date: animal.birth_date || null,
         breed_name: breedData.breed_name || animal.breed || "Unknown",
         gender: animal.gender || "",
@@ -105,7 +104,7 @@ exports.createListing = async (req, res) => {
         stage: animal.stage || "",
         lifetime_milk: Number(animal.lifetime_milk) || 0,
         daily_average: Number(animal.daily_average) || 0,
-        total_offspring: Number(animal.total_offspring) || 0, // ✅ Use animal.total_offspring
+        total_offspring: Number(animal.total_offspring) || 0,
         pregnancy: {
           is_pregnant: animal.pregnancy?.is_pregnant || false,
           expected_due_date: animal.pregnancy?.expected_due_date || null,
@@ -128,13 +127,13 @@ exports.createListing = async (req, res) => {
 
     } else if (req.user.role === "seller") {
       console.log("🛒 Seller listing");
-      // ✅ Enable sellers to save animal details
+      // Sellers fill details manually (same structure as farmers)
       if (!parsedDetails.age || !parsedDetails.breed_name) {
         return res.status(400).json({ success: false, message: "Age and breed name are required for sellers" });
       }
-      // Sellers provide details directly (no animal_id)
       listingData.animal_details = parsedDetails;
-      // Validate stage if provided
+      listingData.seller = req.user.id;
+      listingData.farmer = null;
       if (parsedDetails.stage && !validStages.includes(parsedDetails.stage)) {
         return res.status(400).json({ success: false, message: "Invalid stage for animal type" });
       }
@@ -160,8 +159,8 @@ exports.createListing = async (req, res) => {
       error: err.message,
     });
   }
-}
-;// GET all active listings (Marketplace homepage)
+};
+// GET all active listings (Marketplace homepage)
 // ---------------------------
 exports.getListings = async (req, res) => {
   try {

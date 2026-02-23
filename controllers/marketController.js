@@ -79,11 +79,18 @@ exports.getMarketListingById = async (req, res) => {
       return res.status(404).json({ success: false, message: "Listing not found" });
     }
 
-    // ✅ Use embedded views.count from the listing schema (no separate query needed)
+    // ✅ Use embedded views.count from the listing schema
     const viewsCount = listing.views?.count || 0;
-    console.log(`✅ Embedded views count for listing ${id}: ${viewsCount}`); // ✅ Debug log
+    console.log(`✅ Embedded views count for listing ${id}: ${viewsCount}`);
 
-    const sellerData = listing.seller || listing.farmer || null;
+    // ✅ Determine sellerData: prefer populated seller, fall back to populated farmer
+    let sellerData = null;
+    if (listing.seller) {
+      sellerData = listing.seller;
+    } else if (listing.farmer) {
+      // Fall back to farmer data (map fields to seller format)
+      sellerData = listing.farmer;
+    }
 
     // Unified extraction from animal_details (now always present)
     const details = listing.animal_details;
@@ -115,7 +122,7 @@ exports.getMarketListingById = async (req, res) => {
       listing: {
         ...listing.toObject(),
         _id: listing._id,
-        views: { count: viewsCount }, // ✅ Return as object for frontend compatibility
+        views: { count: viewsCount },
         title: listing.title,
         price: listing.price,
         images: listing.photos?.length ? listing.photos : animalData.photos || [],
@@ -129,7 +136,7 @@ exports.getMarketListingById = async (req, res) => {
     console.error("❌ Market single fetch error:", err);
     res.status(500).json({ success: false, message: "Failed to fetch listing details" });
   }
-};// (keep getTrendingListings, add populate as needed)
+};;// (keep getTrendingListings, add populate as needed)
 
 // ---------------------------------------
 // GET trending listings (top 10 by views)
