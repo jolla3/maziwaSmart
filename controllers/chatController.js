@@ -1,70 +1,150 @@
+// controllers/chatController.js
 const mongoose = require("mongoose");
-const { User, Farmer, ChatMessage, Listing, Notification } = require("../models/model");
+const { User, Farmer, Porter, ChatMessage, Listing, Notification } = require("../models/model");
 
 /* ---------------- HELPERS ---------------- */
 
-function maskPhone(phone) {
-  if (!phone) return null;
-  return phone.toString().replace(/\d(?=\d{2})/g, "*");
-}
-
-function maskEmail(email) {
-  if (!email) return null;
-  const [name, domain] = email.split("@");
-  return name[0] + "***@" + domain;
-}
-
-
-
-/**
- * MUST match ChatMessage enum exactly
- * enum: ["User", "Farmer", "Porter"]
- */
 function resolveChatType(role) {
   if (!role) return "User";
-
-  switch (role.toLowerCase()) {
-    case "farmer":
-      return "Farmer";
-    case "porter":
-      return "Porter";
-
-    // seller & superadmin live in User collection
-    case "seller":
-    case "superadmin":
-    default:
-      return "User";
+  switch (role?.toLowerCase()) {
+    case "farmer": return "Farmer";
+    case "porter": return "Porter";
+    default: return "User";
   }
 }
-/**
- * Normalize ChatMessage → API DTO
- */
+
 function normalizeMessage(doc, currentUserId) {
+  const senderId = doc.sender?.id?.toString() || doc.sender?.toString();
+  const receiverId = doc.receiver?.id?.toString() || doc.receiver?.toString();
+  
   return {
     id: doc._id,
-    from:
-      doc.sender.id.toString() === currentUserId.toString()
-        ? "me"
-        : "them",
+    _id: doc._id,
+    from: senderId === currentUserId.toString() ? "me" : "them",
+    senderId: senderId,
+    receiverId: receiverId,
     text: doc.message,
-    isRead: doc.isRead,
-    createdAt: doc.created_at,
-    listing: doc.listing
-      ? {
-          title: doc.listing.title,
-          price: doc.listing.price,
-        }
-      : null,
+    message: doc.message,
+    isRead: doc.isRead || false,
+    createdAt: doc.created_at || doc.createdAt,
+    created_at: doc.created_at || doc.createdAt,
+    listing: doc.listing ? {
+      _id: doc.listing._id,
+      title: doc.listing.title,
+      price: doc.listing.price,
+      images: doc.listing.images
+    } : null,
   };
 }
 
-/* ---------------- SEND MESSAGE ---------------- */
-
 function getDisplayName(user) {
-  return user.email || user.username || user.fullname || user.name || "Unknown User";
+  return user?.email || user?.username || user?.fullname || user?.name || "Unknown User";
 }
 
-// In sendMessage
+async function findUserById(userId) {
+  let user = await User.findById(userId).select("username email fullname phone role").lean();
+  if (user) return { user, collection: "User" };
+
+  user = await Farmer.findById(userId).select("fullname email phone role").lean();
+  if (user) return { user, collection: "Farmer" };
+
+  user = await Porter.findById(userId).select("fullname email phone role").lean();
+  if (user) return { user, collection: "Porter" };
+
+  return null;
+}
+
+async function getCounterpartInfo(userId) {
+  const result = await findUserById(userId);
+  if (!result) return null;
+  
+  const { user } = result;
+  return {
+    _id: user._id,
+    id: user._id,
+    fullname: user.fullname || user.username || user.name,
+    name: user.fullname || user.username || user.name,
+    email: user.email,
+    phone: user.phone,
+    role: user.role,
+  };
+}
+
+/* ---------------- GET MESSAGES ---------------- */
+
+exports.getMessages = async (req, res) => {
+  try {
+    const { otherUserId } = req.params;
+    const currentUserId = req.user.id || req.user._id;
+
+    if (!otherUserId) {
+      return res.status(400).json({
+        success: false,
+        message: "Other user ID is required",
+      });
+    }
+
+    const otherUserResult = await findUserById(otherUserId);
+    if (!otherUserResult) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const messages = await ChatMessage.find({
+      $or: [
+        { "sender.id": currentUserId, "receiver.id": otherUserId },
+        { "sender.id": otherUserId, "receiver.id": currentUserId },
+      ],
+    })
+      .sort({ created_at: 1 })
+      .populate("listing", "title price images")
+      .lean();
+
+    // Mark messages as read
+    await ChatMessage.updateMany(
+      {
+        "sender.id": otherUserId,
+        "receiver.id": currentUserId,
+        isRead: false,
+      },
+      {
+        isRead: true,
+        readAt: new Date(),
+      }
+    );
+
+    const normalizedMessages = messages.map((msg) => normalizeMessage(msg, currentUserId));
+    
+    const counterpart = await getCounterpartInfo(otherUserId);
+
+    // Get online status
+    const onlineUsers = req.app.get("onlineUsers") || new Map();
+    const userStatus = onlineUsers.get(otherUserId.toString());
+    const isOnline = !!userStatus;
+    const lastSeen = userStatus?.connectedAt || null;
+
+    res.json({
+      success: true,
+      messages: normalizedMessages,
+      counterpart: {
+        ...counterpart,
+        isOnline,
+        lastSeen
+      },
+    });
+  } catch (err) {
+    console.error("❌ Get messages error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch messages",
+    });
+  }
+};
+
+/* ---------------- SEND MESSAGE ---------------- */
+
 exports.sendMessage = async (req, res) => {
   try {
     const { receiverId, message, listingId } = req.body;
@@ -87,87 +167,85 @@ exports.sendMessage = async (req, res) => {
     if (message.length > 2000) {
       return res.status(400).json({
         success: false,
-        message: "Message too long",
+        message: "Message too long (max 2000 characters)",
       });
     }
 
     const senderType = resolveChatType(req.user.role);
-
-    /* ---- resolve receiver ---- */
-    let receiver = await User.findById(receiverId).select("role").lean();
-    let receiverType = "User";
-
-    if (!receiver) {
-      receiver = await Farmer.findById(receiverId)
-        .select("farmer_code fullname")
-        .lean();
-
-      if (!receiver) {
-        return res.status(404).json({
-          success: false,
-          message: "Receiver not found",
-        });
-      }
-
-      receiverType = "Farmer";
-    } else {
-      receiverType = resolveChatType(receiver.role);
+    const receiverResult = await findUserById(receiverId);
+    
+    if (!receiverResult) {
+      return res.status(404).json({
+        success: false,
+        message: "Receiver not found",
+      });
     }
 
-    /* ---- persist message ---- */
+    const { user: receiver } = receiverResult;
+    const receiverType = resolveChatType(receiver.role);
+
+    // Create message
     const chatMessage = await ChatMessage.create({
       sender: { id: senderId, type: senderType },
       receiver: { id: receiverId, type: receiverType },
       listing: listingId || null,
       message: message.trim(),
+      created_at: new Date(),
       deliveredAt: new Date(),
     });
 
-    /* ---- notification (prevent duplicates) ---- */
-    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);  // 1 hour ago
-    let notifMsg = `💬 New message from ${getDisplayName(req.user)}`;
+    // Populate listing if exists
+    if (chatMessage.listing) {
+      await chatMessage.populate("listing", "title price images");
+    }
+
+    // Create notification
+    const senderName = getDisplayName(req.user);
+    let notifMsg = `💬 New message from ${senderName}`;
 
     if (listingId) {
-      const listing = await Listing.findById(listingId)
-        .select("title price")
-        .lean();
-
+      const listing = await Listing.findById(listingId).select("title price").lean();
       if (listing) {
         notifMsg += ` about "${listing.title}" (Ksh ${listing.price})`;
       }
     }
 
-    // Check for exact duplicate message within the last hour
+    // Avoid duplicate notifications
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
     const existingNotif = await Notification.findOne({
       "user.id": receiverId,
       "user.type": receiverType,
       type: "chat_message",
-      message: notifMsg,  // Check for identical message
+      message: notifMsg,
       created_at: { $gte: oneHourAgo },
     });
 
     if (!existingNotif) {
       await Notification.create({
-        user: {
-          id: receiverId,
-          type: receiverType,
-        },
-        farmer_code: receiverType === "Farmer" ? receiver.farmer_code : senderType === "Farmer" ? req.user.farmer_code : null,
+        user: { id: receiverId, type: receiverType },
         type: "chat_message",
-        title: "New",  // Set title to "New"
-        message: notifMsg,  // Full message with email
-        created_at: new Date().toISOString(),  // UTC timestamp to avoid timezone issues
+        title: "New Message",
+        message: notifMsg,
+        created_at: new Date(),
       });
     }
 
-    /* ---- socket ---- */
+    // Emit to receiver via Socket.IO
     const io = req.app.get("io");
     if (io) {
-      io.to(`${receiverType.toLowerCase()}_${receiverId}`)
-        .emit("new_message", chatMessage);
+      const normalizedMsg = normalizeMessage(chatMessage, senderId);
+      
+      // Send to receiver
+      io.to(receiverId.toString()).emit("new_message", normalizedMsg);
+      
+      // Confirm to sender
+      io.to(senderId.toString()).emit("message_sent", normalizedMsg);
     }
 
-    res.status(201).json({ success: true, message: chatMessage });
+    res.status(201).json({ 
+      success: true, 
+      message: normalizeMessage(chatMessage, senderId) 
+    });
   } catch (err) {
     console.error("❌ Chat send error:", err);
     res.status(500).json({
@@ -175,172 +253,181 @@ exports.sendMessage = async (req, res) => {
       message: "Failed to send message",
     });
   }
-};/* ---------------- GET CONVERSATION ---------------- */
-
-exports.getConversation = async (req, res) => {
-  try {
-    const counterpartId = req.params.id;
-    const { listingId, cursor } = req.query;
-    const currentUserId = req.user.id || req.user._id;
-
-    const filter = {
-      $or: [
-        { "sender.id": currentUserId, "receiver.id": counterpartId },
-        { "sender.id": counterpartId, "receiver.id": currentUserId },
-      ],
-    };
-
-    if (listingId) {
-      filter.listing = listingId;
-    }
-
-    // Cursor = fetch older messages only
-    if (cursor) {
-      filter.created_at = { $lt: new Date(cursor) };
-    }
-
-    /**
-     * IMPORTANT:
-     * - NO LIMIT
-     * - chronological order
-     * - frontend decides how much to render
-     */
-    const messagesRaw = await ChatMessage.find(filter)
-      .sort({ created_at: 1 })
-      .populate("listing", "title price")
-      .lean();
-
-    // Mark unread as read
-    await ChatMessage.updateMany(
-      {
-        "receiver.id": currentUserId,
-        "sender.id": counterpartId,
-        isRead: false,
-      },
-      { $set: { isRead: true, readAt: new Date() } }
-    );
-
-    const messages = messagesRaw.map((m) =>
-      normalizeMessage(m, currentUserId)
-    );
-
-    const nextCursor =
-      messagesRaw.length > 0
-        ? messagesRaw[0].created_at // oldest message returned
-        : null;
-
-    const counterpart =
-      (await Farmer.findById(counterpartId).lean()) ||
-      (await User.findById(counterpartId).lean());
-
-    res.json({
-      success: true,
-      messages,
-      nextCursor,
-      counterpart: counterpart
-        ? {
-            displayName:
-              counterpart.username ||
-              counterpart.fullname ||
-              counterpart.name,
-            phone: counterpart.phone || null, // untouched, raw
-            email: counterpart.email || null,
-            location:
-              counterpart.location ||
-              counterpart.location_description ||
-              null,
-          }
-        : null,
-    });
-  } catch (err) {
-    console.error("❌ Chat fetch error:", err);
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch conversation",
-    });
-  }
 };
 
-/* ---------------- UNREAD COUNT ---------------- */
+/* ---------------- GET CONVERSATION LIST ---------------- */
 
-exports.getUnreadCount = async (req, res) => {
-  try {
-    const currentUserId = req.user.id || req.user._id;
-
-    const count = await ChatMessage.countDocuments({
-      "receiver.id": currentUserId,
-      isRead: false,
-    });
-
-    res.json({ success: true, unread: count });
-  } catch (err) {
-    console.error("❌ Unread count error:", err);
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch unread count",
-    });
-  }
-};
-
-/* ---------------- RECENT CHATS ---------------- */
-
-exports.getRecentChats = async (req, res) => {
+exports.getConversationList = async (req, res) => {
   try {
     const userId = req.user.id || req.user._id;
-    const userIdObj = new mongoose.Types.ObjectId(userId);
 
-    const messages = await ChatMessage.aggregate([
+    // Get all unique conversations with aggregation
+    const conversations = await ChatMessage.aggregate([
       {
         $match: {
-          $or: [{ "sender.id": userIdObj }, { "receiver.id": userIdObj }],
+          $or: [
+            { "sender.id": new mongoose.Types.ObjectId(userId) },
+            { "receiver.id": new mongoose.Types.ObjectId(userId) },
+          ],
         },
       },
-      { $sort: { created_at: -1 } },
+      {
+        $sort: { created_at: -1 },
+      },
       {
         $group: {
           _id: {
-            $cond: [
-              { $eq: ["$sender.id", userIdObj] },
-              "$receiver.id",
-              "$sender.id",
-            ],
+            $cond: {
+              if: { $eq: ["$sender.id", new mongoose.Types.ObjectId(userId)] },
+              then: "$receiver.id",
+              else: "$sender.id",
+            },
           },
-          lastMessage: { $first: "$message" },
-          lastAt: { $first: "$created_at" },
+          lastMessage: { $last: "$$ROOT" },
+          unreadCount: {
+            $sum: {
+              $cond: {
+                if: {
+                  $and: [
+                    { $eq: ["$receiver.id", new mongoose.Types.ObjectId(userId)] },
+                    { $eq: ["$isRead", false] },
+                  ],
+                },
+                then: 1,
+                else: 0,
+              },
+            },
+          },
         },
       },
-      { $sort: { lastAt: -1 } },
-      { $limit: 30 },
+      {
+        $sort: { "lastMessage.created_at": -1 },
+      },
     ]);
 
-    if (!messages.length) {
-      return res.json({ success: true, recent: [] });
-    }
+    // Get user details for each conversation
+    const onlineUsers = req.app.get("onlineUsers") || new Map();
+    
+    const conversationList = await Promise.all(
+      conversations.map(async (conv) => {
+        const otherUserId = conv._id;
+        const counterpart = await getCounterpartInfo(otherUserId);
+        
+        if (!counterpart) return null;
 
-    const enriched = await Promise.all(
-      messages.map(async (m) => {
-        const uid = m._id;
-        let participant =
-          (await Farmer.findById(uid).select("fullname farmer_code phone email").lean()) ||
-          (await User.findById(uid).select("username fullname phone email").lean());
-        if (!participant) return null;
+        const userStatus = onlineUsers.get(otherUserId.toString());
+        
         return {
-          id: uid.toString(),
-          name: getDisplayName(participant),
-          phone: maskPhone(participant.phone),
-          email: maskEmail(participant.email),
-          lastMessage: m.lastMessage,
-          lastAt: m.lastAt,
+          _id: otherUserId,
+          counterpart: {
+            ...counterpart,
+            isOnline: !!userStatus,
+            lastSeen: userStatus?.connectedAt || null,
+          },
+          lastMessage: normalizeMessage(conv.lastMessage, userId),
+          unreadCount: conv.unreadCount,
         };
       })
     );
 
-    res.json({ success: true, recent: enriched.filter(Boolean) });
+    // Filter out nulls and sort by last message time
+    const filteredList = conversationList
+      .filter(c => c !== null)
+      .sort((a, b) => new Date(b.lastMessage.createdAt) - new Date(a.lastMessage.createdAt));
+
+    res.json({
+      success: true,
+      conversations: filteredList,
+    });
   } catch (err) {
-    console.error("❌ Recent chats error:", err);
+    console.error("❌ Get conversation list error:", err);
     res.status(500).json({
       success: false,
-      message: "Failed to load recent chat list",
+      message: "Failed to fetch conversations",
     });
+  }
+};
+
+/* ---------------- MARK AS READ ---------------- */
+
+exports.markAsRead = async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    const userId = req.user.id || req.user._id;
+
+    const message = await ChatMessage.findById(messageId);
+
+    if (!message) {
+      return res.status(404).json({
+        success: false,
+        message: "Message not found",
+      });
+    }
+
+    if (message.receiver.id.toString() !== userId.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized",
+      });
+    }
+
+    message.isRead = true;
+    message.readAt = new Date();
+    await message.save();
+
+    // Notify sender
+    const io = req.app.get("io");
+    if (io) {
+      io.to(message.sender.id.toString()).emit("message_read", {
+        messageId: message._id,
+        readBy: userId,
+      });
+    }
+
+    res.json({ success: true, message });
+  } catch (err) {
+    console.error("❌ Mark as read error:", err);
+    res.status(500).json({ success: false, message: "Failed to mark as read" });
+  }
+};
+
+/* ---------------- DELETE MESSAGE ---------------- */
+
+exports.deleteMessage = async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    const userId = req.user.id || req.user._id;
+
+    const message = await ChatMessage.findById(messageId);
+
+    if (!message) {
+      return res.status(404).json({
+        success: false,
+        message: "Message not found",
+      });
+    }
+
+    // Only sender can delete
+    if (message.sender.id.toString() !== userId.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to delete this message",
+      });
+    }
+
+    await ChatMessage.findByIdAndDelete(messageId);
+
+    // Notify receiver
+    const io = req.app.get("io");
+    if (io) {
+      io.to(message.receiver.id.toString()).emit("message_deleted", {
+        messageId,
+      });
+    }
+
+    res.json({ success: true, message: "Message deleted" });
+  } catch (err) {
+    console.error("❌ Delete message error:", err);
+    res.status(500).json({ success: false, message: "Failed to delete message" });
   }
 };

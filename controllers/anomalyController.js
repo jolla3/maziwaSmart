@@ -4,7 +4,7 @@ const { MilkAnomaly, Cow, Notification } = require('../models/model');
 // 📌 Get anomalies for a farmer (optionally filter by animal)
 exports.getAnomalies = async (req, res) => {
   try {
-    const { farmer_code } = req.user;   // from auth middleware
+    const { farmer_code } = req.user.id;   // from auth middleware
     const { animal_id } = req.query;    // optional filter
 
     const filter = { farmer_code };

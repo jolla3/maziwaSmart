@@ -1,19 +1,25 @@
-const express = require('express');
+// routes/chatRoutes.js
+const express = require("express");
 const router = express.Router();
-const {
-  sendMessage,
-  getConversation,
-  getRecentChats, // make sure it's imported
-} = require('../controllers/chatController');
-const { verifyToken } = require('../middleware/authMiddleware');
+const chatController = require("../controllers/chatController");
+const { verifyToken } = require("../middleware/authMiddleware");
 
-// ✅ Important: place this FIRST
-router.get('/recent', verifyToken, getRecentChats);
+// All routes require authentication
+router.use(verifyToken);
 
-// Send message
-router.post('/', verifyToken, sendMessage);
+// Get conversation list
+router.get("/", chatController.getConversationList);
 
-// Get conversation (by counterpart)
-router.get('/:id', verifyToken, getConversation);
+// Get messages with a specific user
+router.get("/:otherUserId", chatController.getMessages);
+
+// Send a message
+router.post("/", chatController.sendMessage);
+
+// Mark message as read
+router.patch("/read/:messageId", chatController.markAsRead);
+
+// Delete a message
+router.delete("/:messageId", chatController.deleteMessage);
 
 module.exports = router;
