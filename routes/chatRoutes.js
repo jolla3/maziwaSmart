@@ -4,22 +4,22 @@ const router = express.Router();
 const chatController = require("../controllers/chatController");
 const { verifyToken } = require("../middleware/authMiddleware");
 
-// All routes require authentication
-router.use(verifyToken);
+router.use(verifyToken)
 
-// Get conversation list
-router.get("/", chatController.getConversationList);
+// ✅ MUST BE FIRST - More specific routes
+router.get("/", chatController.getConversationList);  // GET /api/chat
 
-// Get messages with a specific user
-router.get("/:otherUserId", chatController.getMessages);
+// ✅ SECOND - Dynamic parameter
+router.get("/:otherUserId", chatController.getMessages);  // GET /api/chat/:userId
 
-// Send a message
+// Send message
 router.post("/", chatController.sendMessage);
 
-// Mark message as read
+// Mark as read
 router.patch("/read/:messageId", chatController.markAsRead);
 
-// Delete a message
+// Delete message  
 router.delete("/:messageId", chatController.deleteMessage);
 
 module.exports = router;
+

@@ -5,6 +5,7 @@ const bcrypt = require("bcrypt");
 const { User, Porter, Farmer , Manager } = require("../models/model");
 const jwt = require("jsonwebtoken");
 const { sendWelcomeEmail } = require("../utils/emailService")
+const { generateFarmerCode, validateFarmerCode } = require("../utils/farmerCodeGenerator");
 
 const crypto = require('crypto');
 const { sendMail } = require("../utils/emailService")
@@ -192,7 +193,7 @@ exports.registerSeller = async (req, res) => {
 // ------------------------------------------------------------------
 exports.setPassword = async (req, res) => {
   try {
-    const { token, password, phone, location, farmer_code } = req.body;
+    const { token, password, phone, location } = req.body; // Removed farmer_code
 
     console.log("DEBUG: Incoming body:", req.body);
 
@@ -219,45 +220,33 @@ exports.setPassword = async (req, res) => {
     // =====================================================================
     // FARMER REGISTRATION
     // =====================================================================
-    // FARMER FLOW
-if (decoded.role === "farmer") {
-  const farmer = await Farmer.findById(decoded.id);
+    if (decoded.role === "farmer") {
+      const farmer = await Farmer.findById(decoded.id);
 
-  if (!farmer) {
-    return res.status(404).json({ message: "Farmer not found" });
-  }
+      if (!farmer) {
+        return res.status(404).json({ message: "Farmer not found" });
+      }
 
-  if (!phone || !farmer_code) {
-    return res.status(400).json({
-      message: "Phone and farmer_code required for farmers"
-    });
-  }
+      // ✅ farmer_code already exists from registration - no need to collect again
+      if (!phone) {
+        return res.status(400).json({
+          message: "Phone required for farmers"
+        });
+      }
 
-  // PREVENT DUPLICATE FARMER CODE
-  const existing = await Farmer.findOne({
-    farmer_code,
-    _id: { $ne: farmer._id }
-  });
+      // UPDATE FARMER
+      farmer.password = hashedPassword;
+      farmer.phone = phone;
+      if (location) farmer.location = location;
 
-  if (existing) {
-    return res.status(409).json({
-      message: `Farmer code ${farmer_code} already exists. Choose another one.`
-    });
-  }
+      await farmer.save();
 
-  // UPDATE FARMER
-  farmer.password = hashedPassword;
-  farmer.phone = phone;
-  farmer.farmer_code = farmer_code;
-  if (location) farmer.location = location;
-
-  await farmer.save();
-
-  return res.json({
-    message: "Farmer registration complete",
-    success: true
-  });
-}
+      return res.json({
+        message: "Farmer registration complete",
+        success: true,
+        farmer_code: farmer.farmer_code, // Return the generated code
+      });
+    }
 
     // =====================================================================
     // NORMAL USERS (buyer, seller, manager, porter, admin, etc.)
@@ -289,16 +278,16 @@ if (decoded.role === "farmer") {
     });
   }
 };
-// 🧩 Register Farmer Controller
+
 exports.registerFarmer = async (req, res) => {
   try {
-    const { fullname, phone, email, password, location, photo , farmer_code} = req.body;
+    const { fullname, phone, email, password, location, photo } = req.body;
 
     // 🛑 Validate required fields
-    if (!fullname || !phone || !password) {
+    if (!fullname || !phone || !password || !email) {
       return res.status(400).json({
         success: false,
-        message: 'Full name, phone, and password are required.',
+        message: 'Full name, phone, email, and password are required.',
       });
     }
 
@@ -317,7 +306,17 @@ exports.registerFarmer = async (req, res) => {
     // 🔐 Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // 🧮 Generate unique farmer code
+    // 🧮 AUTO-GENERATE FARMER CODE
+    let farmer_code;
+    try {
+      farmer_code = await generateFarmerCode();
+    } catch (err) {
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to generate farmer code. Please try again.',
+        error: err.message,
+      });
+    }
 
     // ✨ Create new farmer
     const newFarmer = new Farmer({
@@ -328,15 +327,15 @@ exports.registerFarmer = async (req, res) => {
       password: hashedPassword,
       photo,
       location,
-      farmer_code,
       role: 'farmer',
       is_active: true,
     });
 
     await newFarmer.save();
+
     // Send welcome email (non-blocking)
     sendWelcomeEmail(newFarmer.email, newFarmer.fullname, "farmer")
-      .catch(err => console.error("Welcome email failed:", err)); // Don't fail registration
+      .catch(err => console.error("Welcome email failed:", err));
 
     // ✅ Respond success
     res.status(201).json({

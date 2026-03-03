@@ -71,16 +71,17 @@ async function getCounterpartInfo(userId) {
 }
 
 /* ---------------- GET MESSAGES ---------------- */
-
+// controllers/chatController.js - Update getMessages
 exports.getMessages = async (req, res) => {
   try {
     const { otherUserId } = req.params;
     const currentUserId = req.user.id || req.user._id;
 
-    if (!otherUserId) {
+    // ✅ VALIDATE: Must be a valid ObjectId
+    if (!mongoose.Types.ObjectId.isValid(otherUserId)) {
       return res.status(400).json({
         success: false,
-        message: "Other user ID is required",
+        message: "Invalid user ID",
       });
     }
 
@@ -102,7 +103,7 @@ exports.getMessages = async (req, res) => {
       .populate("listing", "title price images")
       .lean();
 
-    // Mark messages as read
+    // Mark as read
     await ChatMessage.updateMany(
       {
         "sender.id": otherUserId,
@@ -116,22 +117,19 @@ exports.getMessages = async (req, res) => {
     );
 
     const normalizedMessages = messages.map((msg) => normalizeMessage(msg, currentUserId));
-    
     const counterpart = await getCounterpartInfo(otherUserId);
 
     // Get online status
     const onlineUsers = req.app.get("onlineUsers") || new Map();
     const userStatus = onlineUsers.get(otherUserId.toString());
-    const isOnline = !!userStatus;
-    const lastSeen = userStatus?.connectedAt || null;
 
     res.json({
       success: true,
       messages: normalizedMessages,
       counterpart: {
         ...counterpart,
-        isOnline,
-        lastSeen
+        isOnline: !!userStatus,
+        lastSeen: userStatus?.connectedAt || null,
       },
     });
   } catch (err) {
@@ -142,13 +140,12 @@ exports.getMessages = async (req, res) => {
     });
   }
 };
-
 /* ---------------- SEND MESSAGE ---------------- */
 
 exports.sendMessage = async (req, res) => {
   try {
     const { receiverId, message, listingId } = req.body;
-    const senderId = req.user.id || req.user._id;
+    const senderId = req.user.id 
 
     if (!receiverId || !message || !message.trim()) {
       return res.status(400).json({
@@ -257,11 +254,11 @@ exports.sendMessage = async (req, res) => {
 
 /* ---------------- GET CONVERSATION LIST ---------------- */
 
+// controllers/chatController.js - Update getConversationList
 exports.getConversationList = async (req, res) => {
   try {
     const userId = req.user.id || req.user._id;
 
-    // Get all unique conversations with aggregation
     const conversations = await ChatMessage.aggregate([
       {
         $match: {
@@ -305,7 +302,6 @@ exports.getConversationList = async (req, res) => {
       },
     ]);
 
-    // Get user details for each conversation
     const onlineUsers = req.app.get("onlineUsers") || new Map();
     
     const conversationList = await Promise.all(
@@ -318,26 +314,29 @@ exports.getConversationList = async (req, res) => {
         const userStatus = onlineUsers.get(otherUserId.toString());
         
         return {
+          id: otherUserId,
           _id: otherUserId,
-          counterpart: {
-            ...counterpart,
-            isOnline: !!userStatus,
-            lastSeen: userStatus?.connectedAt || null,
-          },
-          lastMessage: normalizeMessage(conv.lastMessage, userId),
+          name: counterpart.fullname || counterpart.name || "Unknown",
+          fullname: counterpart.fullname || counterpart.name || "Unknown",
+          email: counterpart.email,
+          phone: counterpart.phone,
+          role: counterpart.role,
+          isOnline: !!userStatus,
+          lastMessage: conv.lastMessage?.message || "",
+          lastAt: conv.lastMessage?.created_at || conv.lastMessage?.createdAt,
           unreadCount: conv.unreadCount,
         };
       })
     );
 
-    // Filter out nulls and sort by last message time
     const filteredList = conversationList
       .filter(c => c !== null)
-      .sort((a, b) => new Date(b.lastMessage.createdAt) - new Date(a.lastMessage.createdAt));
+      .sort((a, b) => new Date(b.lastAt) - new Date(a.lastAt));
 
+    // ✅ FIX: Return as "recent" to match frontend
     res.json({
       success: true,
-      conversations: filteredList,
+      recent: filteredList,  // Changed from "conversations" to "recent"
     });
   } catch (err) {
     console.error("❌ Get conversation list error:", err);
@@ -347,7 +346,6 @@ exports.getConversationList = async (req, res) => {
     });
   }
 };
-
 /* ---------------- MARK AS READ ---------------- */
 
 exports.markAsRead = async (req, res) => {
