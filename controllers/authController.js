@@ -193,27 +193,21 @@ exports.registerSeller = async (req, res) => {
 // ------------------------------------------------------------------
 exports.setPassword = async (req, res) => {
   try {
-    const { token, password, phone, location } = req.body; // Removed farmer_code
-
-    console.log("DEBUG: Incoming body:", req.body);
+    const { token, password, phone, location, farmer_code } = req.body;
 
     if (!token || !password) {
       return res.status(400).json({ message: "Missing token or password" });
     }
 
-    // Decode token
     let decoded;
     try {
       decoded = jwt.verify(token, process.env.JWT_SECRET);
     } catch (err) {
-      console.error("JWT ERROR:", err);
       if (err.name === "TokenExpiredError") {
         return res.status(401).json({ message: "Token expired" });
       }
       return res.status(401).json({ message: "Invalid token" });
     }
-
-    console.log("DEBUG: JWT Decoded:", decoded);
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
@@ -227,29 +221,67 @@ exports.setPassword = async (req, res) => {
         return res.status(404).json({ message: "Farmer not found" });
       }
 
-      // ✅ farmer_code already exists from registration - no need to collect again
-      if (!phone) {
-        return res.status(400).json({
-          message: "Phone required for farmers"
+      // ✅ Check if farmer already has a code (from migration)
+      if (farmer.farmer_code) {
+        // Code exists - just update password
+        farmer.password = hashedPassword;
+        if (phone) farmer.phone = phone;
+        if (location) farmer.location = location;
+        await farmer.save();
+
+        return res.json({
+          message: "Farmer registration complete",
+          success: true,
+          farmer_code: farmer.farmer_code,
+          needs_code_setup: false,
         });
       }
 
-      // UPDATE FARMER
-      farmer.password = hashedPassword;
-      farmer.phone = phone;
-      if (location) farmer.location = location;
+      // ❌ No code exists - require farmer_code input
+      if (!farmer_code) {
+        return res.status(400).json({
+          message: "Farmer code required for registration",
+          needs_code_setup: true,
+        });
+      }
 
+      // ✅ Validate farmer code (must be number)
+      const { validateFarmerCode, isFarmerCodeAvailable } = require("../utils/farmerCodeGenerator");
+
+      const codeNumber = Number(farmer_code);
+      if (!validateFarmerCode(codeNumber)) {
+        return res.status(400).json({
+          message: "Invalid farmer code format. Must be 8-digit number (e.g., 12345678)",
+          needs_code_setup: true,
+        });
+      }
+
+      const isAvailable = await isFarmerCodeAvailable(codeNumber);
+      if (!isAvailable) {
+        return res.status(409).json({
+          message: `Farmer code ${codeNumber} already exists. Choose another one.`,
+          needs_code_setup: true,
+        });
+      }
+
+      // Save farmer with code
+      farmer.password = hashedPassword;
+      farmer.farmer_code = codeNumber; // Store as Number
+      farmer.code_setup_method = "manual";
+      if (phone) farmer.phone = phone;
+      if (location) farmer.location = location;
       await farmer.save();
 
       return res.json({
         message: "Farmer registration complete",
         success: true,
-        farmer_code: farmer.farmer_code, // Return the generated code
+        farmer_code: farmer.farmer_code,
+        needs_code_setup: false,
       });
     }
 
     // =====================================================================
-    // NORMAL USERS (buyer, seller, manager, porter, admin, etc.)
+    // NORMAL USERS
     // =====================================================================
     const user = await User.findById(decoded.id);
 
@@ -258,11 +290,7 @@ exports.setPassword = async (req, res) => {
     }
 
     user.password = hashedPassword;
-
-    if (phone) {
-      user.phone = phone;
-    }
-
+    if (phone) user.phone = phone;
     await user.save();
 
     return res.json({
@@ -306,7 +334,7 @@ exports.registerFarmer = async (req, res) => {
     // 🔐 Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // 🧮 AUTO-GENERATE FARMER CODE
+    // 🧮 AUTO-GENERATE FARMER CODE (Number)
     let farmer_code;
     try {
       farmer_code = await generateFarmerCode();
@@ -321,7 +349,7 @@ exports.registerFarmer = async (req, res) => {
     // ✨ Create new farmer
     const newFarmer = new Farmer({
       fullname,
-      farmer_code,
+      farmer_code, // Number, not string
       phone,
       email,
       password: hashedPassword,
@@ -361,7 +389,6 @@ exports.registerFarmer = async (req, res) => {
     });
   }
 };
-
 
 
 // Forgot Password

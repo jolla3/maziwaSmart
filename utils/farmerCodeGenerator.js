@@ -1,19 +1,18 @@
 const Farmer = require("../models/model").Farmer;
 
 /**
- * Generate unique farmer code
- * Format: FARMER-XXXX-YYYY (e.g., FARMER-1234-5678)
+ * Generate unique numeric farmer code
+ * Format: 8-digit number (e.g., 12345678)
  */
 async function generateFarmerCode() {
-  const prefix = "FARMER";
+  const min = 10000000; // 8 digits minimum
+  const max = 99999999; // 8 digits maximum
   const maxAttempts = 100;
   let attempts = 0;
 
   while (attempts < maxAttempts) {
-    // Generate random 4-digit + 4-digit code
-    const code1 = Math.floor(1000 + Math.random() * 9000); // 1000-9999
-    const code2 = Math.floor(1000 + Math.random() * 9000); // 1000-9999
-    const code = `${prefix}-${code1}-${code2}`;
+    // Generate random 8-digit number
+    const code = Math.floor(Math.random() * (max - min + 1)) + min;
 
     // Check if code already exists
     const existing = await Farmer.findOne({ farmer_code: code });
@@ -29,11 +28,12 @@ async function generateFarmerCode() {
 }
 
 /**
- * Validate farmer code format
+ * Validate farmer code format (numeric)
  */
 function validateFarmerCode(code) {
-  const pattern = /^FARMER-\d{4}-\d{4}$/;
-  return pattern.test(code);
+  if (typeof code !== 'number') return false;
+  if (code < 10000000 || code > 99999999) return false; // 8 digits
+  return true;
 }
 
 /**
